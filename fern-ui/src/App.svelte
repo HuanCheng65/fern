@@ -76,6 +76,7 @@
   let commandOpen = false
   let settingsPage = false
   let landing = true
+  let isMac = false
   let query = ''
   let supplyQuery = ''
   let isLaunching = false
@@ -113,6 +114,7 @@
       const routeScene = route.match(/^\/workspace\/([^/]+)/)?.[1] as Scene | undefined
       if (routeScene && scenes.some((item) => item.id === routeScene)) scene = routeScene
     }
+    isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent)
     const syncSettings = (event: Event) => {
       const detail = (event as CustomEvent<{ accountName?: string; reducedEffects?: boolean }>).detail
       if (detail.accountName !== undefined) accountName = detail.accountName
@@ -124,9 +126,10 @@
     accountName = localStorage.getItem('fern.account.name') ?? accountName
     reducedEffects = localStorage.getItem('fern.effects.reduced') === '1'
     void invoke<string>('app_name').then((value) => (appName = value)).catch(() => undefined)
-    void invoke<{ root: string }>('data_paths').then((paths) => {
+    void invoke<{ root: string; logs: string }>('data_paths').then((paths) => {
       dataRoot = paths.root
       localStorage.setItem('fern.data.root', paths.root)
+      localStorage.setItem('fern.data.logs', paths.logs)
     }).catch(() => undefined)
     void loadInstances()
     syncRoute()
@@ -391,7 +394,7 @@
   <title>{appName} · Minecraft launcher</title>
 </svelte:head>
 
-<div class:effects-off={reducedEffects} class:landing-mode={landing} class:settings-mode={settingsPage} class="app-shell">
+<div class:effects-off={reducedEffects} class:landing-mode={landing} class:settings-mode={settingsPage} class:macos={isMac} class="app-shell">
   <Backdrop seed={selectedInstance().id} hours={selected + 1} particles={!reducedEffects} parallax={!reducedEffects} />
   <div class="scrim" aria-hidden="true"></div>
   <Router {routes} />
@@ -411,7 +414,7 @@
       </button>
       <button class="quiet-button" aria-label="打开设置" title="设置" onclick={() => void push('/settings/general')}><Settings2 size={17} strokeWidth={1.7} /></button>
       <button class="account-button" aria-label="当前账户">{accountName.slice(0, 2).toUpperCase()}</button>
-      {#if inTauri()}
+      {#if inTauri() && !isMac}
         <div class="window-controls" aria-label="窗口控制">
           <button aria-label="最小化" title="最小化" onclick={minimizeWindow}><Minus size={15} /></button>
           <button aria-label="最大化" title="最大化" onclick={toggleMaximizeWindow}><Maximize2 size={13} /></button>
@@ -556,18 +559,20 @@
 
 <style>
   :global(html, body, #app) { margin: 0; height: 100%; overflow: hidden; }
-  :global(body) { background: #07090b; color: var(--ink); font-family: var(--sans); font-size: var(--t-body); -webkit-font-smoothing: antialiased; user-select: none; }
+  :global(html), :global(body) { background: transparent; }
+  :global(body) { color: var(--ink); font-family: var(--sans); font-size: var(--t-body); -webkit-font-smoothing: antialiased; user-select: none; }
   :global(button), :global(input) { font: inherit; color: inherit; }
   :global(button) { border: 0; background: none; cursor: pointer; }
   :global(:focus-visible) { outline: 1.5px solid var(--c4); outline-offset: 3px; }
 
-  .app-shell { position: relative; min-width: 320px; height: 100dvh; overflow: hidden; isolation: isolate; border: 1px solid rgba(255,255,255,.12); border-radius: 18px; background: rgba(7,9,11,.18); }
+  .app-shell { position: relative; min-width: 320px; height: 100dvh; overflow: hidden; isolation: isolate; border: 1px solid rgba(255,255,255,.12); border-radius: 18px; clip-path: inset(0 round 18px); background: rgba(7,9,11,.18); }
   .landing-mode .topbar, .landing-mode .stage, .settings-mode .stage { visibility: hidden; pointer-events: none; }
   .app-shell :global(.backdrop), .app-shell :global(.backdrop-gl) { position: fixed; inset: 0; z-index: -3; }
   .scrim { position: fixed; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(5, 8, 9, .72), rgba(5, 8, 9, .2) 60%, rgba(5, 8, 9, .4)); pointer-events: none; }
   .effects-off :global(canvas) { opacity: .86; }
   .drag-region { position: absolute; inset: 0; }
   .topbar { position: fixed; inset: 0 0 auto; z-index: 10; height: var(--top); padding: 0 var(--pad-x); display: flex; align-items: center; gap: var(--s6); }
+  .macos .topbar { padding-left: 86px; }
   .brand-mark { width: 19px; height: 19px; border-radius: 6px; flex: none; background: var(--c4); box-shadow: 0 0 0 4px rgba(255,255,255,.08); position: relative; z-index: 1; }
   .brand-mark span { position: absolute; inset: 5px; background: var(--c0); border-radius: 2px; opacity: .6; }
   nav { position: relative; z-index: 1; display: flex; gap: var(--s6); }

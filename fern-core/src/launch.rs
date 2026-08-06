@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io,
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -233,20 +234,75 @@ pub async fn launch_instance(
     };
     let java_binary = plan.java_binary.clone();
     let arguments = plan.command_arguments(&variables);
-    let child = Command::new(&java_binary)
+    let log_directory = paths.instance_log_directory(instance_id);
+    std::fs::create_dir_all(&log_directory)?;
+    let launch_log = log_directory.join("launch.log");
+    append_launch_log(
+        &launch_log,
+        &format!(
+            "starting version={version_id} java={}",
+            java_binary.display()
+        ),
+    )?;
+    let mut child = Command::new(&java_binary)
         .args(arguments)
         .current_dir(&plan.working_directory)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("start Java from {}", java_binary.display()))?;
+    append_launch_log(&launch_log, &format!("started pid={}", child.id()))?;
+    if let Some(stdout) = child.stdout.take() {
+        spawn_log_reader(stdout, launch_log.clone(), "stdout");
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_log_reader(stderr, launch_log.clone(), "stderr");
+    }
     Ok(LaunchResult {
         instance_id: instance_id.to_owned(),
         version_id,
         process_id: child.id(),
         java_binary,
     })
+}
+
+fn append_launch_log(path: &Path, message: &str) -> io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{} {message}", chrono_like_timestamp())
+}
+
+fn spawn_log_reader<R>(reader: R, path: PathBuf, stream: &'static str)
+where
+    R: io::Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        else {
+            return;
+        };
+        let mut file = io::BufWriter::new(file);
+        for line in BufReader::new(reader).lines() {
+            let Ok(line) = line else { break };
+            let _ = writeln!(file, "[{}] {line}", stream);
+        }
+        let _ = file.flush();
+    });
+}
+
+fn chrono_like_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    format!("[{seconds}]")
 }
 
 fn resolve_java_binary(configured: Option<&Path>) -> Result<PathBuf> {

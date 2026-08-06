@@ -1,3 +1,5 @@
+use tauri::{Emitter, Manager};
+
 #[tauri::command]
 fn app_name() -> &'static str {
     "Fern"
@@ -59,6 +61,32 @@ fn open_instance_directory(instance_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_logs_directory() -> Result<(), String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&paths.logs).map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer")
+        .arg(&paths.logs)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open")
+        .arg(&paths.logs)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open")
+        .arg(&paths.logs)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn prepare_instance(
     app: tauri::AppHandle,
     instance_id: String,
@@ -74,6 +102,9 @@ async fn prepare_instance(
     let result = fern_core::prepare_instance(&paths, &instance_id, &events)
         .await
         .map_err(|error| format!("{error:#}"));
+    if let Err(error) = &result {
+        let _ = paths.append_log(&format!("[prepare] instance={instance_id} error={error}"));
+    }
     drop(events);
     let _ = forwarder.await;
     result
@@ -102,6 +133,9 @@ async fn launch_instance(
             .map_err(|error| format!("{error:#}")),
         Err(error) => Err(error),
     };
+    if let Err(error) = &result {
+        let _ = paths.append_log(&format!("[launch] instance={instance_id} error={error}"));
+    }
     drop(events);
     let _ = forwarder.await;
     result
@@ -110,6 +144,13 @@ async fn launch_instance(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(not(target_os = "macos"))]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_name,
             data_paths,
@@ -118,10 +159,10 @@ pub fn run() {
             create_instance,
             offline_account,
             open_instance_directory,
+            open_logs_directory,
             prepare_instance,
             launch_instance
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fern");
 }
-use tauri::Emitter;

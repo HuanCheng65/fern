@@ -12,6 +12,7 @@ pub struct DataPaths {
     pub runtimes: PathBuf,
     pub versions: PathBuf,
     pub instances: PathBuf,
+    pub logs: PathBuf,
 }
 
 impl DataPaths {
@@ -23,6 +24,7 @@ impl DataPaths {
             runtimes: root.join("runtimes"),
             versions: root.join("versions"),
             instances: root.join("instances"),
+            logs: root.join("logs"),
             root,
         }
     }
@@ -46,6 +48,7 @@ impl DataPaths {
             &self.runtimes,
             &self.versions,
             &self.instances,
+            &self.logs,
         ] {
             fs::create_dir_all(path)?;
         }
@@ -62,6 +65,24 @@ impl DataPaths {
 
     pub fn game_directory(&self, id: &str) -> PathBuf {
         self.instance_root(id).join(".minecraft")
+    }
+
+    pub fn instance_log_directory(&self, id: &str) -> PathBuf {
+        self.logs.join("instances").join(id)
+    }
+
+    pub fn fern_log_path(&self) -> PathBuf {
+        self.logs.join("fern.log")
+    }
+
+    pub fn append_log(&self, message: &str) -> io::Result<()> {
+        use std::io::Write;
+        fs::create_dir_all(&self.logs)?;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.fern_log_path())?;
+        writeln!(file, "{message}")
     }
 }
 

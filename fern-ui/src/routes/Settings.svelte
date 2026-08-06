@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowLeft, ArrowRight } from 'lucide-svelte'
+  import { invoke } from '@tauri-apps/api/core'
   import { push } from 'svelte-spa-router'
 
   const sections = [
@@ -15,6 +16,7 @@
   let section = $state<Section>('general')
   let accountName = $state(localStorage.getItem('fern.account.name') ?? 'FernPlayer')
   let reducedEffects = $state(localStorage.getItem('fern.effects.reduced') === '1')
+  let logError = $state('')
 
   function sectionFromHash() {
     const value = window.location.hash.split('/')[2] as Section | undefined
@@ -31,6 +33,15 @@
     accountName = value
     localStorage.setItem('fern.account.name', value)
     window.dispatchEvent(new CustomEvent('fern-settings-change', { detail: { accountName } }))
+  }
+
+  async function openLogs() {
+    logError = ''
+    try {
+      await invoke('open_logs_directory')
+    } catch (error) {
+      logError = String(error)
+    }
   }
 
   $effect(() => {
@@ -70,7 +81,7 @@
         <div class="settings-group"><div class="setting-static"><span>默认源</span><strong>官方 → BMCLAPI</strong><small>失败时自动切换</small></div><div class="setting-static"><span>并发任务</span><strong>64 个文件</strong><small>按网络情况调整</small></div></div>
       {:else}
         <div class="settings-intro"><p class="eyebrow">高级</p><h2>数据和诊断</h2><p>定位问题时，把下面的路径提供给 Fern 的诊断工具。</p></div>
-        <div class="settings-group"><div class="setting-static"><span>数据目录</span><strong class="selectable">{localStorage.getItem('fern.data.root') ?? '由系统决定'}</strong><small>实例、资源和日志都存放在这里</small></div></div>
+        <div class="settings-group"><div class="setting-static"><span>日志目录</span><strong class="selectable">{localStorage.getItem('fern.data.logs') ?? '由系统决定'}</strong><small>Fern 运行日志、启动参数和 Minecraft 输出会写入这里</small></div><button class="log-button" onclick={openLogs}>打开日志目录 <ArrowRight size={14} /></button>{#if logError}<p class="log-error">{logError}</p>{/if}</div>
       {/if}
     </div>
   </div>
@@ -106,6 +117,9 @@
   .setting-static:last-child { border-bottom: 0; }
   .setting-static > span { color: var(--ink-3); font: 10px var(--mono); text-transform: uppercase; letter-spacing: .12em; }
   .setting-static strong { color: var(--ink); font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+  .log-button { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--c4); font-size: 12px; }
+  .log-button:hover { color: var(--ink); }
+  .log-error { color: #efb2a5; font: 10px var(--mono); }
   .form-field { display: grid; gap: 8px; margin-bottom: 16px; color: var(--ink-2); font-size: 12px; }
   .form-field > span { color: var(--ink-3); font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
   .form-field input { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; outline: 0; background: rgba(255,255,255,.06); color: var(--ink); }

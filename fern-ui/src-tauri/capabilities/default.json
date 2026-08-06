@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-capability.schema.json",
+  "identifier": "default",
+  "description": "Fern desktop window controls and launcher commands",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize"
+  ]
+}
