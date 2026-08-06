@@ -123,6 +123,9 @@ pub struct LaunchResult {
     pub version_id: String,
     pub process_id: u32,
     pub java_binary: PathBuf,
+    pub java_major: u16,
+    pub required_java_major: Option<u16>,
+    pub launch_log: PathBuf,
 }
 
 /// Build the vanilla launch command from the metadata already prepared on disk.
@@ -221,10 +224,23 @@ pub async fn launch_instance(
         );
     }
     let (jvm_arguments, game_arguments) = metadata.resolved_arguments(&context);
+    let (java_binary, java_major, java_version) =
+        resolve_java_binary(profile.settings.java_path.as_deref())?;
+    let required_java_major = metadata
+        .java_version
+        .as_ref()
+        .map(|version| version.major_version);
+    if let Some(required) = required_java_major {
+        if java_major < required {
+            return Err(anyhow!(
+                "Java {java_major} is incompatible with Minecraft {version_id}; Java {required} or newer is required (detected {java_version})"
+            ));
+        }
+    }
     let plan = LaunchPlan {
-        java_binary: resolve_java_binary(profile.settings.java_path.as_deref())?,
+        java_binary: java_binary.clone(),
         working_directory: game_directory,
-        jvm_arguments,
+        jvm_arguments: filter_jvm_arguments(jvm_arguments, java_major),
         classpath: classpath
             .into_iter()
             .chain(std::iter::once(client_jar))
@@ -233,17 +249,19 @@ pub async fn launch_instance(
         game_arguments,
     };
     let java_binary = plan.java_binary.clone();
-    let arguments = plan.command_arguments(&variables);
     let log_directory = paths.instance_log_directory(instance_id);
     std::fs::create_dir_all(&log_directory)?;
     let launch_log = log_directory.join("launch.log");
     append_launch_log(
         &launch_log,
         &format!(
-            "starting version={version_id} java={}",
-            java_binary.display()
+            "starting version={version_id} java={} java_major={java_major} required_java_major={:?}",
+            java_binary.display(),
+            required_java_major
         ),
     )?;
+    let arguments = plan.command_arguments(&variables);
+    append_launch_log(&launch_log, &format!("arguments={arguments:?}"))?;
     let mut child = Command::new(&java_binary)
         .args(arguments)
         .current_dir(&plan.working_directory)
@@ -259,11 +277,27 @@ pub async fn launch_instance(
     if let Some(stderr) = child.stderr.take() {
         spawn_log_reader(stderr, launch_log.clone(), "stderr");
     }
+    let process_id = child.id();
+    let wait_log = launch_log.clone();
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) => {
+            let code = status
+                .code()
+                .map_or_else(|| "signal".to_owned(), |code| code.to_string());
+            let _ = append_launch_log(&wait_log, &format!("exited code={code}"));
+        }
+        Err(error) => {
+            let _ = append_launch_log(&wait_log, &format!("wait error={error}"));
+        }
+    });
     Ok(LaunchResult {
         instance_id: instance_id.to_owned(),
         version_id,
-        process_id: child.id(),
+        process_id,
         java_binary,
+        java_major,
+        required_java_major,
+        launch_log,
     })
 }
 
@@ -305,7 +339,7 @@ fn chrono_like_timestamp() -> String {
     format!("[{seconds}]")
 }
 
-fn resolve_java_binary(configured: Option<&Path>) -> Result<PathBuf> {
+fn resolve_java_binary(configured: Option<&Path>) -> Result<(PathBuf, u16, String)> {
     let candidate = configured
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("java"));
@@ -313,13 +347,42 @@ fn resolve_java_binary(configured: Option<&Path>) -> Result<PathBuf> {
         .arg("-version")
         .output()
         .with_context(|| format!("find Java executable {}", candidate.display()))?;
+    let version_output = String::from_utf8_lossy(&output.stderr).into_owned()
+        + &String::from_utf8_lossy(&output.stdout);
     if !output.status.success() {
         return Err(anyhow!(
             "Java executable {} failed version check",
             candidate.display()
         ));
     }
-    Ok(candidate)
+    let java_major = parse_java_major(&version_output).ok_or_else(|| {
+        anyhow!(
+            "unable to determine Java version for {} ({})",
+            candidate.display(),
+            version_output.trim()
+        )
+    })?;
+    Ok((candidate, java_major, version_output.trim().to_owned()))
+}
+
+fn parse_java_major(output: &str) -> Option<u16> {
+    let version = output
+        .split_once("version \"")
+        .and_then(|(_, value)| value.split('"').next())
+        .or_else(|| {
+            output
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("openjdk "))
+        })?;
+    let version = version.strip_prefix("1.").unwrap_or(version);
+    version.split('.').next()?.parse().ok()
+}
+
+fn filter_jvm_arguments(arguments: Vec<String>, java_major: u16) -> Vec<String> {
+    arguments
+        .into_iter()
+        .filter(|argument| argument != "--sun-misc-unsafe-memory-access=allow" || java_major >= 24)
+        .collect()
 }
 
 async fn collect_classpath_and_extract_natives(
@@ -504,5 +567,25 @@ mod tests {
         assert!(arguments.iter().any(|argument| argument == "-cp"));
         assert!(arguments.iter().any(|argument| argument == "FernPlayer"));
         assert_eq!(arguments.last().map(String::as_str), Some("FernPlayer"));
+    }
+
+    #[test]
+    fn parses_modern_and_legacy_java_versions() {
+        assert_eq!(
+            parse_java_major("openjdk version \"21.0.8\" 2025-07-15"),
+            Some(21)
+        );
+        assert_eq!(parse_java_major("java version \"1.8.0_402\""), Some(8));
+        assert_eq!(parse_java_major("openjdk 24.0.1 2025-04-15"), Some(24));
+    }
+
+    #[test]
+    fn filters_unsafe_memory_access_flag_for_old_java() {
+        let args = vec![
+            "--sun-misc-unsafe-memory-access=allow".to_owned(),
+            "-Xmx2G".to_owned(),
+        ];
+        assert_eq!(filter_jvm_arguments(args.clone(), 21), vec!["-Xmx2G"]);
+        assert_eq!(filter_jvm_arguments(args, 24).len(), 2);
     }
 }

@@ -307,7 +307,7 @@
         }, 1200)
       } catch (error) {
         launchError = String(error)
-        launchStatus = '文件补全失败'
+        launchStatus = '启动失败 · 请检查 Java 版本与日志'
         isLaunching = false
       }
       return
