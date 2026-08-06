@@ -1,7 +1,17 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
+use anyhow::{Context, Result, anyhow};
+use fern_meta::{Library, RuleContext, VersionMetadata, rules_allow};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
+
+use crate::DataPaths;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,6 +113,262 @@ pub struct LaunchPlan {
     pub classpath: Vec<PathBuf>,
     pub main_class: String,
     pub game_arguments: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchResult {
+    pub instance_id: String,
+    pub version_id: String,
+    pub process_id: u32,
+    pub java_binary: PathBuf,
+}
+
+/// Build the vanilla launch command from the metadata already prepared on disk.
+/// Authentication stays fully local: the offline UUID matches Minecraft's
+/// canonical OfflinePlayer algorithm, so the same name remains stable across runs.
+pub async fn launch_instance(
+    paths: &DataPaths,
+    instance_id: &str,
+    player_name: &str,
+) -> Result<LaunchResult> {
+    if !(3..=16).contains(&player_name.len())
+        || !player_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(anyhow!(
+            "offline player name must contain 3-16 ASCII letters, numbers or '_'"
+        ));
+    }
+    paths.ensure_exists()?;
+    let profile = crate::list_instances(paths)?
+        .into_iter()
+        .find(|profile| profile.id.as_str() == instance_id)
+        .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))?;
+    let version_id = profile.game_version.clone();
+    let version_root = paths.versions.join(&version_id);
+    let metadata_path = version_root.join(format!("{version_id}.json"));
+    let metadata_bytes = tokio::fs::read(&metadata_path)
+        .await
+        .with_context(|| format!("read prepared metadata {}", metadata_path.display()))?;
+    let metadata: VersionMetadata =
+        serde_json::from_slice(&metadata_bytes).context("parse prepared version metadata")?;
+    let main_class = metadata
+        .main_class
+        .clone()
+        .ok_or_else(|| anyhow!("version {version_id} has no main class"))?;
+
+    let context = current_rule_context(profile.settings.resolution.is_some());
+    let natives_directory = paths.game_directory(instance_id).join("natives");
+    tokio::fs::create_dir_all(&natives_directory).await?;
+    let classpath =
+        collect_classpath_and_extract_natives(paths, &metadata, &context, &natives_directory)
+            .await?;
+    let client_jar = version_root.join(format!("{version_id}.jar"));
+    if !tokio::fs::try_exists(&client_jar).await? {
+        return Err(anyhow!("client jar is missing: {}", client_jar.display()));
+    }
+
+    let credentials = offline_credentials(player_name);
+    let mut variables = LaunchVariables::new().with_credentials(&credentials);
+    let game_directory = paths.game_directory(instance_id);
+    tokio::fs::create_dir_all(&game_directory).await?;
+    variables = variables
+        .insert("game_directory", game_directory.to_string_lossy())
+        .insert("assets_root", paths.assets.to_string_lossy())
+        .insert(
+            "assets_index_name",
+            metadata
+                .asset_index
+                .as_ref()
+                .map(|index| index.id.as_str())
+                .unwrap_or_default(),
+        )
+        .insert("version_name", &version_id)
+        .insert(
+            "version_type",
+            metadata.kind.as_deref().unwrap_or("release"),
+        )
+        .insert("natives_directory", natives_directory.to_string_lossy())
+        .insert("launcher_name", "Fern")
+        .insert("launcher_version", env!("CARGO_PKG_VERSION"))
+        .insert("clientid", "")
+        .insert("auth_xuid", "");
+    if let Some(resolution) = &profile.settings.resolution {
+        variables = variables
+            .insert("resolution_width", resolution.width.to_string())
+            .insert("resolution_height", resolution.height.to_string());
+    }
+    if let Some(logging) = metadata
+        .logging
+        .as_ref()
+        .and_then(|logging| logging.client.as_ref())
+    {
+        let name = logging
+            .file
+            .id
+            .clone()
+            .unwrap_or_else(|| format!("{}.xml", logging.file.sha1));
+        variables = variables.insert(
+            "path",
+            paths
+                .assets
+                .join("log_configs")
+                .join(name)
+                .to_string_lossy(),
+        );
+    }
+    let (jvm_arguments, game_arguments) = metadata.resolved_arguments(&context);
+    let plan = LaunchPlan {
+        java_binary: resolve_java_binary(profile.settings.java_path.as_deref())?,
+        working_directory: game_directory,
+        jvm_arguments,
+        classpath: classpath
+            .into_iter()
+            .chain(std::iter::once(client_jar))
+            .collect(),
+        main_class,
+        game_arguments,
+    };
+    let java_binary = plan.java_binary.clone();
+    let arguments = plan.command_arguments(&variables);
+    let child = Command::new(&java_binary)
+        .args(arguments)
+        .current_dir(&plan.working_directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("start Java from {}", java_binary.display()))?;
+    Ok(LaunchResult {
+        instance_id: instance_id.to_owned(),
+        version_id,
+        process_id: child.id(),
+        java_binary,
+    })
+}
+
+fn resolve_java_binary(configured: Option<&Path>) -> Result<PathBuf> {
+    let candidate = configured
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("java"));
+    let output = Command::new(&candidate)
+        .arg("-version")
+        .output()
+        .with_context(|| format!("find Java executable {}", candidate.display()))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Java executable {} failed version check",
+            candidate.display()
+        ));
+    }
+    Ok(candidate)
+}
+
+async fn collect_classpath_and_extract_natives(
+    paths: &DataPaths,
+    metadata: &VersionMetadata,
+    context: &RuleContext,
+    natives_directory: &Path,
+) -> Result<Vec<PathBuf>> {
+    let mut classpath = Vec::new();
+    for library in &metadata.libraries {
+        if !rules_allow(library.rules.as_deref(), context) {
+            continue;
+        }
+        let Some(downloads) = &library.downloads else {
+            continue;
+        };
+        if let Some(artifact) = &downloads.artifact {
+            let relative = artifact
+                .path
+                .as_deref()
+                .ok_or_else(|| anyhow!("library {} has no artifact path", library.name))?;
+            let path = paths.libraries.join(relative);
+            if library.extract.is_some() || library.natives.is_some() {
+                extract_native_jar(&path, natives_directory, library).await?;
+            } else if !library.name.contains(":natives-") {
+                classpath.push(path);
+            }
+        }
+        if let (Some(natives), Some(classifiers)) = (&library.natives, &downloads.classifiers) {
+            let Some(template) = natives.get(&context.os_name) else {
+                continue;
+            };
+            let arch = if context.os_arch.contains("64") {
+                "64"
+            } else {
+                "32"
+            };
+            let classifier = template.replace("${arch}", arch);
+            if let Some(native) = classifiers.get(&classifier) {
+                let path = paths.libraries.join(
+                    native
+                        .path
+                        .as_deref()
+                        .ok_or_else(|| anyhow!("library {} has no native path", library.name))?,
+                );
+                extract_native_jar(&path, natives_directory, library).await?;
+            }
+        }
+    }
+    Ok(classpath)
+}
+
+async fn extract_native_jar(path: &Path, destination: &Path, library: &Library) -> Result<()> {
+    let path = path.to_owned();
+    let destination = destination.to_owned();
+    let excludes = library
+        .extract
+        .as_ref()
+        .map(|rule| rule.exclude.clone())
+        .unwrap_or_default();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let file =
+            File::open(&path).with_context(|| format!("open native jar {}", path.display()))?;
+        let mut archive = zip::ZipArchive::new(file).context("read native jar archive")?;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index)?;
+            let name = entry.name().to_owned();
+            if excludes.iter().any(|prefix| name.starts_with(prefix)) || name.ends_with('/') {
+                continue;
+            }
+            let relative = Path::new(&name);
+            if relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                continue;
+            }
+            let output = destination.join(relative);
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut target = File::create(output)?;
+            io::copy(&mut entry, &mut target)?;
+        }
+        Ok(())
+    })
+    .await??;
+    Ok(())
+}
+
+fn current_rule_context(has_custom_resolution: bool) -> RuleContext {
+    RuleContext {
+        os_name: if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "osx"
+        } else {
+            "linux"
+        }
+        .to_owned(),
+        os_arch: std::env::consts::ARCH.to_owned(),
+        os_version: String::new(),
+        features: HashMap::from([("has_custom_resolution".to_owned(), has_custom_resolution)]),
+    }
 }
 
 impl LaunchPlan {

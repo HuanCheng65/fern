@@ -18,7 +18,9 @@ pub use fern_meta::{VersionManifest, VersionManifestEntry};
 pub use instance::{
     CoverSeed, InstanceId, InstanceProfile, InstanceSettings, LoaderKind, LoaderProfile, Resolution,
 };
-pub use launch::{Credentials, LaunchPlan, LaunchVariables, offline_credentials};
+pub use launch::{
+    Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,
+};
 pub use prepare::{PrepareResult, prepare_instance};
 
 /// Marker for the Pearl integration boundary.

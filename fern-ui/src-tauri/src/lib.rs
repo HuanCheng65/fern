@@ -79,6 +79,34 @@ async fn prepare_instance(
     result
 }
 
+#[tauri::command]
+async fn launch_instance(
+    app: tauri::AppHandle,
+    instance_id: String,
+    player_name: String,
+) -> Result<fern_core::LaunchResult, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let event_app = app.clone();
+    let forwarder = tauri::async_runtime::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            let _ = event_app.emit("download-event", event);
+        }
+    });
+    let prepared = fern_core::prepare_instance(&paths, &instance_id, &events)
+        .await
+        .map_err(|error| format!("{error:#}"));
+    let result = match prepared {
+        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &player_name)
+            .await
+            .map_err(|error| format!("{error:#}")),
+        Err(error) => Err(error),
+    };
+    drop(events);
+    let _ = forwarder.await;
+    result
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -90,7 +118,8 @@ pub fn run() {
             create_instance,
             offline_account,
             open_instance_directory,
-            prepare_instance
+            prepare_instance,
+            launch_instance
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fern");

@@ -10,6 +10,8 @@
     FolderOpen,
     Gamepad2,
     Keyboard,
+    Maximize2,
+    Minus,
     Package,
     Play,
     Plus,
@@ -18,7 +20,12 @@
     Sparkles,
     X,
   } from 'lucide-svelte'
+  import { getCurrentWindow } from '@tauri-apps/api/window'
+  import Router, { push, replace } from 'svelte-spa-router'
   import Backdrop from './components/Backdrop.svelte'
+  import LandingRoute from './routes/Landing.svelte'
+  import SettingsRoute from './routes/Settings.svelte'
+  import WorkspaceRoute from './routes/Workspace.svelte'
   import './styles/tokens.css'
 
   type Scene = 'launch' | 'instances' | 'supply' | 'multiplayer' | 'wardrobe'
@@ -46,6 +53,13 @@
     { id: 'multiplayer', label: '联机' },
     { id: 'wardrobe', label: '衣柜' },
   ]
+  const routes = {
+    '/': LandingRoute,
+    '/landing': LandingRoute,
+    '/workspace': WorkspaceRoute,
+    '/workspace/:scene': WorkspaceRoute,
+    '/settings/*': SettingsRoute,
+  }
 
   let instances: Instance[] = []
 
@@ -60,7 +74,8 @@
   let scene: Scene = 'launch'
   let selected = 0
   let commandOpen = false
-  let settingsOpen = false
+  let settingsPage = false
+  let landing = true
   let query = ''
   let supplyQuery = ''
   let isLaunching = false
@@ -80,6 +95,7 @@
   let versions: VersionOption[] = []
   let versionsLoading = false
   let createError = ''
+  let accountName = 'FernPlayer'
 
   const selectedInstance = () => instances[selected] ?? {
     id: 'empty', name: '还没有实例', version: '选择一个版本开始', loader: 'Vanilla', hours: '0 h', mods: 0, color: '#49616b',
@@ -90,9 +106,32 @@
 
   onMount(() => {
     let unlistenDownload: UnlistenFn | undefined
+    const syncRoute = () => {
+      const route = window.location.hash.replace(/^#/, '') || '/'
+      landing = route === '/' || route === '/landing'
+      settingsPage = route.startsWith('/settings')
+      const routeScene = route.match(/^\/workspace\/([^/]+)/)?.[1] as Scene | undefined
+      if (routeScene && scenes.some((item) => item.id === routeScene)) scene = routeScene
+    }
+    const syncSettings = (event: Event) => {
+      const detail = (event as CustomEvent<{ accountName?: string; reducedEffects?: boolean }>).detail
+      if (detail.accountName !== undefined) accountName = detail.accountName
+      if (detail.reducedEffects !== undefined) reducedEffects = detail.reducedEffects
+    }
+    if (!window.location.hash) {
+      void replace(localStorage.getItem('fern.landing.seen') === '1' ? '/workspace' : '/')
+    }
+    accountName = localStorage.getItem('fern.account.name') ?? accountName
+    reducedEffects = localStorage.getItem('fern.effects.reduced') === '1'
     void invoke<string>('app_name').then((value) => (appName = value)).catch(() => undefined)
-    void invoke<{ root: string }>('data_paths').then((paths) => (dataRoot = paths.root)).catch(() => undefined)
+    void invoke<{ root: string }>('data_paths').then((paths) => {
+      dataRoot = paths.root
+      localStorage.setItem('fern.data.root', paths.root)
+    }).catch(() => undefined)
     void loadInstances()
+    syncRoute()
+    window.addEventListener('hashchange', syncRoute)
+    window.addEventListener('fern-settings-change', syncSettings)
     if ('__TAURI_INTERNALS__' in window) {
       void listen<DownloadEvent>('download-event', ({ payload }) => {
         if (payload.type === 'status') {
@@ -122,15 +161,17 @@
       }
       if (event.key === 'Escape') {
         commandOpen = false
-        settingsOpen = false
+        if (settingsPage) void push(`/workspace/${scene}`)
         showWidgetPicker = false
       }
-      if (!commandOpen && !settingsOpen && event.key === 'ArrowRight') moveScene(1)
-      if (!commandOpen && !settingsOpen && event.key === 'ArrowLeft') moveScene(-1)
+      if (!landing && !commandOpen && !settingsPage && event.key === 'ArrowRight') moveScene(1)
+      if (!landing && !commandOpen && !settingsPage && event.key === 'ArrowLeft') moveScene(-1)
     }
     window.addEventListener('keydown', onKeydown)
     return () => {
       window.removeEventListener('keydown', onKeydown)
+      window.removeEventListener('hashchange', syncRoute)
+      window.removeEventListener('fern-settings-change', syncSettings)
       unlistenDownload?.()
     }
   })
@@ -220,6 +261,7 @@
       createName = ''
       createOpen = false
       scene = 'launch'
+      void push('/workspace/launch')
     } catch (error) {
       createError = String(error)
     }
@@ -234,6 +276,7 @@
   function moveScene(delta: number) {
     const index = scenes.findIndex((item) => item.id === scene)
     scene = scenes[(index + delta + scenes.length) % scenes.length].id
+    void push(`/workspace/${scene}`)
   }
 
   async function startLaunch() {
@@ -248,9 +291,12 @@
     launchStatus = '读取版本信息'
     if ('__TAURI_INTERNALS__' in window) {
       try {
-        await invoke('prepare_instance', { instanceId: selectedInstance().id })
+        const result = await invoke<{ processId: number }>('launch_instance', {
+          instanceId: selectedInstance().id,
+          playerName: accountName,
+        })
         launchProgress = 100
-        launchStatus = '文件准备完成'
+        launchStatus = `游戏已启动 · PID ${result.processId}`
         window.setTimeout(() => {
           isLaunching = false
           launchProgress = 0
@@ -264,6 +310,36 @@
       return
     }
     simulateLaunch()
+  }
+
+  async function repairFiles() {
+    if (isLaunching || instances.length === 0) return
+    isLaunching = true
+    launchError = ''
+    launchProgress = 2
+    launchStatus = '读取版本信息'
+    try {
+      await invoke('prepare_instance', { instanceId: selectedInstance().id })
+      launchProgress = 100
+      launchStatus = '文件校验完成'
+    } catch (error) {
+      launchError = String(error)
+      launchStatus = '文件修复失败'
+    } finally {
+      isLaunching = false
+    }
+  }
+
+  async function minimizeWindow() {
+    if (inTauri()) await getCurrentWindow().minimize()
+  }
+
+  async function toggleMaximizeWindow() {
+    if (inTauri()) await getCurrentWindow().toggleMaximize()
+  }
+
+  async function closeWindow() {
+    if (inTauri()) await getCurrentWindow().close()
   }
 
   async function openGameDirectory() {
@@ -315,16 +391,17 @@
   <title>{appName} · Minecraft launcher</title>
 </svelte:head>
 
-<div class:effects-off={reducedEffects} class="app-shell">
+<div class:effects-off={reducedEffects} class:landing-mode={landing} class:settings-mode={settingsPage} class="app-shell">
   <Backdrop seed={selectedInstance().id} hours={selected + 1} particles={!reducedEffects} parallax={!reducedEffects} />
   <div class="scrim" aria-hidden="true"></div>
+  <Router {routes} />
 
   <header class="topbar">
     <div class="drag-region" data-tauri-drag-region aria-hidden="true"></div>
     <div class="brand-mark" aria-hidden="true"><span></span></div>
     <nav aria-label="主导航">
       {#each scenes as item (item.id)}
-        <button class:active={scene === item.id} aria-current={scene === item.id ? 'page' : undefined} onclick={() => (scene = item.id)}>{item.label}</button>
+        <button class:active={scene === item.id} aria-current={scene === item.id ? 'page' : undefined} onclick={() => { scene = item.id; void push(`/workspace/${item.id}`) }}>{item.label}</button>
       {/each}
     </nav>
     <div class="top-actions">
@@ -332,8 +409,15 @@
         <Search size={16} strokeWidth={1.7} />
         <span class="shortcut"><Command size={11} />K</span>
       </button>
-      <button class="quiet-button" aria-label="打开设置" title="设置" onclick={() => (settingsOpen = true)}><Settings2 size={17} strokeWidth={1.7} /></button>
-      <button class="account-button" aria-label="当前账户">EC</button>
+      <button class="quiet-button" aria-label="打开设置" title="设置" onclick={() => void push('/settings/general')}><Settings2 size={17} strokeWidth={1.7} /></button>
+      <button class="account-button" aria-label="当前账户">{accountName.slice(0, 2).toUpperCase()}</button>
+      {#if inTauri()}
+        <div class="window-controls" aria-label="窗口控制">
+          <button aria-label="最小化" title="最小化" onclick={minimizeWindow}><Minus size={15} /></button>
+          <button aria-label="最大化" title="最大化" onclick={toggleMaximizeWindow}><Maximize2 size={13} /></button>
+          <button class="window-close" aria-label="关闭" title="关闭" onclick={closeWindow}><X size={14} /></button>
+        </div>
+      {/if}
     </div>
   </header>
 
@@ -403,7 +487,7 @@
             {:else}
             <div class="detail-top"><div><p class="eyebrow">当前实例</p><h2>{selectedInstance().name}</h2><span>{selectedInstance().version} · {selectedInstance().loader}</span></div><button class="launch-mini" onclick={startLaunch}><Play size={14} fill="currentColor" />启动</button></div>
             <div class="detail-stats"><div><small>游玩时长</small><strong>{selectedInstance().hours}</strong></div><div><small>模组数量</small><strong>{selectedInstance().mods}</strong></div><div><small>运行状态</small><strong>就绪</strong></div></div>
-            <div class="detail-links"><button onclick={openGameDirectory}><FolderOpen size={15} />打开游戏目录</button><button><Package size={15} />管理内容</button><button onclick={startLaunch}><Download size={15} />修复文件</button></div>
+            <div class="detail-links"><button onclick={openGameDirectory}><FolderOpen size={15} />打开游戏目录</button><button><Package size={15} />管理内容</button><button onclick={repairFiles}><Download size={15} />修复文件</button></div>
             {/if}
           </div>
         </div>
@@ -423,7 +507,7 @@
         {/if}
       </section>
     {:else}
-      <section class="empty-scene"><div class="empty-glyph"><Gamepad2 size={29} strokeWidth={1.4} /></div><p class="eyebrow">{scenes.find((item) => item.id === scene)?.label}</p><h1>这片区域正在生长</h1><p>基础启动链路已经就绪，更多内容会在后续里程碑中进入世界。</p><button class="outline-button" onclick={() => (scene = 'launch')}>回到启动 <ArrowRight size={15} /></button></section>
+      <section class="empty-scene"><div class="empty-glyph"><Gamepad2 size={29} strokeWidth={1.4} /></div><p class="eyebrow">{scenes.find((item) => item.id === scene)?.label}</p><h1>这片区域正在生长</h1><p>基础启动链路已经就绪，更多内容会在后续里程碑中进入世界。</p><button class="outline-button" onclick={() => { scene = 'launch'; void push('/workspace/launch') }}>回到启动 <ArrowRight size={15} /></button></section>
     {/if}
   </main>
 
@@ -458,25 +542,16 @@
       <div class="command-list">
         <p class="command-group">实例</p>
         {#each filteredInstances() as item, index (item.id)}
-          <button class="command-row" onclick={() => { selected = instances.indexOf(item); scene = 'launch'; commandOpen = false }}><span class="mini-biome" style={`--swatch:${item.color}`}></span><span><strong>{item.name}</strong><small>{item.version} · {item.loader}</small></span><ArrowRight size={15} /></button>
+          <button class="command-row" onclick={() => { selected = instances.indexOf(item); scene = 'launch'; commandOpen = false; void push('/workspace/launch') }}><span class="mini-biome" style={`--swatch:${item.color}`}></span><span><strong>{item.name}</strong><small>{item.version} · {item.loader}</small></span><ArrowRight size={15} /></button>
         {/each}
         <p class="command-group">动作</p>
         <button class="command-row" onclick={() => { commandOpen = false; startLaunch() }}><span class="command-icon"><Play size={15} fill="currentColor" /></span><span><strong>启动当前实例</strong><small>{selectedInstance().name}</small></span><kbd>↵</kbd></button>
-        <button class="command-row" onclick={() => { commandOpen = false; settingsOpen = true }}><span class="command-icon"><Settings2 size={15} /></span><span><strong>打开设置</strong><small>外观与性能</small></span><kbd>⌘,</kbd></button>
+        <button class="command-row" onclick={() => { commandOpen = false; void push('/settings/general') }}><span class="command-icon"><Settings2 size={15} /></span><span><strong>打开设置</strong><small>外观与性能</small></span><kbd>⌘,</kbd></button>
       </div>
       <footer class="command-footer"><span><Keyboard size={13} />上下选择</span><span><kbd>ESC</kbd>关闭</span></footer>
     </div>
   {/if}
 
-  {#if settingsOpen}
-    <div class="modal-scrim" role="presentation" onclick={() => (settingsOpen = false)}></div>
-    <div class="settings-panel" role="dialog" aria-modal="true" aria-label="设置">
-      <div class="panel-heading"><div><p class="eyebrow">偏好</p><h2>设置</h2></div><button class="icon-only" aria-label="关闭" onclick={() => (settingsOpen = false)}><X size={17} /></button></div>
-      <div class="setting-group"><span class="setting-label">外观</span><label class="setting-row"><span>环境粒子</span><input type="checkbox" checked={!reducedEffects} onchange={(event) => (reducedEffects = !(event.currentTarget as HTMLInputElement).checked)} /></label><label class="setting-row"><span>指针视差</span><input type="checkbox" checked={!reducedEffects} onchange={(event) => (reducedEffects = !(event.currentTarget as HTMLInputElement).checked)} /></label></div>
-      <div class="setting-group"><span class="setting-label">账户</span><div class="account-card"><span class="account-avatar">EC</span><div><strong>离线账户</strong><small>本地身份 · Emily Chen</small></div></div></div>
-      <div class="settings-foot"><span title={dataRoot}>{appName} 0.1.0</span><span>基础功能预览</span></div>
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -486,7 +561,8 @@
   :global(button) { border: 0; background: none; cursor: pointer; }
   :global(:focus-visible) { outline: 1.5px solid var(--c4); outline-offset: 3px; }
 
-  .app-shell { position: relative; min-width: 320px; height: 100dvh; overflow: hidden; isolation: isolate; }
+  .app-shell { position: relative; min-width: 320px; height: 100dvh; overflow: hidden; isolation: isolate; border: 1px solid rgba(255,255,255,.12); border-radius: 18px; background: rgba(7,9,11,.18); }
+  .landing-mode .topbar, .landing-mode .stage, .settings-mode .stage { visibility: hidden; pointer-events: none; }
   .app-shell :global(.backdrop), .app-shell :global(.backdrop-gl) { position: fixed; inset: 0; z-index: -3; }
   .scrim { position: fixed; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(5, 8, 9, .72), rgba(5, 8, 9, .2) 60%, rgba(5, 8, 9, .4)); pointer-events: none; }
   .effects-off :global(canvas) { opacity: .86; }
@@ -499,6 +575,10 @@
   nav button:hover, nav button.active { color: var(--ink); }
   nav button:active, .quiet-button:active, .launch-button:active, .outline-button:active { transform: translateY(1px) scale(.98); }
   .top-actions { position: relative; z-index: 1; margin-left: auto; display: flex; align-items: center; gap: var(--s2); }
+  .window-controls { display: flex; align-items: center; margin-left: var(--s3); border-left: 1px solid var(--line-2); padding-left: var(--s3); }
+  .window-controls button { display: grid; place-items: center; width: 32px; height: 28px; color: var(--ink-3); transition: color var(--pan), background var(--pan); }
+  .window-controls button:hover { color: var(--ink); background: rgba(255,255,255,.1); }
+  .window-controls .window-close:hover { color: #fff; background: #a9564b; }
   .quiet-button, .account-button, .icon-only { display: grid; place-items: center; border-radius: var(--r1); color: var(--ink-2); transition: background var(--pan), color var(--pan), transform var(--pan); }
   .quiet-button { width: 34px; height: 34px; gap: 3px; }
   .quiet-button:hover, .account-button:hover, .icon-only:hover { color: var(--ink); background: rgba(255,255,255,.1); }
@@ -595,14 +675,14 @@
   .empty-glyph { display: grid; place-items: center; width: 64px; height: 64px; border: 1px solid var(--line); border-radius: 18px; color: var(--c4); background: var(--glass); }
 
   .modal-scrim { position: fixed; inset: 0; z-index: 20; background: rgba(4,7,8,.45); backdrop-filter: blur(5px); }
-  .command-panel, .widget-picker, .settings-panel { position: fixed; z-index: 21; border: 1px solid var(--line); background: rgba(12,16,18,.88); backdrop-filter: blur(28px) saturate(1.12); box-shadow: var(--shadow-2); }
+  .command-panel, .widget-picker { position: fixed; z-index: 21; border: 1px solid var(--line); background: rgba(12,16,18,.88); backdrop-filter: blur(28px) saturate(1.12); box-shadow: var(--shadow-2); }
   .command-panel { top: 15vh; left: 50%; width: min(630px, calc(100vw - 32px)); transform: translateX(-50%); border-radius: 16px; overflow: hidden; animation: enter 200ms var(--pan); }
   .command-input { display: flex; align-items: center; gap: var(--s3); padding: var(--s4) var(--s5); border-bottom: 1px solid var(--line); color: var(--ink-3); }
   .command-input input { flex: 1; border: 0; outline: 0; background: none; color: var(--ink); font-size: 16px; }
   .command-input input::placeholder { color: var(--ink-3); }
   kbd { padding: 2px 6px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink-3); font: 10px var(--mono); }
   .command-list { max-height: 52vh; padding: var(--s2); overflow-y: auto; }
-  .command-group, .setting-label { margin: var(--s3) var(--s3) var(--s2); color: var(--ink-3); font: 10px var(--mono); letter-spacing: .15em; text-transform: uppercase; }
+  .command-group { margin: var(--s3) var(--s3) var(--s2); color: var(--ink-3); font: 10px var(--mono); letter-spacing: .15em; text-transform: uppercase; }
   .command-row { display: flex; align-items: center; gap: var(--s3); width: 100%; padding: var(--s3); border-radius: 10px; color: var(--ink-2); text-align: left; }
   .command-row:hover { color: var(--ink); background: rgba(255,255,255,.1); }
   .command-row > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; flex: 1; }
@@ -610,7 +690,7 @@
   .command-icon, .picker-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: var(--c4); background: rgba(255,255,255,.07); }
   .command-footer { display: flex; justify-content: flex-end; gap: var(--s4); padding: var(--s3) var(--s5); border-top: 1px solid var(--line); color: var(--ink-3); font: 10px var(--mono); }
   .command-footer span { display: inline-flex; align-items: center; gap: 5px; }
-  .widget-picker, .settings-panel { top: 50%; right: var(--pad-x); width: min(340px, calc(100vw - 32px)); transform: translateY(-50%); padding: var(--s5); border-radius: 16px; animation: enter 200ms var(--pan); }
+  .widget-picker { top: 50%; right: var(--pad-x); width: min(340px, calc(100vw - 32px)); transform: translateY(-50%); padding: var(--s5); border-radius: 16px; animation: enter 200ms var(--pan); }
   .create-panel { position: fixed; top: 50%; left: 50%; z-index: 21; width: min(420px, calc(100vw - 32px)); transform: translate(-50%, -50%); padding: var(--s5); border: 1px solid var(--line); border-radius: 16px; background: rgba(12,16,18,.92); backdrop-filter: blur(28px); box-shadow: var(--shadow-2); animation: enter 200ms var(--pan); }
   .form-field { display: grid; gap: var(--s2); margin-bottom: var(--s4); color: var(--ink-2); font-size: 12px; }
   .form-field > span { color: var(--ink-3); font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
@@ -622,7 +702,6 @@
   .form-error { margin: -4px 0 var(--s4); padding: var(--s3); border: 1px solid rgba(226,125,104,.45); border-radius: 9px; background: rgba(105,45,39,.28); font: 11px/17px var(--mono); }
   .create-submit { width: 100%; }
   .form-note { margin: var(--s4) 0 0; color: var(--ink-3); font: 10px/16px var(--mono); }
-  .settings-panel { top: 0; right: 0; bottom: 0; width: min(360px, calc(100vw - 20px)); transform: none; border-radius: 0; border-width: 0 0 0 1px; animation: slide-in 240ms var(--pan); display: flex; flex-direction: column; }
   .panel-heading { display: flex; align-items: start; justify-content: space-between; margin-bottom: var(--s5); }
   .panel-heading h2 { font-size: 28px; }
   .icon-only { width: 32px; height: 32px; }
@@ -630,20 +709,7 @@
   .picker-row:hover { color: var(--ink); background: rgba(255,255,255,.09); }
   .picker-row > span:nth-child(2) { display: flex; flex-direction: column; flex: 1; }
   .picker-row small { color: var(--ink-3); font: 10px var(--mono); }
-  .setting-group { padding: var(--s4) 0; border-top: 1px solid var(--line); }
-  .setting-label { display: block; margin: 0 0 var(--s2); }
-  .setting-row { display: flex; justify-content: space-between; align-items: center; padding: var(--s3) 0; color: var(--ink-2); }
-  .setting-row input { appearance: none; width: 32px; height: 18px; border-radius: 999px; background: rgba(255,255,255,.14); position: relative; transition: background var(--pan); }
-  .setting-row input::before { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px; background: var(--ink); transition: transform var(--pan); }
-  .setting-row input:checked { background: var(--c3); }
-  .setting-row input:checked::before { transform: translateX(14px); }
-  .account-card { display: flex; align-items: center; gap: var(--s3); padding: var(--s3); border-radius: 10px; background: rgba(255,255,255,.05); }
-  .account-avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: var(--on-accent); background: var(--c4); font: 11px var(--mono); }
-  .account-card div { display: flex; flex-direction: column; }
-  .account-card small { color: var(--ink-3); font: 10px var(--mono); }
-  .settings-foot { display: flex; justify-content: space-between; margin-top: auto; padding-top: var(--s5); color: var(--ink-3); font: 10px var(--mono); }
   @keyframes enter { from { opacity: 0; transform: translate(-50%, -8px); } }
-  @keyframes slide-in { from { opacity: 0; transform: translateX(24px); } }
 
   @media (max-width: 760px) {
     .topbar { padding: 0 16px; gap: var(--s4); }
@@ -652,6 +718,7 @@
     .top-actions { gap: 0; }
     .shortcut { display: none; }
     .account-button { margin-left: var(--s1); }
+    .window-controls { display: none; }
     .stage { padding: var(--top) 16px 24px; }
     .launch-scene { display: block; padding: 12vh 8px 20px; }
     .instance-title { font-size: clamp(38px, 13vw, 62px); }

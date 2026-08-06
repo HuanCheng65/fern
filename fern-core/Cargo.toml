@@ -16,3 +16,4 @@ pearl-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+zip.workspace = true
