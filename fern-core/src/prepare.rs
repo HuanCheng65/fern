@@ -22,6 +22,7 @@ const VERSION_MANIFEST_URL: &str =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareResult {
+    pub instance_id: String,
     pub version_id: String,
     pub total_files: u64,
     pub total_bytes: u64,
@@ -40,10 +41,15 @@ struct AssetObject {
 
 pub async fn prepare_instance(
     paths: &DataPaths,
-    version_id: &str,
+    instance_id: &str,
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<PrepareResult> {
     paths.ensure_exists()?;
+    let profile = crate::list_instances(paths)?
+        .into_iter()
+        .find(|profile| profile.id.as_str() == instance_id)
+        .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))?;
+    let version_id = profile.game_version.as_str();
     let downloader =
         DownloadClient::new(vec![Arc::new(OfficialSource), Arc::new(BmclapiSource)], 64);
 
@@ -151,6 +157,7 @@ pub async fn prepare_instance(
     let mut unique = HashSet::new();
     tasks.retain(|task| unique.insert(task.path.clone()));
     let result = PrepareResult {
+        instance_id: instance_id.to_owned(),
         version_id: version_id.to_owned(),
         total_files: tasks.len() as u64,
         total_bytes: tasks.iter().map(|task| task.size).sum(),

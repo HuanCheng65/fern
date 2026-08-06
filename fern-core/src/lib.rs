@@ -3,12 +3,14 @@
 //! Tauri commands call this crate. It owns launcher state and translates
 //! download, Java, account, and process events into UI-facing values.
 
+mod catalog;
 mod data;
 mod event;
 mod instance;
 mod launch;
 mod prepare;
 
+pub use catalog::{VersionOption, create_instance, list_instances, list_versions};
 pub use data::DataPaths;
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;

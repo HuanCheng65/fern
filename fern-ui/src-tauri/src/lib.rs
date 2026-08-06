@@ -9,30 +9,20 @@ fn data_paths() -> Result<fern_core::DataPaths, String> {
 }
 
 #[tauri::command]
-fn default_instances() -> Vec<fern_core::InstanceProfile> {
-    vec![
-        fern_core::InstanceProfile::vanilla(
-            fern_core::InstanceId::parse("cinder-valley").expect("static instance id"),
-            "余烬谷",
-            "1.21.1",
-        ),
-        fern_core::InstanceProfile {
-            schema_version: 1,
-            id: fern_core::InstanceId::parse("moss-archive").expect("static instance id"),
-            name: "苔痕档案".to_owned(),
-            game_version: "1.20.4".to_owned(),
-            loader: fern_core::LoaderKind::NeoForge,
-            loader_profile: Some(fern_core::LoaderProfile {
-                kind: fern_core::LoaderKind::NeoForge,
-                version: "20.4.237".to_owned(),
-            }),
-            cover: fern_core::CoverSeed {
-                identity: "moss-archive".to_owned(),
-                growth: 21,
-            },
-            settings: fern_core::InstanceSettings::default(),
-        },
-    ]
+fn list_instances() -> Result<Vec<fern_core::InstanceProfile>, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+async fn list_versions() -> Result<Vec<fern_core::VersionOption>, String> {
+    fern_core::list_versions().await.map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn create_instance(name: String, game_version: String) -> Result<fern_core::InstanceProfile, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::create_instance(&paths, &name, &game_version).map_err(|error| format!("{error:#}"))
 }
 
 #[tauri::command]
@@ -43,7 +33,7 @@ fn offline_account(player_name: String) -> fern_core::Credentials {
 #[tauri::command]
 async fn prepare_instance(
     app: tauri::AppHandle,
-    version_id: String,
+    instance_id: String,
 ) -> Result<fern_core::PrepareResult, String> {
     let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
     let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -53,7 +43,7 @@ async fn prepare_instance(
             let _ = event_app.emit("download-event", event);
         }
     });
-    let result = fern_core::prepare_instance(&paths, &version_id, &events)
+    let result = fern_core::prepare_instance(&paths, &instance_id, &events)
         .await
         .map_err(|error| format!("{error:#}"));
     drop(events);
@@ -67,7 +57,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_name,
             data_paths,
-            default_instances,
+            list_instances,
+            list_versions,
+            create_instance,
             offline_account,
             prepare_instance
         ])

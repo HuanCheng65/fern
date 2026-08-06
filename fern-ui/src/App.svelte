@@ -36,6 +36,7 @@
     | { type: 'file_done'; path: string; bytes: number }
     | { type: 'progress'; done_bytes: number; speed_bps: number }
     | { type: 'task_finished'; failed: string[] }
+  type VersionOption = { id: string; kind: string; releaseTime: string; url: string }
 
   const scenes: { id: Scene; label: string }[] = [
     { id: 'launch', label: '启动' },
@@ -45,11 +46,7 @@
     { id: 'wardrobe', label: '衣柜' },
   ]
 
-  let instances: Instance[] = [
-    { id: 'cinder-valley', name: '余烬谷', version: '1.21.1', loader: 'Fabric', hours: '82.4 h', mods: 38, color: '#d47c51' },
-    { id: 'moss-archive', name: '苔痕档案', version: '1.20.4', loader: 'NeoForge', hours: '21.8 h', mods: 71, color: '#79a77d' },
-    { id: 'quiet-lands', name: '静默群岛', version: '1.19.2', loader: 'Vanilla', hours: '8.6 h', mods: 0, color: '#6d93b5' },
-  ]
+  let instances: Instance[] = []
 
   const packs = [
     { name: 'Create: Astral', author: 'The Astral Team', version: '1.18.2', downloads: '2.4M', color: '#b4a278' },
@@ -74,28 +71,27 @@
   let widgets: string[] = []
   let reducedEffects = false
   let dataRoot = ''
+  let loadingInstances = true
+  let instanceError = ''
+  let createOpen = false
+  let createName = ''
+  let createVersion = ''
+  let versions: VersionOption[] = []
+  let versionsLoading = false
+  let createError = ''
 
-  const selectedInstance = () => instances[selected]
+  const selectedInstance = () => instances[selected] ?? {
+    id: 'empty', name: '还没有实例', version: '选择一个版本开始', loader: 'Vanilla', hours: '0 h', mods: 0, color: '#49616b',
+  }
   const filteredInstances = () => instances.filter((item) => `${item.name}${item.version}${item.loader}`.toLowerCase().includes(query.toLowerCase()))
   const filteredPacks = () => packs.filter((pack) => `${pack.name}${pack.author}${pack.version}`.toLowerCase().includes(supplyQuery.toLowerCase()))
+  const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
   onMount(() => {
     let unlistenDownload: UnlistenFn | undefined
     void invoke<string>('app_name').then((value) => (appName = value)).catch(() => undefined)
     void invoke<{ root: string }>('data_paths').then((paths) => (dataRoot = paths.root)).catch(() => undefined)
-    void invoke<CoreInstance[]>('default_instances').then((profiles) => {
-      if (profiles.length === 0) return
-      instances = profiles.map((profile, index) => ({
-        id: profile.id,
-        name: profile.name,
-        version: profile.gameVersion,
-        loader: profile.loader === 'neo_forge' ? 'NeoForge' : profile.loader === 'vanilla' ? 'Vanilla' : profile.loader,
-        hours: index === 0 ? '82.4 h' : '21.8 h',
-        mods: index === 0 ? 38 : 71,
-        color: index === 0 ? '#d47c51' : '#79a77d',
-      }))
-      selected = Math.min(selected, instances.length - 1)
-    }).catch(() => undefined)
+    void loadInstances()
     if ('__TAURI_INTERNALS__' in window) {
       void listen<DownloadEvent>('download-event', ({ payload }) => {
         if (payload.type === 'task_started') {
@@ -138,6 +134,95 @@
     name: string
     gameVersion: string
     loader: string
+    cover?: { identity: string }
+  }
+
+  function mapInstance(profile: CoreInstance): Instance {
+    const color = profile.cover?.identity ? colorFor(profile.cover.identity) : '#49616b'
+    return {
+      id: profile.id,
+      name: profile.name,
+      version: profile.gameVersion,
+      loader: profile.loader === 'neo_forge' ? 'NeoForge' : profile.loader === 'vanilla' ? 'Vanilla' : profile.loader,
+      hours: '0 h',
+      mods: 0,
+      color,
+    }
+  }
+
+  async function loadInstances() {
+    loadingInstances = true
+    instanceError = ''
+    try {
+      const profiles = await invoke<CoreInstance[]>('list_instances')
+      instances = profiles.map(mapInstance)
+      selected = Math.min(selected, Math.max(0, instances.length - 1))
+    } catch (error) {
+      if (inTauri()) {
+        instanceError = String(error)
+      } else {
+        try {
+          const stored = localStorage.getItem('fern.instances')
+          instances = stored ? JSON.parse(stored) as Instance[] : []
+          selected = Math.min(selected, Math.max(0, instances.length - 1))
+        } catch (storageError) {
+          instanceError = String(storageError)
+        }
+      }
+    } finally {
+      loadingInstances = false
+    }
+  }
+
+  async function openCreate() {
+    createOpen = true
+    createError = ''
+    if (versions.length > 0 || versionsLoading) return
+    versionsLoading = true
+    try {
+      versions = inTauri()
+        ? await invoke<VersionOption[]>('list_versions')
+        : ((await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json').then((response) => response.json())).versions as Array<{ id: string; type: string; releaseTime: string; url: string }>).map((version) => ({ id: version.id, kind: version.type, releaseTime: version.releaseTime, url: version.url }))
+      createVersion = versions.find((version) => version.kind === 'release')?.id ?? versions[0]?.id ?? ''
+    } catch (error) {
+      createError = String(error)
+    } finally {
+      versionsLoading = false
+    }
+  }
+
+  async function createNewInstance() {
+    if (!createName.trim() || !createVersion) {
+      createError = '填写实例名称并选择 Minecraft 版本'
+      return
+    }
+    try {
+      const next = inTauri()
+        ? mapInstance(await invoke<CoreInstance>('create_instance', { name: createName, gameVersion: createVersion }))
+        : {
+            id: `browser-${Date.now()}`,
+            name: createName.trim(),
+            version: createVersion,
+            loader: 'Vanilla',
+            hours: '0 h',
+            mods: 0,
+            color: colorFor(createName),
+          }
+      instances = [...instances, next]
+      if (!inTauri()) localStorage.setItem('fern.instances', JSON.stringify(instances))
+      selected = instances.length - 1
+      createName = ''
+      createOpen = false
+      scene = 'launch'
+    } catch (error) {
+      createError = String(error)
+    }
+  }
+
+  function colorFor(seed: string) {
+    let hash = 0
+    for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+    return ['#d47c51', '#79a77d', '#6d93b5', '#a18b6f'][hash % 4]
   }
 
   function moveScene(delta: number) {
@@ -147,13 +232,17 @@
 
   async function startLaunch() {
     if (isLaunching) return
+    if (instances.length === 0) {
+      await openCreate()
+      return
+    }
     isLaunching = true
     launchError = ''
     launchProgress = 2
     launchStatus = '读取版本信息'
     if ('__TAURI_INTERNALS__' in window) {
       try {
-        await invoke('prepare_instance', { versionId: selectedInstance().version })
+        await invoke('prepare_instance', { instanceId: selectedInstance().id })
         launchProgress = 100
         launchStatus = '文件准备完成'
         window.setTimeout(() => {
@@ -229,6 +318,15 @@
   <main class="stage">
     {#if scene === 'launch'}
       <section class="launch-scene" aria-label="启动">
+        {#if instances.length === 0}
+          <div class="first-run">
+            <p class="eyebrow">Fern · 第一次打开</p>
+            <h1>先创建一个实例</h1>
+            <p>选择一个 Minecraft 版本，Fern 会把实例配置保存到本地，再按需补全游戏文件。</p>
+            <button class="launch-button" onclick={openCreate}><Plus size={17} />创建实例</button>
+            {#if loadingInstances}<span class="first-run-note">正在读取本地实例…</span>{:else if instanceError}<span class="first-run-error">{instanceError}</span>{/if}
+          </div>
+        {:else}
         <div class="launch-copy">
           <p class="eyebrow">正在播放 · {selectedInstance().loader}</p>
           <div class="title-row">
@@ -262,10 +360,11 @@
             <button class="widget-add" aria-label="添加组件" onclick={() => (showWidgetPicker = true)}><Plus size={18} /></button>
           </div>
         {/if}
+        {/if}
       </section>
     {:else if scene === 'instances'}
       <section class="content-scene">
-        <div class="section-heading"><div><p class="eyebrow">你的世界</p><h1>实例</h1></div><button class="outline-button" onclick={() => (selected = (selected + 1) % instances.length)}><Plus size={15} />新建实例</button></div>
+        <div class="section-heading"><div><p class="eyebrow">你的世界</p><h1>实例</h1></div><button class="outline-button" onclick={openCreate}><Plus size={15} />新建实例</button></div>
         <div class="instance-layout">
           <div class="instance-list">
             {#each instances as item, index (item.id)}
@@ -277,9 +376,13 @@
             {/each}
           </div>
           <div class="instance-detail">
+            {#if instances.length === 0}
+              <div class="detail-empty"><Package size={24} /><strong>还没有本地实例</strong><span>创建后会在这里显示版本、文件状态和修复入口。</span><button class="outline-button" onclick={openCreate}><Plus size={15} />创建实例</button></div>
+            {:else}
             <div class="detail-top"><div><p class="eyebrow">当前实例</p><h2>{selectedInstance().name}</h2><span>{selectedInstance().version} · {selectedInstance().loader}</span></div><button class="launch-mini" onclick={startLaunch}><Play size={14} fill="currentColor" />启动</button></div>
             <div class="detail-stats"><div><small>游玩时长</small><strong>{selectedInstance().hours}</strong></div><div><small>模组数量</small><strong>{selectedInstance().mods}</strong></div><div><small>运行状态</small><strong>就绪</strong></div></div>
-            <div class="detail-links"><button><FolderOpen size={15} />打开游戏目录</button><button><Package size={15} />管理内容</button><button><Download size={15} />修复文件</button></div>
+            <div class="detail-links"><button><FolderOpen size={15} />打开游戏目录</button><button><Package size={15} />管理内容</button><button onclick={startLaunch}><Download size={15} />修复文件</button></div>
+            {/if}
           </div>
         </div>
       </section>
@@ -301,6 +404,20 @@
       <section class="empty-scene"><div class="empty-glyph"><Gamepad2 size={29} strokeWidth={1.4} /></div><p class="eyebrow">{scenes.find((item) => item.id === scene)?.label}</p><h1>这片区域正在生长</h1><p>基础启动链路已经就绪，更多内容会在后续里程碑中进入世界。</p><button class="outline-button" onclick={() => (scene = 'launch')}>回到启动 <ArrowRight size={15} /></button></section>
     {/if}
   </main>
+
+  {#if createOpen}
+    <div class="modal-scrim" role="presentation" onclick={() => (createOpen = false)}></div>
+    <div class="create-panel" role="dialog" aria-modal="true" aria-label="新建实例">
+      <div class="panel-heading"><div><p class="eyebrow">新世界</p><h2>创建实例</h2></div><button class="icon-only" aria-label="关闭" onclick={() => (createOpen = false)}><X size={17} /></button></div>
+      <label class="form-field"><span>实例名称</span><input bind:value={createName} placeholder="例如：余烬谷" maxlength="64" /></label>
+      <label class="form-field"><span>Minecraft 版本</span>
+        {#if versionsLoading}<div class="form-loading">正在读取 Mojang 版本列表…</div>{:else}<select bind:value={createVersion} aria-label="选择 Minecraft 版本"><option value="" disabled>选择版本</option>{#each versions.filter((version) => version.kind === 'release').slice(0, 80) as version (version.id)}<option value={version.id}>{version.id}</option>{/each}</select>{/if}
+      </label>
+      {#if createError}<div class="form-error" role="alert">{createError}</div>{/if}
+      <button class="launch-button create-submit" onclick={createNewInstance} disabled={versionsLoading}><Plus size={17} />保存实例</button>
+      <p class="form-note">配置保存到本机数据目录，下载在启动或修复时开始。</p>
+    </div>
+  {/if}
 
   {#if showWidgetPicker}
     <div class="modal-scrim" role="presentation" onclick={() => (showWidgetPicker = false)}></div>
@@ -369,6 +486,11 @@
   .launch-scene, .content-scene { height: 100%; min-height: 0; display: flex; }
   .launch-scene { align-items: center; justify-content: space-between; gap: var(--s8); padding: 4vh 4vw 4vh 4vw; }
   .launch-copy { max-width: 560px; }
+  .first-run { width: min(560px, 80vw); }
+  .first-run h1 { margin: 0; font-size: clamp(40px, 6vw, 70px); letter-spacing: -.05em; }
+  .first-run > p:not(.eyebrow) { max-width: 44ch; margin: var(--s5) 0 var(--s6); color: var(--ink-2); font: 13px/21px var(--mono); }
+  .first-run-note, .first-run-error { display: block; margin-top: var(--s4); color: var(--ink-3); font: 11px/17px var(--mono); }
+  .first-run-error, .form-error { color: #f0b0a1; }
   .eyebrow { margin: 0 0 var(--s3); color: var(--ink-3); font: 11px/16px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
   .title-row { display: flex; align-items: center; }
   .instance-title { display: inline-flex; align-items: center; gap: var(--s3); padding: 0; color: var(--ink); font-size: clamp(38px, 6vw, 74px); line-height: 1; letter-spacing: -.045em; font-weight: 700; text-align: left; transition: color var(--pan); }
@@ -415,6 +537,9 @@
   .row-copy small, .row-hours { color: var(--ink-3); font: 10px/16px var(--mono); }
   .row-hours { white-space: nowrap; }
   .instance-detail { padding: var(--s6); }
+  .detail-empty { height: 100%; min-height: 300px; display: grid; place-items: center; align-content: center; gap: var(--s3); color: var(--ink-3); text-align: center; }
+  .detail-empty strong { color: var(--ink); font-size: 20px; }
+  .detail-empty span { max-width: 32ch; font: 11px/17px var(--mono); }
   .detail-top { display: flex; align-items: start; justify-content: space-between; padding-bottom: var(--s6); border-bottom: 1px solid var(--line); }
   .detail-top h2 { font-size: clamp(28px, 4vw, 46px); }
   .detail-top span { display: block; margin-top: var(--s2); color: var(--ink-2); font: 11px var(--mono); }
@@ -464,6 +589,17 @@
   .command-footer { display: flex; justify-content: flex-end; gap: var(--s4); padding: var(--s3) var(--s5); border-top: 1px solid var(--line); color: var(--ink-3); font: 10px var(--mono); }
   .command-footer span { display: inline-flex; align-items: center; gap: 5px; }
   .widget-picker, .settings-panel { top: 50%; right: var(--pad-x); width: min(340px, calc(100vw - 32px)); transform: translateY(-50%); padding: var(--s5); border-radius: 16px; animation: enter 200ms var(--pan); }
+  .create-panel { position: fixed; top: 50%; left: 50%; z-index: 21; width: min(420px, calc(100vw - 32px)); transform: translate(-50%, -50%); padding: var(--s5); border: 1px solid var(--line); border-radius: 16px; background: rgba(12,16,18,.92); backdrop-filter: blur(28px); box-shadow: var(--shadow-2); animation: enter 200ms var(--pan); }
+  .form-field { display: grid; gap: var(--s2); margin-bottom: var(--s4); color: var(--ink-2); font-size: 12px; }
+  .form-field > span { color: var(--ink-3); font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .form-field input, .form-field select { width: 100%; min-height: 42px; padding: 0 var(--s3); border: 1px solid var(--line); border-radius: 9px; outline: 0; background: rgba(255,255,255,.06); color: var(--ink); }
+  .form-field input:focus, .form-field select:focus { border-color: var(--c4); }
+  .form-field input::placeholder { color: var(--ink-3); }
+  .form-field select option { color: #172019; }
+  .form-loading { min-height: 42px; display: flex; align-items: center; padding: 0 var(--s3); border: 1px solid var(--line); border-radius: 9px; color: var(--ink-3); font: 11px var(--mono); }
+  .form-error { margin: -4px 0 var(--s4); padding: var(--s3); border: 1px solid rgba(226,125,104,.45); border-radius: 9px; background: rgba(105,45,39,.28); font: 11px/17px var(--mono); }
+  .create-submit { width: 100%; }
+  .form-note { margin: var(--s4) 0 0; color: var(--ink-3); font: 10px/16px var(--mono); }
   .settings-panel { top: 0; right: 0; bottom: 0; width: min(360px, calc(100vw - 20px)); transform: none; border-radius: 0; border-width: 0 0 0 1px; animation: slide-in 240ms var(--pan); display: flex; flex-direction: column; }
   .panel-heading { display: flex; align-items: start; justify-content: space-between; margin-bottom: var(--s5); }
   .panel-heading h2 { font-size: 28px; }

@@ -15,6 +15,10 @@ pub struct VersionManifestEntry {
     #[serde(rename = "type")]
     pub kind: String,
     pub url: String,
+    #[serde(rename = "releaseTime", default)]
+    pub release_time: Option<String>,
+    #[serde(default)]
+    pub time: Option<String>,
     #[serde(default)]
     pub sha1: Option<String>,
 }
