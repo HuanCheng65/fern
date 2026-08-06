@@ -73,12 +73,15 @@ impl DownloadSource for BmclapiSource {
             "libraries.minecraft.net" => "bmclapi2.bangbang93.com",
             "piston-meta.mojang.com" => "bmclapi2.bangbang93.com",
             "piston-data.mojang.com" => "bmclapi2.bangbang93.com",
+            "resources.download.minecraft.net" => "bmclapi2.bangbang93.com",
             _ => return official.clone(),
         };
         let mut rewritten = official.clone();
         let _ = rewritten.set_host(Some(replacement));
         if host == "libraries.minecraft.net" {
             rewritten.set_path(&format!("/maven{}", official.path()));
+        } else if host == "resources.download.minecraft.net" {
+            rewritten.set_path(&format!("/assets{}", official.path()));
         }
         rewritten
     }
@@ -116,6 +119,7 @@ pub fn safe_join(root: &Path, relative: &Path) -> Result<PathBuf> {
     Ok(root.join(relative))
 }
 
+#[derive(Clone)]
 pub struct DownloadClient {
     client: reqwest::Client,
     sources: Vec<Arc<dyn DownloadSource>>,
@@ -126,9 +130,32 @@ impl DownloadClient {
     pub fn new(sources: Vec<Arc<dyn DownloadSource>>, concurrency: usize) -> Self {
         Self {
             client: reqwest::Client::new(),
-            sources,
+            sources: if sources.is_empty() {
+                vec![Arc::new(OfficialSource)]
+            } else {
+                sources
+            },
             semaphore: Arc::new(Semaphore::new(concurrency.max(1))),
         }
+    }
+
+    pub async fn fetch(&self, url: &str) -> Result<Vec<u8>> {
+        let url = Url::parse(url).context("invalid download URL")?;
+        let mut last_error = None;
+        for source in &self.sources {
+            let rewritten = source.rewrite(&url);
+            match self.client.get(rewritten).send().await {
+                Ok(response) if response.status().is_success() => match response.bytes().await {
+                    Ok(bytes) => return Ok(bytes.to_vec()),
+                    Err(error) => last_error = Some(error.into()),
+                },
+                Ok(response) => {
+                    last_error = Some(anyhow!("download failed with HTTP {}", response.status()))
+                }
+                Err(error) => last_error = Some(error.into()),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow!("no download source configured")))
     }
 
     pub async fn download(
@@ -136,27 +163,68 @@ impl DownloadClient {
         task: &DownloadTask,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<()> {
+        self.download_all(vec![task.clone()], events).await
+    }
+
+    pub async fn download_all(
+        &self,
+        tasks: Vec<DownloadTask>,
+        events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+    ) -> Result<()> {
+        let total_bytes = tasks.iter().map(|task| task.size).sum();
+        let _ = events.send(DownloadEvent::TaskStarted {
+            total_files: tasks.len() as u64,
+            total_bytes,
+        });
+        let started = Instant::now();
+        let mut jobs = tokio::task::JoinSet::new();
+        for task in tasks {
+            let client = self.clone();
+            jobs.spawn(async move {
+                let result = client.download_one(&task).await;
+                (task, result)
+            });
+        }
+
+        let mut done_bytes = 0u64;
+        let mut failed = Vec::new();
+        while let Some(joined) = jobs.join_next().await {
+            match joined {
+                Ok((task, Ok(()))) => {
+                    done_bytes = done_bytes.saturating_add(task.size);
+                    let speed =
+                        (done_bytes as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+                    let _ = events.send(DownloadEvent::FileDone {
+                        path: task.path.display().to_string(),
+                        bytes: task.size,
+                    });
+                    let _ = events.send(DownloadEvent::Progress {
+                        done_bytes,
+                        speed_bps: speed,
+                    });
+                }
+                Ok((task, Err(_))) => failed.push(task.path.display().to_string()),
+                Err(error) => failed.push(format!("download worker: {error}")),
+            }
+        }
+        let _ = events.send(DownloadEvent::TaskFinished {
+            failed: failed.clone(),
+        });
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!("{} files failed to download", failed.len()))
+        }
+    }
+
+    async fn download_one(&self, task: &DownloadTask) -> Result<()> {
         let _permit = self
             .semaphore
             .acquire()
             .await
             .context("download semaphore closed")?;
-        let total = task.size;
-        let _ = events.send(DownloadEvent::TaskStarted {
-            total_files: 1,
-            total_bytes: total,
-        });
 
         if verify_file(&task.path, &task.sha1, task.size).await? {
-            let _ = events.send(DownloadEvent::FileDone {
-                path: task.path.display().to_string(),
-                bytes: total,
-            });
-            let _ = events.send(DownloadEvent::Progress {
-                done_bytes: total,
-                speed_bps: 0,
-            });
-            let _ = events.send(DownloadEvent::TaskFinished { failed: Vec::new() });
             return Ok(());
         }
 
@@ -164,7 +232,6 @@ impl DownloadClient {
             tokio::fs::create_dir_all(parent).await?;
         }
         let temporary = task.path.with_extension("part");
-        let started = Instant::now();
         let mut last_error = None;
         for source in &self.sources {
             let url = source.rewrite(&task.url);
@@ -174,18 +241,10 @@ impl DownloadClient {
                         if bytes.len() as u64 == task.size && sha1_matches(&bytes, &task.sha1) =>
                     {
                         tokio::fs::write(&temporary, &bytes).await?;
+                        if tokio::fs::try_exists(&task.path).await? {
+                            tokio::fs::remove_file(&task.path).await?;
+                        }
                         tokio::fs::rename(&temporary, &task.path).await?;
-                        let elapsed = started.elapsed().as_secs_f64().max(0.001);
-                        let speed = (bytes.len() as f64 / elapsed) as u64;
-                        let _ = events.send(DownloadEvent::FileDone {
-                            path: task.path.display().to_string(),
-                            bytes: bytes.len() as u64,
-                        });
-                        let _ = events.send(DownloadEvent::Progress {
-                            done_bytes: bytes.len() as u64,
-                            speed_bps: speed,
-                        });
-                        let _ = events.send(DownloadEvent::TaskFinished { failed: Vec::new() });
                         return Ok(());
                     }
                     Ok(_) => {
@@ -200,8 +259,6 @@ impl DownloadClient {
             }
         }
         let _ = tokio::fs::remove_file(&temporary).await;
-        let failed = vec![task.path.display().to_string()];
-        let _ = events.send(DownloadEvent::TaskFinished { failed });
         Err(last_error.unwrap_or_else(|| anyhow!("no download source configured")))
     }
 }

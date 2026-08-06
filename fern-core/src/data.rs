@@ -10,6 +10,7 @@ pub struct DataPaths {
     pub assets: PathBuf,
     pub libraries: PathBuf,
     pub runtimes: PathBuf,
+    pub versions: PathBuf,
     pub instances: PathBuf,
 }
 
@@ -20,6 +21,7 @@ impl DataPaths {
             assets: root.join("assets"),
             libraries: root.join("libraries"),
             runtimes: root.join("runtimes"),
+            versions: root.join("versions"),
             instances: root.join("instances"),
             root,
         }
@@ -42,6 +44,7 @@ impl DataPaths {
             &self.assets,
             &self.libraries,
             &self.runtimes,
+            &self.versions,
             &self.instances,
         ] {
             fs::create_dir_all(path)?;
@@ -121,6 +124,7 @@ mod tests {
             paths.assets,
             paths.libraries,
             paths.runtimes,
+            paths.versions,
             paths.instances,
         ] {
             assert!(path.is_dir(), "{} should be a directory", path.display());

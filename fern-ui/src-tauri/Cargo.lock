@@ -897,6 +897,7 @@ dependencies = [
  "anyhow",
  "fern-download",
  "fern-meta",
+ "md-5",
  "pearl-core",
  "serde",
  "serde_json",
@@ -911,6 +912,7 @@ dependencies = [
  "fern-meta",
  "reqwest 0.12.28",
  "serde",
+ "sha1",
  "tokio",
 ]
 
@@ -918,6 +920,7 @@ dependencies = [
 name = "fern-meta"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
 ]
@@ -931,6 +934,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
 ]
 
 [[package]]
@@ -2007,6 +2011,16 @@ dependencies = [
  "log",
  "tendril",
  "web_atoms",
+]
+
+[[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest",
 ]
 
 [[package]]

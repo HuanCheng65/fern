@@ -60,6 +60,8 @@ pub struct VersionDownloads {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DownloadInfo {
+    #[serde(default)]
+    pub id: Option<String>,
     pub sha1: String,
     pub size: u64,
     pub url: String,

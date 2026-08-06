@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event'
   import {
     ArrowRight,
     ChevronDown,
@@ -30,6 +31,11 @@
     mods: number
     color: string
   }
+  type DownloadEvent =
+    | { type: 'task_started'; total_files: number; total_bytes: number }
+    | { type: 'file_done'; path: string; bytes: number }
+    | { type: 'progress'; done_bytes: number; speed_bps: number }
+    | { type: 'task_finished'; failed: string[] }
 
   const scenes: { id: Scene; label: string }[] = [
     { id: 'launch', label: '启动' },
@@ -61,6 +67,9 @@
   let supplyQuery = ''
   let isLaunching = false
   let launchProgress = 0
+  let launchStatus = ''
+  let launchError = ''
+  let downloadTotalBytes = 0
   let showWidgetPicker = false
   let widgets: string[] = []
   let reducedEffects = false
@@ -71,6 +80,7 @@
   const filteredPacks = () => packs.filter((pack) => `${pack.name}${pack.author}${pack.version}`.toLowerCase().includes(supplyQuery.toLowerCase()))
 
   onMount(() => {
+    let unlistenDownload: UnlistenFn | undefined
     void invoke<string>('app_name').then((value) => (appName = value)).catch(() => undefined)
     void invoke<{ root: string }>('data_paths').then((paths) => (dataRoot = paths.root)).catch(() => undefined)
     void invoke<CoreInstance[]>('default_instances').then((profiles) => {
@@ -86,6 +96,23 @@
       }))
       selected = Math.min(selected, instances.length - 1)
     }).catch(() => undefined)
+    if ('__TAURI_INTERNALS__' in window) {
+      void listen<DownloadEvent>('download-event', ({ payload }) => {
+        if (payload.type === 'task_started') {
+          downloadTotalBytes = payload.total_bytes
+          launchStatus = `检查 ${payload.total_files} 个文件`
+        }
+        if (payload.type === 'progress') {
+          launchProgress = downloadTotalBytes > 0
+            ? Math.min(99, Math.round((payload.done_bytes / downloadTotalBytes) * 100))
+            : 0
+          launchStatus = `${formatBytes(payload.done_bytes)} / ${formatBytes(downloadTotalBytes)} · ${formatBytes(payload.speed_bps)}/s`
+        }
+        if (payload.type === 'task_finished' && payload.failed.length > 0) {
+          launchStatus = `${payload.failed.length} 个文件需要重试`
+        }
+      }).then((unlisten) => (unlistenDownload = unlisten))
+    }
     const onKeydown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
@@ -100,7 +127,10 @@
       if (!commandOpen && !settingsOpen && event.key === 'ArrowLeft') moveScene(-1)
     }
     window.addEventListener('keydown', onKeydown)
-    return () => window.removeEventListener('keydown', onKeydown)
+    return () => {
+      window.removeEventListener('keydown', onKeydown)
+      unlistenDownload?.()
+    }
   })
 
   type CoreInstance = {
@@ -115,10 +145,35 @@
     scene = scenes[(index + delta + scenes.length) % scenes.length].id
   }
 
-  function startLaunch() {
+  async function startLaunch() {
     if (isLaunching) return
     isLaunching = true
+    launchError = ''
+    launchProgress = 2
+    launchStatus = '读取版本信息'
+    if ('__TAURI_INTERNALS__' in window) {
+      try {
+        await invoke('prepare_instance', { versionId: selectedInstance().version })
+        launchProgress = 100
+        launchStatus = '文件准备完成'
+        window.setTimeout(() => {
+          isLaunching = false
+          launchProgress = 0
+          launchStatus = ''
+        }, 1200)
+      } catch (error) {
+        launchError = String(error)
+        launchStatus = '文件补全失败'
+        isLaunching = false
+      }
+      return
+    }
+    simulateLaunch()
+  }
+
+  function simulateLaunch() {
     launchProgress = 8
+    launchStatus = '浏览器预览 · 模拟文件补全'
     const timer = window.setInterval(() => {
       launchProgress = Math.min(100, launchProgress + 13)
       if (launchProgress >= 100) {
@@ -126,9 +181,17 @@
         window.setTimeout(() => {
           isLaunching = false
           launchProgress = 0
+          launchStatus = ''
         }, 700)
       }
     }, 320)
+  }
+
+  function formatBytes(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
+    if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+    return `${(bytes / 1024 ** 3).toFixed(2)} GB`
   }
 
   function addWidget(name: string) {
@@ -174,10 +237,11 @@
           <p class="version-line">Minecraft {selectedInstance().version} <span>·</span> {selectedInstance().hours} <span>·</span> {selectedInstance().mods} 个模组</p>
           <button class:running={isLaunching} class="launch-button" onclick={startLaunch} disabled={isLaunching}>
             <span class="launch-fill" style={`width:${launchProgress}%`}></span>
-            <span class="launch-label">{isLaunching ? `准备世界 ${launchProgress}%` : '启动游戏'}</span>
+            <span class="launch-label">{isLaunching ? `补全文件 ${launchProgress}%` : '启动游戏'}</span>
             {#if !isLaunching}<Play size={17} fill="currentColor" strokeWidth={1.4} />{:else}<Sparkles size={17} strokeWidth={1.5} />{/if}
           </button>
-          <div class="launch-meta"><span class="status-dot"></span>离线账户 · 本地实例</div>
+          <div class="launch-meta"><span class="status-dot"></span>{launchStatus || '离线账户 · 本地实例'}</div>
+          {#if launchError}<div class="launch-error" role="alert">{launchError}</div>{/if}
         </div>
 
         {#if widgets.length === 0}
@@ -317,6 +381,7 @@
   .launch-fill { position: absolute; inset: 0 auto 0 0; z-index: -1; background: var(--c3); opacity: .42; transition: width 300ms cubic-bezier(.22,1,.36,1); }
   .launch-label { position: relative; z-index: 1; }
   .launch-meta { display: flex; align-items: center; gap: var(--s2); margin-top: var(--s4); color: var(--ink-3); font: 11px/16px var(--mono); }
+  .launch-error { max-width: 56ch; margin-top: var(--s3); padding: var(--s3); border: 1px solid rgba(226, 125, 104, .45); border-radius: 9px; color: #f0b0a1; background: rgba(105, 45, 39, .28); font: 11px/17px var(--mono); user-select: text; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c4); box-shadow: 0 0 0 4px rgba(255,255,255,.06); }
   .widget-empty { align-self: flex-end; width: min(310px, 32vw); padding: var(--s5) 0; color: var(--ink-3); border-top: 1px solid var(--line); }
   .widget-empty p { margin: 0 0 var(--s1); color: var(--ink-2); font-size: var(--t-body); }

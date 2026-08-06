@@ -7,6 +7,7 @@ mod data;
 mod event;
 mod instance;
 mod launch;
+mod prepare;
 
 pub use data::DataPaths;
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
@@ -16,6 +17,7 @@ pub use instance::{
     CoverSeed, InstanceId, InstanceProfile, InstanceSettings, LoaderKind, LoaderProfile, Resolution,
 };
 pub use launch::{Credentials, LaunchPlan, LaunchVariables, offline_credentials};
+pub use prepare::{PrepareResult, prepare_instance};
 
 /// Marker for the Pearl integration boundary.
 ///

@@ -40,6 +40,27 @@ fn offline_account(player_name: String) -> fern_core::Credentials {
     fern_core::offline_credentials(player_name)
 }
 
+#[tauri::command]
+async fn prepare_instance(
+    app: tauri::AppHandle,
+    version_id: String,
+) -> Result<fern_core::PrepareResult, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let event_app = app.clone();
+    let forwarder = tauri::async_runtime::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            let _ = event_app.emit("download-event", event);
+        }
+    });
+    let result = fern_core::prepare_instance(&paths, &version_id, &events)
+        .await
+        .map_err(|error| format!("{error:#}"));
+    drop(events);
+    let _ = forwarder.await;
+    result
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -47,8 +68,10 @@ pub fn run() {
             app_name,
             data_paths,
             default_instances,
-            offline_account
+            offline_account,
+            prepare_instance
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fern");
 }
+use tauri::Emitter;
