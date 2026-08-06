@@ -28,19 +28,19 @@
   <div class="landing-mark"><span></span></div>
   {#if step === 'welcome'}
     <div class="landing-copy">
-      <p class="eyebrow">Fern · Minecraft launcher</p>
-      <h1>从这里，<br /><em>回到你的世界</em></h1>
-      <p class="landing-lede">Fern 把实例文件、游戏版本和本地身份放在同一个安静的工作台里。</p>
-      <button class="landing-enter" onclick={continueToProfile}>创建离线档案 <ArrowRight size={17} /></button>
+      <p class="eyebrow">Fern</p>
+      <h1>万千世界，<br /><em>一个入口。</em></h1>
+      <p class="landing-lede">欢迎使用 Fern。几步设置之后，就可以出发了。</p>
+      <button class="landing-enter" onclick={continueToProfile}>开始设置 <ArrowRight size={17} /></button>
     </div>
   {:else}
     <div class="landing-copy profile-step">
-      <p class="eyebrow">第一步 · 本地身份</p>
-      <h1>你想用什么<br /><em>名字进入世界</em></h1>
-      <p class="landing-lede">这个名字只保存在本机。以后接入正版或第三方验证时，可以继续使用同一个档案。</p>
-      <label class="profile-field"><span>玩家名称</span><input bind:value={playerName} maxlength="16" autocomplete="nickname" placeholder="例如 FernPlayer" onkeydown={(event) => event.key === 'Enter' && createProfile()} /></label>
+      <p class="eyebrow">账户设置</p>
+      <h1>建立你的<br /><em>第一个档案</em></h1>
+      <p class="landing-lede">请设置一个玩家名称。该名称将用于离线游戏，并作为后续账户验证的基础。</p>
+      <label class="profile-field"><span>玩家名称</span><input bind:value={playerName} maxlength="16" autocomplete="nickname" placeholder="输入玩家名称" onkeydown={(event) => event.key === 'Enter' && createProfile()} /></label>
       {#if error}<p class="profile-error" role="alert">{error}</p>{/if}
-      <div class="profile-actions"><button class="back-link" onclick={() => (step = 'welcome')}>返回</button><button class="landing-enter" onclick={createProfile}>进入工作台 <ArrowRight size={17} /></button></div>
+      <div class="profile-actions"><button class="back-link" onclick={() => (step = 'welcome')}>上一步</button><button class="landing-enter" onclick={createProfile}>完成设置 <ArrowRight size={17} /></button></div>
     </div>
   {/if}
   <div class="landing-foot"><span>离线优先</span><span>·</span><span>本地实例</span><span>·</span><span>开放协议</span></div>
