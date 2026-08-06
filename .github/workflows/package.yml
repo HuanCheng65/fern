@@ -1,0 +1,114 @@
+name: Check and package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: fern-ui/pnpm-lock.yaml
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: fern-ui
+
+      - name: Check frontend
+        run: pnpm check
+        working-directory: fern-ui
+
+      - name: Build frontend
+        run: pnpm build
+        working-directory: fern-ui
+
+      - name: Test Rust workspace
+        run: cargo test --workspace --locked
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+  package:
+    name: Package ${{ matrix.name }}
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            build_args: --target x86_64-pc-windows-msvc --no-bundle
+            artifact_name: Fern-Windows-x64-portable
+            artifact_paths: fern-ui/src-tauri/target/x86_64-pc-windows-msvc/release/fern-ui.exe
+          - name: macOS universal
+            runner: macos-14
+            rust_targets: aarch64-apple-darwin x86_64-apple-darwin
+            build_args: --target universal-apple-darwin --bundles app,dmg
+            artifact_name: Fern-macOS-universal
+            artifact_paths: |
+              fern-ui/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+              fern-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: fern-ui/pnpm-lock.yaml
+
+      - name: Install Rust targets
+        run: rustup target add ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fern-ui/src-tauri -> target
+          shared-key: ${{ matrix.artifact_name }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: fern-ui
+
+      - name: Build desktop package
+        run: pnpm tauri build ${{ matrix.build_args }}
+        working-directory: fern-ui
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_paths }}
+          if-no-files-found: error
+          compression-level: 6
