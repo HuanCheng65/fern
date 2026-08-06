@@ -4,12 +4,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{BmclapiSource, DownloadClient, OfficialSource};
+use fern_download::DownloadClient;
 use fern_meta::{VersionManifest, VersionManifestEntry};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
-use crate::{DataPaths, InstanceId, InstanceProfile};
+use crate::{DataPaths, InstanceId, InstanceProfile, settings::source_order};
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -89,7 +88,7 @@ pub fn create_instance(
 }
 
 pub async fn list_versions() -> Result<Vec<VersionOption>> {
-    let client = DownloadClient::new(vec![Arc::new(OfficialSource), Arc::new(BmclapiSource)], 4);
+    let client = DownloadClient::new(source_order(), 4);
     let bytes = client
         .fetch(VERSION_MANIFEST_URL)
         .await

@@ -1,89 +1,122 @@
 /*
- * Token 体系（见 docs/UI_DESIGN.md 六、九）。
+ * Token 体系与基础样式（见 docs/UI_DESIGN.md 六、九）。
  *
- * --c0..--c4 由背景层注入，不在这里写死：任何背景源都必须交出一份色板，
- * 其余的一切向它取色。这份文件定的是不随背景变的东西——尺度。
+ * 这个文件是界面唯一的真源。三类东西住在这里：
  *
- * 尺度全部离散。间距是 4 的倍数，字号是一张挑好的表，圆角三档。能选的值
- * 少，界面才不会在一百个 13px 和 14px 之间慢慢烂掉。
+ *   1. 尺度   间距、字号、圆角、时长。全部离散，能选的值少，界面才不会
+ *             在一百个 13px 和 14px 之间慢慢烂掉。
+ *   2. 主题   密度、圆角、动效、强调色。由 lib/theme.svelte.ts 写在 body 上，
+ *             覆盖这里的默认值——玩家能动的就是这几个乘数。
+ *   3. 元件   按钮、输入框、列表行、字号类。做成全局 class 而不是组件，
+ *             因为 Svelte 的样式是组件私有的，共用一套 class 是让五个场景
+ *             长得一样的最短路径。
+ *
+ * 层级只有两级：内容直接坐在背景上（靠留白和发丝线分组），只有浮层
+ * （命令面板、对话框）才有玻璃、描边和影子。界面本身不画花纹。
  */
 
 :root {
-  --sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', sans-serif;
-  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
 
-  /* 由当前群系注入，这里的值只是第一帧画出来之前的样子 */
+  /*
+   * 不自带字体。每个平台的原生字体在自己平台上都是最好看的那个，尤其
+   * macOS 的苹方——打包一套 Latin 字体反而会把中文和西文拆成两种气质。
+   */
+  --sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui,
+    'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  --mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, 'Noto Sans Mono',
+    monospace;
+
+  /*
+   * 由背景层注入（components/Backdrop.svelte）。这里的值只是第一帧画出来
+   * 之前的样子。--c4 是强调色，--on-accent 是压在它上面的文字色。
+   */
   --c0: #0a1016;
   --c1: #12283a;
   --c2: #1e5468;
   --c3: #3e9aa4;
   --c4: #a8dcd4;
-
-  --ink: #f2f5f5;
-  --ink-2: rgba(242, 245, 245, 0.62);
-  --ink-3: rgba(242, 245, 245, 0.36);
-
-  /* 压在 --c4 上的文字色。--c4 随群系和昼夜可明可暗，深色字压不住所有情况，
-     所以由背景层按亮度一起注入；这里只是第一帧的样子。 */
   --on-accent: #0a0f12;
-
-  --glass: rgba(14, 18, 20, 0.58);
-  --glass-2: rgba(20, 26, 28, 0.74);
-  --line: rgba(255, 255, 255, 0.11);
-  --line-2: rgba(255, 255, 255, 0.06);
-
-  /*
-   * 影子。卡片和按钮浮在画上，靠弥散的影子和玻璃本身分层，不靠描边——
-   * 描边是线框稿的语言。两档：小件一档，卡片和面板一档。
-   */
-  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.16), 0 8px 24px rgba(0, 0, 0, 0.18);
-  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.22), 0 16px 48px rgba(0, 0, 0, 0.3);
-  /* 强调色的弥散光，由背景层随色板一起注入；这里只是第一帧的样子。 */
   --accent-glow: rgba(168, 220, 212, 0.3);
 
-  /* 间距 */
-  --s1: 4px;
-  --s2: 8px;
-  --s3: 12px;
-  --s4: 16px;
-  --s5: 24px;
-  --s6: 32px;
-  --s7: 48px;
-  --s8: 64px;
+  /*
+   * 主题层。默认全部转发给背景交出的色板——出厂时启动器向背景学色彩。
+   * 玩家锁定颜色后，theme.svelte.ts 会在 body 上覆盖这三行。
+   */
+  --accent: var(--c4);
+  --accent-ink: var(--on-accent);
+  --accent-soft: var(--accent-glow);
 
-  /* 字号 */
-  --t-cap: 11px;
-  --t-mono: 12px;
+  /* 主题乘数。密度只缩间距不缩字号——字号缩了就是另一套设计了。 */
+  --density: 1;
+  --radius: 1;
+  --motion: 1;
+
+  /* 文字。四档就够：正文、次要、说明、几乎消失。 */
+  --ink: #f3f6f6;
+  --ink-2: rgba(243, 246, 246, 0.68);
+  --ink-3: rgba(243, 246, 246, 0.42);
+  --ink-4: rgba(243, 246, 246, 0.22);
+  --danger: #eb9c88;
+
+  /* 压在背景上的浅色叠加，用于 hover 和选中。不描边。 */
+  --tint-1: rgba(255, 255, 255, 0.055);
+  --tint-2: rgba(255, 255, 255, 0.1);
+  --tint-3: rgba(255, 255, 255, 0.16);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --hairline-2: rgba(255, 255, 255, 0.055);
+
+  /* 浮层。整个界面只有这一种「有实体」的表面。 */
+  --panel: rgba(11, 14, 16, 0.82);
+  --panel-line: rgba(255, 255, 255, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.32), 0 28px 70px rgba(0, 0, 0, 0.46);
+
+  /* 间距，4 的倍数，跟着密度缩放。 */
+  --s1: calc(4px * var(--density));
+  --s2: calc(8px * var(--density));
+  --s3: calc(12px * var(--density));
+  --s4: calc(16px * var(--density));
+  --s5: calc(24px * var(--density));
+  --s6: calc(32px * var(--density));
+  --s7: calc(48px * var(--density));
+  --s8: calc(72px * var(--density));
+
+  /* 字号。一张挑好的表，别处不许再写数字。 */
+  --t-micro: 11px;
+  --t-small: 12px;
   --t-body: 14px;
   --t-lead: 16px;
-  --t-h3: 20px;
-  --t-h2: 28px;
-  --t-h1: 44px;
+  --t-h2: 19px;
+  --t-h1: clamp(26px, 2.4vw, 32px);
+  --t-display: clamp(40px, 5.4vw, 68px);
 
-  /* 圆角 */
-  --r1: 8px;
-  --r2: 12px;
-  --r3: 16px;
+  /* 圆角，三档。 */
+  --r1: calc(7px * var(--radius));
+  --r2: calc(11px * var(--radius));
+  --r3: calc(18px * var(--radius));
 
-  /*
-   * 栅格。窗口是竖幅的会话面板，不是横幅的落地页：内容就是「一个头部状态
-   * 加一列成员」，竖窗才是这个形状的画框。列宽由场景自己定（居中、有上限），
-   * 这里只定边距和顶栏高度。
-   */
-  --top: 72px;
-  --pad-x: 28px;
+  /* 窗口栅格。 */
+  --top: 56px;
+  --pad-x: clamp(24px, 4.4vw, 60px);
+  --pad-b: clamp(24px, 3.4vh, 44px);
 
   /*
-   * 动效曲线。转场 200ms 以内是硬指标（PS5 的场景切换速度），所以这条
-   * 曲线前段快、尾巴长——快在体感，慢在收尾。
+   * 动效。转场 200ms 以内是硬指标（PS5 的场景切换速度），所以主曲线前段快、
+   * 尾巴长——快在体感，慢在收尾。--motion 为 0 时全部塌成 1ms。
    */
-  --pan: 200ms cubic-bezier(0.22, 1, 0.36, 1);
-  --soft: 340ms cubic-bezier(0.22, 1, 0.36, 1);
-  --spring: 520ms cubic-bezier(0.16, 1.06, 0.28, 1);
+  --t-fast: calc(130ms * var(--motion) + 1ms);
+  --t-base: calc(190ms * var(--motion) + 1ms);
+  --t-slow: calc(340ms * var(--motion) + 1ms);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring: cubic-bezier(0.18, 0.92, 0.24, 1.04);
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -97,18 +130,21 @@ body,
 
 body {
   font-family: var(--sans);
-  color: var(--ink);
-  background: #07090b;
   font-size: var(--t-body);
-  line-height: 1.55;
+  line-height: 1.5;
+  color: var(--ink);
+  background: #06080a;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   /* 桌面应用不是网页：文本不该能被随手拖蓝一片。可选中的地方单独开。 */
   user-select: none;
   cursor: default;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
   background: none;
@@ -117,15 +153,261 @@ input {
 }
 
 :focus-visible {
-  outline: 1.5px solid var(--c4);
+  outline: 1.5px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
-/* 可以选中的东西：房间码、地址这类要复制出去的。 */
+/* 可以选中的东西：路径、房间码这类要复制出去的。 */
 .selectable {
   user-select: text;
   cursor: text;
+}
+
+/* ─────────────────────────── 字号类 ─────────────────────────── */
+
+.t-display {
+  margin: 0;
+  font-size: var(--t-display);
+  font-weight: 620;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.t-h1 {
+  margin: 0;
+  font-size: var(--t-h1);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.024em;
+}
+
+.t-h2 {
+  margin: 0;
+  font-size: var(--t-h2);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.014em;
+}
+
+.t-body {
+  font-size: var(--t-body);
+  line-height: 1.6;
+}
+
+/* 说明文字。写之前先问一句：删掉它界面会变得不能用吗？不会就删掉。 */
+.t-quiet {
+  font-size: var(--t-small);
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/*
+ * 等宽只留给机器数据：版本号、字节数、路径、快捷键、PID。
+ * 拿它当装饰用，界面就会开始有仪表盘味。
+ */
+.t-mono {
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.t-micro {
+  font-size: var(--t-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+/* ─────────────────────────── 按钮 ─────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-height: 38px;
+  padding: 0 var(--s4);
+  border-radius: var(--r1);
+  font-size: var(--t-body);
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.btn:hover {
+  color: var(--ink);
+  background: var(--tint-1);
+}
+
+.btn:active {
+  transform: scale(0.985);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.btn--primary {
+  min-height: 44px;
+  padding: 0 var(--s5);
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-weight: 580;
+  box-shadow: 0 6px 22px -8px var(--accent-soft);
+}
+
+.btn--primary:hover {
+  color: var(--accent-ink);
+  background: var(--accent);
+  filter: brightness(1.06);
+}
+
+.btn--ghost {
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.btn--ghost:hover {
+  box-shadow: inset 0 0 0 1px var(--tint-3);
+}
+
+/* 只有一个图标的按钮：顶栏、关闭、加号。 */
+.btn--icon {
+  min-height: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--ink-3);
+  border-radius: var(--r1);
+}
+
+.btn--icon:hover {
+  color: var(--ink);
+  background: var(--tint-2);
+}
+
+/* 文字动作。没有背景，只有一个词和一个箭头。 */
+.btn--link {
+  min-height: 0;
+  padding: 0;
+  font-size: var(--t-small);
+  color: var(--accent);
+}
+
+.btn--link:hover {
+  background: none;
+  color: var(--ink);
+}
+
+/* ─────────────────────────── 表单 ─────────────────────────── */
+
+.field {
+  display: grid;
+  gap: var(--s2);
+}
+
+.field > label {
+  font-size: var(--t-small);
+  color: var(--ink-3);
+}
+
+.input,
+.select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--s3);
+  border-radius: var(--r1);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--ink);
+  font-size: var(--t-body);
+  outline: none;
+  cursor: text;
+  transition:
+    box-shadow var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+
+.select {
+  cursor: pointer;
+  appearance: none;
+  padding-right: var(--s6);
+}
+
+.input::placeholder {
+  color: var(--ink-4);
+}
+
+.input:hover,
+.select:hover {
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.input:focus,
+.select:focus {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.select option {
+  color: #10171b;
+  background: #dfe6e6;
+}
+
+/* ─────────────────────────── 浮层 ─────────────────────────── */
+
+.panel {
+  border-radius: var(--r3);
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px var(--panel-line),
+    var(--shadow-lg);
+  backdrop-filter: blur(26px) saturate(1.3);
+}
+
+/* 错误。真的出了事才出现，所以给它足够的对比度，别做成灰色小字。 */
+.alert {
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r1);
+  background: rgba(120, 48, 38, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(235, 156, 136, 0.34);
+  color: #f6c4b6;
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  line-height: 1.55;
+  user-select: text;
+}
+
+/* ─────────────────────────── 滚动条 ─────────────────────────── */
+
+.scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tint-3) transparent;
+  overscroll-behavior: contain;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background: var(--tint-2);
+  background-clip: content-box;
+}
+
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--tint-3);
+  background-clip: content-box;
 }
 
 /*

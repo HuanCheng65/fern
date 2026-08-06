@@ -32,6 +32,28 @@ fn offline_account(player_name: String) -> fern_core::Credentials {
     fern_core::offline_credentials(player_name)
 }
 
+/// Settings live in `settings.json` under the data root, not in webview
+/// storage: they survive a cleared webview, and the user can open, back up, or
+/// share the file.
+#[tauri::command]
+fn get_settings() -> Result<fern_core::Settings, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    Ok(fern_core::load_settings(&paths))
+}
+
+#[tauri::command]
+fn save_settings(settings: fern_core::Settings) -> Result<(), String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::save_settings(&paths, &settings).map_err(|error| format!("{error:#}"))
+}
+
+/// Returns null when nothing usable was found, which is the only case the
+/// setup wizard has anything to say about.
+#[tauri::command]
+fn detect_java() -> Option<fern_core::JavaRuntime> {
+    fern_core::detect_java()
+}
+
 #[tauri::command]
 fn open_instance_directory(instance_id: String) -> Result<(), String> {
     let id = fern_core::InstanceId::parse(instance_id).map_err(|error| error.to_string())?;
@@ -158,6 +180,9 @@ pub fn run() {
             list_versions,
             create_instance,
             offline_account,
+            detect_java,
+            get_settings,
+            save_settings,
             open_instance_directory,
             open_logs_directory,
             prepare_instance,

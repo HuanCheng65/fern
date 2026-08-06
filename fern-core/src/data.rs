@@ -55,6 +55,12 @@ impl DataPaths {
         Ok(())
     }
 
+    /// 用户设置。放在数据根目录下，和实例、日志平级——它是一份能被打开、
+    /// 备份、贴给别人的文件，不是藏起来的缓存。
+    pub fn settings_path(&self) -> PathBuf {
+        self.root.join("settings.json")
+    }
+
     pub fn instance_root(&self, id: &str) -> PathBuf {
         self.instances.join(id)
     }

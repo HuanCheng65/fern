@@ -9,6 +9,7 @@ mod event;
 mod instance;
 mod launch;
 mod prepare;
+mod settings;
 
 pub use catalog::{VersionOption, create_instance, list_instances, list_versions};
 pub use data::DataPaths;
@@ -19,9 +20,14 @@ pub use instance::{
     CoverSeed, InstanceId, InstanceProfile, InstanceSettings, LoaderKind, LoaderProfile, Resolution,
 };
 pub use launch::{
-    Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,
+    Credentials, JavaRuntime, LaunchPlan, LaunchResult, LaunchVariables, detect_java,
+    launch_instance, offline_credentials,
 };
 pub use prepare::{PrepareResult, prepare_instance};
+pub use settings::{
+    AccountKind, AccountSettings, DownloadSettings, Settings, SourcePreference,
+    current as current_settings, load as load_settings, save as save_settings,
+};
 
 /// Marker for the Pearl integration boundary.
 ///

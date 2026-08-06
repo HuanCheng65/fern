@@ -1,20 +1,17 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{
-    BmclapiSource, DownloadClient, DownloadEvent, DownloadTask, OfficialSource, sha1_matches,
-};
+use fern_download::{DownloadClient, DownloadEvent, DownloadTask, sha1_matches};
 use fern_meta::{
     DownloadInfo, Library, RuleContext, VersionManifest, VersionMetadata, rules_allow,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::DataPaths;
+use crate::{DataPaths, settings::source_order};
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -50,8 +47,7 @@ pub async fn prepare_instance(
         .find(|profile| profile.id.as_str() == instance_id)
         .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))?;
     let version_id = profile.game_version.as_str();
-    let downloader =
-        DownloadClient::new(vec![Arc::new(OfficialSource), Arc::new(BmclapiSource)], 64);
+    let downloader = DownloadClient::new(source_order(), 64);
 
     let _ = events.send(DownloadEvent::Status {
         message: "读取版本清单".to_owned(),
