@@ -83,7 +83,7 @@
 
 <section class="settings scroll">
   <div class="inner">
-    <header>
+    <header data-tauri-drag-region="deep">
       <button class="btn btn--link back" onclick={onback}><ArrowLeft size={14} />返回</button>
       <h1 class="t-h1">设置</h1>
     </header>
@@ -294,7 +294,8 @@
   header {
     display: grid;
     gap: var(--s3);
-    padding: clamp(var(--s6), 8vh, var(--s8)) 0 var(--s6);
+    /* 顶栏那一条留给窗口按钮和拖拽，返回键不要挤进去。 */
+    padding: calc(var(--top) + var(--s4)) calc(var(--frame-controls)) var(--s6) 0;
   }
 
   .back {

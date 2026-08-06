@@ -16,11 +16,13 @@
   import TopBar from './components/TopBar.svelte'
   import CommandPalette, { type PaletteAction } from './components/CommandPalette.svelte'
   import CreateInstance from './components/CreateInstance.svelte'
+  import WindowFrame from './components/WindowFrame.svelte'
   import LaunchScene from './scenes/Launch.svelte'
   import InstancesScene from './scenes/Instances.svelte'
   import Placeholder from './scenes/Placeholder.svelte'
   import Setup from './routes/Setup.svelte'
   import Settings from './routes/Settings.svelte'
+  import { frame, frameless, selfRounded } from './lib/frame.svelte'
   import { flush, hydrate } from './lib/persist'
   import { instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
@@ -157,6 +159,8 @@
 
   onMount(() => {
     isMac = /Mac/i.test(navigator.userAgent)
+    // 无边框时顶栏要给右上角的窗口按钮让出位置，用一个变量统一控制。
+    document.body.classList.toggle('frameless', frameless())
     readHash()
     void hydrate().then(() => {
       theme.hydrate()
@@ -190,7 +194,7 @@
 
 <svelte:head><title>Fern</title></svelte:head>
 
-<div class="shell">
+<div class="shell" class:rounded={selfRounded() && !frame.maximized}>
   <Backdrop
     {seed}
     particles={theme.particles}
@@ -261,6 +265,14 @@
     </main>
   {/if}
 
+  {#if frameless()}
+    <WindowFrame />
+    {#if selfRounded() && !frame.maximized}
+      <!-- 自绘边框的那一道内描边。深色桌面上没有它，窗口边界会消失。 -->
+      <div class="edge" aria-hidden="true"></div>
+    {/if}
+  {/if}
+
   {#if paletteOpen}
     <CommandPalette {actions} onclose={() => (paletteOpen = false)} />
   {/if}
@@ -279,6 +291,25 @@
     min-width: 320px;
     overflow: hidden;
     isolation: isolate;
+  }
+
+  /*
+   * 自绘圆角。contain: paint 让 .shell 成为固定定位子元素的包含块，背景层
+   * 那张 position: fixed 的画布才会被圆角裁掉——只靠 overflow: hidden 裁不住
+   * 固定定位的东西。
+   */
+  .shell.rounded {
+    border-radius: 10px;
+    contain: paint;
+  }
+
+  .edge {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    pointer-events: none;
   }
 
   .stage {

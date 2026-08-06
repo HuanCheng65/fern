@@ -35,9 +35,11 @@
   const initials = $derived((prefs.playerName || 'FERN').slice(0, 2).toUpperCase())
 </script>
 
-<header class="top" class:mac={isMac}>
-  <div class="drag" data-tauri-drag-region aria-hidden="true"></div>
-
+<!--
+  deep：顶栏里任何空白处都能拖动窗口。Tauri 的规则是可点击元素（按钮、
+  输入框、链接）会自己挡住拖拽，所以不用逐块开洞。
+-->
+<header class="top" class:mac={isMac} data-tauri-drag-region="deep">
   <div class="mark" aria-hidden="true"></div>
 
   <nav aria-label="主导航">
@@ -76,18 +78,13 @@
     align-items: center;
     gap: var(--s6);
     height: var(--top);
-    padding: 0 var(--pad-x);
+    padding: 0 calc(var(--pad-x) + var(--frame-controls)) 0 var(--pad-x);
     flex: none;
   }
 
   /* macOS 的交通灯浮在内容上，给它让出位置。 */
   .top.mac {
     padding-left: 84px;
-  }
-
-  .drag {
-    position: absolute;
-    inset: 0;
   }
 
   .mark {

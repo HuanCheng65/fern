@@ -109,7 +109,7 @@
   ]
 </script>
 
-<section class="setup">
+<section class="setup" data-tauri-drag-region="deep">
   {#key step}
     <div class="screen" in:fly={enter}>
       {#if step === 'welcome'}

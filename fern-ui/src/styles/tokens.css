@@ -101,6 +101,8 @@
   /* 窗口栅格。 */
   --top: 56px;
   --pad-x: clamp(24px, 4.4vw, 60px);
+  /* 自绘窗口按钮占掉的右上角宽度。有系统标题栏的平台上是 0。 */
+  --frame-controls: 0px;
   --pad-b: clamp(24px, 3.4vh, 44px);
 
   /*
@@ -156,6 +158,10 @@ textarea {
   outline: 1.5px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;
+}
+
+body.frameless {
+  --frame-controls: 138px;
 }
 
 /* 可以选中的东西：路径、房间码这类要复制出去的。 */

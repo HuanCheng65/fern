@@ -1,12 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-capability.schema.json",
   "identifier": "default",
-  "description": "Fern desktop window controls and launcher commands",
-  "windows": ["main"],
+  "description": "Window controls and launcher commands. core:window:default already covers is-maximized and internal-toggle-maximize (what data-tauri-drag-region uses for double-click), but not dragging or resizing \u2014 an undecorated window needs those spelled out, or the drag region silently does nothing.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize"
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging"
   ]
 }
