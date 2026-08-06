@@ -53,6 +53,9 @@ pub async fn prepare_instance(
     let downloader =
         DownloadClient::new(vec![Arc::new(OfficialSource), Arc::new(BmclapiSource)], 64);
 
+    let _ = events.send(DownloadEvent::Status {
+        message: "读取版本清单".to_owned(),
+    });
     let manifest_bytes = downloader
         .fetch(VERSION_MANIFEST_URL)
         .await
@@ -65,6 +68,9 @@ pub async fn prepare_instance(
         .find(|entry| entry.id == version_id)
         .ok_or_else(|| anyhow!("version {version_id} is absent from the Mojang manifest"))?;
 
+    let _ = events.send(DownloadEvent::Status {
+        message: "读取版本元数据".to_owned(),
+    });
     let version_bytes = downloader
         .fetch(&entry.url)
         .await
@@ -119,6 +125,9 @@ pub async fn prepare_instance(
     }
 
     if let Some(index) = &metadata.asset_index {
+        let _ = events.send(DownloadEvent::Status {
+            message: "读取资源索引".to_owned(),
+        });
         let index_bytes = downloader
             .fetch(&index.url)
             .await
@@ -162,6 +171,9 @@ pub async fn prepare_instance(
         total_files: tasks.len() as u64,
         total_bytes: tasks.iter().map(|task| task.size).sum(),
     };
+    let _ = events.send(DownloadEvent::Status {
+        message: "开始补全文件".to_owned(),
+    });
     downloader.download_all(tasks, events).await?;
     Ok(result)
 }

@@ -32,6 +32,7 @@
     color: string
   }
   type DownloadEvent =
+    | { type: 'status'; message: string }
     | { type: 'task_started'; total_files: number; total_bytes: number }
     | { type: 'file_done'; path: string; bytes: number }
     | { type: 'progress'; done_bytes: number; speed_bps: number }
@@ -94,6 +95,10 @@
     void loadInstances()
     if ('__TAURI_INTERNALS__' in window) {
       void listen<DownloadEvent>('download-event', ({ payload }) => {
+        if (payload.type === 'status') {
+          launchStatus = payload.message
+          launchProgress = Math.max(launchProgress, 3)
+        }
         if (payload.type === 'task_started') {
           downloadTotalBytes = payload.total_bytes
           launchStatus = `检查 ${payload.total_files} 个文件`
@@ -260,6 +265,22 @@
     simulateLaunch()
   }
 
+  async function openGameDirectory() {
+    if (instances.length === 0) {
+      await openCreate()
+      return
+    }
+    if (!inTauri()) {
+      launchStatus = '浏览器预览无法打开本地游戏目录'
+      return
+    }
+    try {
+      await invoke('open_instance_directory', { instanceId: selectedInstance().id })
+    } catch (error) {
+      launchError = String(error)
+    }
+  }
+
   function simulateLaunch() {
     launchProgress = 8
     launchStatus = '浏览器预览 · 模拟文件补全'
@@ -381,7 +402,7 @@
             {:else}
             <div class="detail-top"><div><p class="eyebrow">当前实例</p><h2>{selectedInstance().name}</h2><span>{selectedInstance().version} · {selectedInstance().loader}</span></div><button class="launch-mini" onclick={startLaunch}><Play size={14} fill="currentColor" />启动</button></div>
             <div class="detail-stats"><div><small>游玩时长</small><strong>{selectedInstance().hours}</strong></div><div><small>模组数量</small><strong>{selectedInstance().mods}</strong></div><div><small>运行状态</small><strong>就绪</strong></div></div>
-            <div class="detail-links"><button><FolderOpen size={15} />打开游戏目录</button><button><Package size={15} />管理内容</button><button onclick={startLaunch}><Download size={15} />修复文件</button></div>
+            <div class="detail-links"><button onclick={openGameDirectory}><FolderOpen size={15} />打开游戏目录</button><button><Package size={15} />管理内容</button><button onclick={startLaunch}><Download size={15} />修复文件</button></div>
             {/if}
           </div>
         </div>

@@ -18,6 +18,7 @@ use tokio::sync::Semaphore;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DownloadEvent {
+    Status { message: String },
     TaskStarted { total_files: u64, total_bytes: u64 },
     FileDone { path: String, bytes: u64 },
     Progress { done_bytes: u64, speed_bps: u64 },
@@ -129,7 +130,11 @@ pub struct DownloadClient {
 impl DownloadClient {
     pub fn new(sources: Vec<Arc<dyn DownloadSource>>, concurrency: usize) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(45))
+                .build()
+                .expect("valid download client configuration"),
             sources: if sources.is_empty() {
                 vec![Arc::new(OfficialSource)]
             } else {

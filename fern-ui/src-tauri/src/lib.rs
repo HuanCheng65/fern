@@ -31,6 +31,34 @@ fn offline_account(player_name: String) -> fern_core::Credentials {
 }
 
 #[tauri::command]
+fn open_instance_directory(instance_id: String) -> Result<(), String> {
+    let id = fern_core::InstanceId::parse(instance_id).map_err(|error| error.to_string())?;
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let directory = paths.game_directory(id.as_str());
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer")
+        .arg(&directory)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open")
+        .arg(&directory)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open")
+        .arg(&directory)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn prepare_instance(
     app: tauri::AppHandle,
     instance_id: String,
@@ -61,6 +89,7 @@ pub fn run() {
             list_versions,
             create_instance,
             offline_account,
+            open_instance_directory,
             prepare_instance
         ])
         .run(tauri::generate_context!())
