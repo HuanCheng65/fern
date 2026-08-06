@@ -101,6 +101,7 @@
         }
         if (payload.type === 'task_started') {
           downloadTotalBytes = payload.total_bytes
+          launchProgress = Math.max(launchProgress, 3)
           launchStatus = `检查 ${payload.total_files} 个文件`
         }
         if (payload.type === 'progress') {

@@ -6,6 +6,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    sync::atomic::{AtomicU64, Ordering},
     time::Instant,
 };
 
@@ -13,6 +14,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,30 +184,27 @@ impl DownloadClient {
             total_bytes,
         });
         let started = Instant::now();
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
         let mut jobs = tokio::task::JoinSet::new();
         for task in tasks {
             let client = self.clone();
+            let events = events.clone();
+            let downloaded_bytes = downloaded_bytes.clone();
             jobs.spawn(async move {
-                let result = client.download_one(&task).await;
+                let result = client
+                    .download_one(&task, &downloaded_bytes, started, &events)
+                    .await;
                 (task, result)
             });
         }
 
-        let mut done_bytes = 0u64;
         let mut failed = Vec::new();
         while let Some(joined) = jobs.join_next().await {
             match joined {
                 Ok((task, Ok(()))) => {
-                    done_bytes = done_bytes.saturating_add(task.size);
-                    let speed =
-                        (done_bytes as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
                     let _ = events.send(DownloadEvent::FileDone {
                         path: task.path.display().to_string(),
                         bytes: task.size,
-                    });
-                    let _ = events.send(DownloadEvent::Progress {
-                        done_bytes,
-                        speed_bps: speed,
                     });
                 }
                 Ok((task, Err(_))) => failed.push(task.path.display().to_string()),
@@ -222,7 +221,13 @@ impl DownloadClient {
         }
     }
 
-    async fn download_one(&self, task: &DownloadTask) -> Result<()> {
+    async fn download_one(
+        &self,
+        task: &DownloadTask,
+        downloaded_bytes: &AtomicU64,
+        started: Instant,
+        events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+    ) -> Result<()> {
         let _permit = self
             .semaphore
             .acquire()
@@ -230,6 +235,8 @@ impl DownloadClient {
             .context("download semaphore closed")?;
 
         if verify_file(&task.path, &task.sha1, task.size).await? {
+            downloaded_bytes.fetch_add(task.size, Ordering::Relaxed);
+            emit_progress(downloaded_bytes, started, events);
             return Ok(());
         }
 
@@ -241,22 +248,48 @@ impl DownloadClient {
         for source in &self.sources {
             let url = source.rewrite(&task.url);
             match self.client.get(url).send().await {
-                Ok(response) if response.status().is_success() => match response.bytes().await {
-                    Ok(bytes)
-                        if bytes.len() as u64 == task.size && sha1_matches(&bytes, &task.sha1) =>
-                    {
-                        tokio::fs::write(&temporary, &bytes).await?;
-                        if tokio::fs::try_exists(&task.path).await? {
-                            tokio::fs::remove_file(&task.path).await?;
+                Ok(mut response) if response.status().is_success() => {
+                    let mut file = tokio::fs::File::create(&temporary).await?;
+                    let mut hasher = Sha1::new();
+                    let mut received = 0u64;
+                    let mut stream_error = None;
+                    loop {
+                        match response.chunk().await {
+                            Ok(Some(chunk)) => {
+                                file.write_all(&chunk).await?;
+                                hasher.update(&chunk);
+                                received = received.saturating_add(chunk.len() as u64);
+                                downloaded_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                                emit_progress(downloaded_bytes, started, events);
+                            }
+                            Ok(None) => break,
+                            Err(error) => {
+                                stream_error = Some(error);
+                                break;
+                            }
                         }
-                        tokio::fs::rename(&temporary, &task.path).await?;
-                        return Ok(());
                     }
-                    Ok(_) => {
-                        last_error = Some(anyhow!("checksum or size mismatch for {}", task.url))
+                    file.flush().await?;
+                    if let Some(error) = stream_error {
+                        downloaded_bytes.fetch_sub(received, Ordering::Relaxed);
+                        last_error = Some(error.into());
+                    } else {
+                        let digest = hasher.finalize();
+                        let actual = digest
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>();
+                        if received == task.size && actual.eq_ignore_ascii_case(&task.sha1) {
+                            if tokio::fs::try_exists(&task.path).await? {
+                                tokio::fs::remove_file(&task.path).await?;
+                            }
+                            tokio::fs::rename(&temporary, &task.path).await?;
+                            return Ok(());
+                        }
+                        downloaded_bytes.fetch_sub(received, Ordering::Relaxed);
+                        last_error = Some(anyhow!("checksum or size mismatch for {}", task.url));
                     }
-                    Err(error) => last_error = Some(error.into()),
-                },
+                }
                 Ok(response) => {
                     last_error = Some(anyhow!("download failed with HTTP {}", response.status()))
                 }
@@ -266,6 +299,19 @@ impl DownloadClient {
         let _ = tokio::fs::remove_file(&temporary).await;
         Err(last_error.unwrap_or_else(|| anyhow!("no download source configured")))
     }
+}
+
+fn emit_progress(
+    downloaded_bytes: &AtomicU64,
+    started: Instant,
+    events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+) {
+    let done_bytes = downloaded_bytes.load(Ordering::Relaxed);
+    let speed_bps = (done_bytes as f64 / started.elapsed().as_secs_f64().max(0.001)) as u64;
+    let _ = events.send(DownloadEvent::Progress {
+        done_bytes,
+        speed_bps,
+    });
 }
 
 #[cfg(test)]
