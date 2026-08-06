@@ -36,6 +36,9 @@ jobs:
         with:
           workspaces: . -> target
 
+      - name: Install Rust formatting component
+        run: rustup component add rustfmt
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
         working-directory: fern-ui
