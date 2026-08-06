@@ -339,6 +339,31 @@ fn chrono_like_timestamp() -> String {
     format!("[{seconds}]")
 }
 
+/// A Java runtime the launcher can actually start the game with.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaRuntime {
+    pub path: PathBuf,
+    pub major: u16,
+    pub version: String,
+}
+
+/// Look for a usable Java without launching anything.
+///
+/// The setup wizard needs to know whether it has to say anything about Java at
+/// all; on a machine that already has one it should stay quiet. Reuses the same
+/// resolution the launcher itself uses, so the wizard cannot disagree with what
+/// happens at launch time.
+pub fn detect_java() -> Option<JavaRuntime> {
+    resolve_java_binary(None)
+        .ok()
+        .map(|(path, major, version)| JavaRuntime {
+            path,
+            major,
+            version,
+        })
+}
+
 fn resolve_java_binary(configured: Option<&Path>) -> Result<(PathBuf, u16, String)> {
     let candidate = configured
         .map(PathBuf::from)
@@ -407,7 +432,9 @@ async fn collect_classpath_and_extract_natives(
             let path = paths.libraries.join(relative);
             if library.extract.is_some() || library.natives.is_some() {
                 extract_native_jar(&path, natives_directory, library).await?;
-            } else if !library.name.contains(":natives-") {
+            } else {
+                // Modern metadata publishes native jars as classifier-only artifacts.
+                // LWJGL loads these jars from the classpath and extracts the dylib itself.
                 classpath.push(path);
             }
         }

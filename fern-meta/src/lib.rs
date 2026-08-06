@@ -249,10 +249,7 @@ impl VersionMetadata {
         let mut libraries = Vec::with_capacity(parent.libraries.len() + child.libraries.len());
         let mut seen = HashSet::new();
         for library in child.libraries.iter().chain(parent.libraries.iter()) {
-            let key = library
-                .name
-                .rsplit_once(':')
-                .map_or(library.name.as_str(), |(head, _)| head);
+            let key = library_identity(&library.name);
             if seen.insert(key.to_owned()) {
                 libraries.push(library.clone());
             }
@@ -322,6 +319,17 @@ impl VersionMetadata {
             "${classpath}".to_owned(),
         ];
         (jvm, game)
+    }
+}
+
+fn library_identity(name: &str) -> String {
+    let parts = name.split(':').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [group, artifact, _version] => format!("{group}:{artifact}"),
+        [group, artifact, _version, classifier] => {
+            format!("{group}:{artifact}:{classifier}")
+        }
+        _ => name.to_owned(),
     }
 }
 
@@ -416,6 +424,26 @@ mod tests {
         let arguments = merged.resolved_arguments(&RuleContext::linux_x64());
         assert_eq!(arguments.0, vec!["-Xmx2G", "-Dmodded=true"]);
         assert_eq!(arguments.1, vec!["--parent", "--child"]);
+    }
+
+    #[test]
+    fn merge_keeps_each_native_classifier() {
+        let parent = VersionMetadata {
+            id: "base".to_owned(),
+            libraries: vec![
+                library("org.lwjgl:lwjgl:3.3.3"),
+                library("org.lwjgl:lwjgl:3.3.3:natives-macos"),
+            ],
+            ..VersionMetadata::default()
+        };
+        let child = VersionMetadata {
+            id: "modded".to_owned(),
+            libraries: vec![library("org.lwjgl:lwjgl:3.3.3:natives-macos-arm64")],
+            ..VersionMetadata::default()
+        };
+
+        let merged = VersionMetadata::merge(&parent, &child);
+        assert_eq!(merged.libraries.len(), 3);
     }
 
     #[test]
