@@ -1,272 +1,206 @@
 <script lang="ts">
   /**
-   * 实例场景。
+   * 实例场景——曲库。
    *
-   * 没有页面标题——顶栏那个词已经亮着了，再写一遍「实例」只是占地方。
-   * 这一屏的排版锚点是右边那张封面和它下面的名字。
+   * 启动场景是「正在播放」，这里是「曲库」：所有实例的生成封面排在一起，
+   * 封面就是它们的脸。上一版是左列表右详情，那正是设计文档点名要避开的
+   * SaaS 形状；网格让封面成为主视觉，也让这一屏有自己的主视觉。
    *
-   * 左右两栏都不套卡片：内容直接坐在背景上，靠留白和一条发丝线分组。
-   * 玻璃和影子只留给浮层。
+   * 卡片上只有封面、名称、版本与加载器，克制到此为止。以这个启动器面向的
+   * 实例数量，搜索交给 ⌘K 就够，场景内不放搜索框。
+   *
+   * 两个动作要分清：点卡片是「看」（推入详情），悬停时那颗按钮是「玩」。
+   * 「设为当前」在详情里——它会改变启动场景上摆着的是谁，不该是随手一点
+   * 就发生的事。
    */
-  import { FolderOpen, Play, Plus, RefreshCw, SlidersHorizontal } from 'lucide-svelte'
+  import { Play, Plus } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
-  import ModList from '../components/ModList.svelte'
+  import InstanceDetail from './InstanceDetail.svelte'
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
+  import { nav } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
 
   interface Props {
     oncreate: () => void
-    onopenDirectory: () => void
-    onconfigure: () => void
   }
 
-  let { oncreate, onopenDirectory, onconfigure }: Props = $props()
+  let { oncreate }: Props = $props()
 
-  const current = $derived(instances.current)
+  const viewing = $derived(instances.list.find((item) => item.id === nav.detail))
+
+  // 地址里指着一个已经不存在的实例（删掉了、手改了地址栏）就退回网格，
+  // 而不是留在一屏空白上。
+  $effect(() => {
+    if (nav.detail && !instances.loading && !viewing) nav.back()
+  })
 </script>
 
-{#if instances.list.length === 0}
+{#if viewing}
+  <InstanceDetail instance={viewing} />
+{:else if instances.list.length === 0}
   <section class="blank">
     <h1 class="t-h1">{instances.loading ? '正在读取实例' : '暂无实例'}</h1>
     {#if !instances.loading}
+      <p class="note">创建一个实例之后，它的封面会出现在这里。</p>
       <button class="btn btn--ghost" onclick={oncreate}><Plus size={15} />新建实例</button>
     {/if}
     {#if instances.error}<div class="alert">{instances.error}</div>{/if}
   </section>
 {:else}
-  <section class="split">
-    <div class="side">
-      <div class="side-head">
-        <span class="t-quiet">{instances.list.length} 个实例</span>
-        <button class="btn btn--icon" aria-label="新建实例" title="新建实例" onclick={oncreate}>
-          <Plus size={16} />
-        </button>
-      </div>
-      <div class="list scroll">
-        {#each instances.list as item (item.id)}
-          <button
-            class="row"
-            class:on={current?.id === item.id}
-            onclick={() => instances.select(item.id)}
-          >
-            <span class="thumb"><Cover seed={item.cover} quality={0.45} /></span>
-            <span class="row-text">
-              <strong>{item.name}</strong>
-              <small class="t-mono">{item.gameVersion} · {item.loader}</small>
-            </span>
-          </button>
-        {/each}
-      </div>
+  <section class="library">
+    <div class="bar">
+      <span class="t-quiet">{instances.list.length} 个实例</span>
+      <button class="btn btn--link" onclick={oncreate}><Plus size={14} />新建实例</button>
     </div>
 
-    {#if current}
-      <div class="detail scroll">
-        <div class="banner"><Cover seed={current.cover} quality={0.7} /></div>
+    <div class="grid scroll">
+      {#each instances.recent as item (item.id)}
+        <div class="card" class:on={instances.current?.id === item.id}>
+          <button class="face" onclick={() => nav.open(item.id)} title="打开 {item.name}">
+            <Cover seed={item.cover} quality={0.55} />
+          </button>
 
-        <h1 class="t-h1 title">{current.name}</h1>
-
-        <dl class="facts">
-          <div><dt>Minecraft</dt><dd class="t-mono">{current.gameVersion}</dd></div>
-          <div><dt>加载器</dt><dd class="t-mono">{current.loader}</dd></div>
-          <div><dt>实例 ID</dt><dd class="t-mono selectable">{current.id}</dd></div>
-        </dl>
-
-        <div class="actions">
+          <!-- 「我就想立刻玩这个」的那条路径，不必先进详情。 -->
           <button
-            class="btn btn--primary"
+            class="go"
+            aria-label="启动 {item.name}"
+            title="启动"
             disabled={launch.busy || launch.running}
-            onclick={() => void launch.launch(current.id, prefs.playerName)}
+            onclick={() => void launch.launch(item.id, prefs.playerName)}
           >
-            <Play size={15} fill="currentColor" strokeWidth={0} />
-            {launch.running ? '运行中' : '启动'}
+            <Play size={14} fill="currentColor" strokeWidth={0} />
           </button>
-          <button class="btn btn--ghost" onclick={onopenDirectory}>
-            <FolderOpen size={15} strokeWidth={1.8} />游戏目录
-          </button>
-          <button
-            class="btn btn--ghost"
-            disabled={launch.busy}
-            onclick={() => void launch.repair(current.id)}
-          >
-            <RefreshCw size={15} strokeWidth={1.8} />校验文件
-          </button>
-          <button class="btn btn--ghost" onclick={onconfigure}>
-            <SlidersHorizontal size={15} strokeWidth={1.8} />设置
+
+          <button class="text" onclick={() => nav.open(item.id)}>
+            <strong>{item.name}</strong>
+            <small class="t-mono">{item.gameVersion} · {item.loader}</small>
           </button>
         </div>
-
-        {#if launch.busy}
-          <p class="status t-mono">{launch.label}{launch.detail ? ` · ${launch.detail}` : ''}</p>
-        {/if}
-        {#if launch.error}<div class="alert">{launch.error}</div>{/if}
-
-        <!-- 实例内的复杂度收在实例里，不摊到全局导航上（见 UI_DESIGN 四）。 -->
-        {#key current.id}
-          <ModList instanceId={current.id} />
-        {/key}
-      </div>
-    {/if}
+      {/each}
+    </div>
   </section>
 {/if}
 
 <style>
   .blank {
     display: grid;
-    place-content: center;
+    align-content: center;
     justify-items: start;
-    gap: var(--s4);
+    gap: var(--s3);
     height: 100%;
+    max-width: 46ch;
   }
 
-  .split {
-    display: grid;
-    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-    gap: clamp(var(--s6), 5vw, var(--s8));
-    height: 100%;
-    min-height: 0;
+  .note {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: var(--t-body);
+    line-height: 1.65;
   }
 
-  .side {
+  .library {
     display: flex;
     flex-direction: column;
+    height: 100%;
     min-height: 0;
   }
 
-  .side-head {
+  .bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 var(--s2) var(--s3);
-    box-shadow: inset 0 -1px 0 var(--hairline-2);
+    gap: var(--s3);
+    padding-bottom: var(--s4);
   }
 
-  .list {
+  /* 列数跟着窗口走，不写断点。 */
+  .grid {
     flex: 1;
     min-height: 0;
-    padding: var(--s2) var(--s1) var(--s2) 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: var(--s4);
+    align-content: start;
+    padding-right: var(--s2);
   }
 
-  .row {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
-    width: 100%;
-    padding: var(--s2);
-    border-radius: var(--r1);
-    color: var(--ink-2);
-    text-align: left;
-    transition:
-      background var(--t-fast) var(--ease),
-      color var(--t-fast) var(--ease);
+  .card {
+    position: relative;
+    display: grid;
+    gap: var(--s2);
   }
 
-  .row:hover {
-    background: var(--tint-1);
-  }
-
-  .row.on {
-    color: var(--ink);
-    background: var(--tint-2);
-  }
-
-  .thumb {
+  .face {
     display: block;
-    width: 32px;
-    height: 32px;
-    flex: none;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    padding: 0;
     overflow: hidden;
-    border-radius: calc(var(--r1) * 0.85);
+    border-radius: var(--r2);
+    background: var(--tint-1);
+    transition:
+      transform var(--t-base) var(--ease),
+      box-shadow var(--t-base) var(--ease);
   }
 
-  .row-text {
-    display: flex;
-    flex-direction: column;
+  .card:hover .face {
+    transform: translateY(-2px);
+  }
+
+  /* 当前实例只用一道描边标出来，不加角标——封面本身已经在说它是谁。 */
+  .card.on .face {
+    box-shadow: 0 0 0 1.5px var(--accent);
+  }
+
+  .go {
+    position: absolute;
+    top: var(--s2);
+    right: var(--s2);
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: rgba(10, 14, 16, 0.6);
+    color: #f3f6f6;
+    opacity: 0;
+    transform: scale(0.9);
+    backdrop-filter: blur(8px);
+    transition:
+      opacity var(--t-fast) var(--ease),
+      transform var(--t-fast) var(--ease);
+  }
+
+  .card:hover .go,
+  .go:focus-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  .go:disabled {
+    display: none;
+  }
+
+  .text {
+    display: grid;
+    gap: 1px;
+    padding: 0;
     min-width: 0;
+    text-align: left;
   }
 
-  .row-text strong {
+  .text strong {
     overflow: hidden;
+    color: var(--ink);
     font-size: var(--t-body);
     font-weight: 500;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .row-text small {
-    color: var(--ink-3);
-    font-size: var(--t-micro);
-  }
-
-  .detail {
-    min-width: 0;
-    padding-right: var(--s2);
-    padding-bottom: var(--s6);
-  }
-
-  /* 封面就是实例的脸——详情页顶上给它一整条。 */
-  .banner {
-    aspect-ratio: 2.9;
-    max-height: 34vh;
-    overflow: hidden;
-    border-radius: var(--r3);
-  }
-
-  .title {
-    margin: var(--s5) 0 0;
-    overflow-wrap: anywhere;
-  }
-
-  .facts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s3) var(--s7);
-    margin: var(--s5) 0 0;
-    padding: var(--s4) 0;
-    box-shadow:
-      inset 0 1px 0 var(--hairline-2),
-      inset 0 -1px 0 var(--hairline-2);
-  }
-
-  .facts div {
-    display: grid;
-    gap: 3px;
-    min-width: 0;
-  }
-
-  dt {
+  .text small {
     color: var(--ink-4);
     font-size: var(--t-micro);
-  }
-
-  dd {
-    margin: 0;
-    color: var(--ink-2);
-    overflow-wrap: anywhere;
-  }
-
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s2);
-    margin-top: var(--s5);
-  }
-
-  .status {
-    margin: var(--s4) 0 0;
-    color: var(--ink-3);
-  }
-
-  .alert {
-    margin-top: var(--s4);
-    max-width: 62ch;
-  }
-
-  @media (max-width: 860px) {
-    .split {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(120px, 30%) minmax(0, 1fr);
-      gap: var(--s5);
-    }
   }
 </style>

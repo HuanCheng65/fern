@@ -23,6 +23,7 @@ mod prepare;
 mod registry;
 mod rules;
 mod runtime;
+mod saves;
 mod settings;
 mod tuning;
 mod version;
@@ -35,7 +36,7 @@ pub use auth::{
 pub use catalog::{
     InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, delete_instance,
     duplicate_instance, instance_runtime, list_instances, list_versions, rename_instance,
-    update_instance_settings, write_instance_profile,
+    touch_played, update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
 pub use credentials::{
@@ -77,6 +78,7 @@ pub use mods::{
 };
 pub use prepare::{PrepareResult, prepare_instance};
 pub use runtime::{ensure_java, remove as remove_runtime};
+pub use saves::{SaveEntry, list as list_saves};
 pub use settings::{
     AccountKind, AccountSettings, DownloadSettings, Settings, SourcePreference,
     current as current_settings, load as load_settings, save as save_settings,

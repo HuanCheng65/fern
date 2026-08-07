@@ -98,6 +98,13 @@ class LaunchStore {
   /** 崩了才有值。正常退出不该在界面上留下任何痕迹。 */
   crash = $state<CrashReport | null>(null)
   log = $state<GameLogLine[]>([])
+  /**
+   * 这一轮忙的是哪个实例。
+   *
+   * 实例详情页的日志 tab 要靠它判断这段日志是不是自己的——把 A 实例的崩溃
+   * 栈显示在 B 的页面里，比不显示更糟。
+   */
+  instanceId = $state('')
 
   #totalBytes = 0
   #unlisten: UnlistenFn | undefined
@@ -184,8 +191,9 @@ class LaunchStore {
     }
   }
 
-  #begin(label: string) {
+  #begin(instanceId: string, label: string) {
     clearTimeout(this.#resetTimer)
+    this.instanceId = instanceId
     this.busy = true
     this.error = ''
     this.crash = null
@@ -219,7 +227,7 @@ class LaunchStore {
 
   async launch(instanceId: string, playerName: string) {
     if (this.busy) return
-    this.#begin('读取版本信息')
+    this.#begin(instanceId, '读取版本信息')
     if (!inTauri()) return this.#preview()
     try {
       await invoke<{ processId: number }>('launch_instance', { instanceId, playerName })
@@ -232,7 +240,7 @@ class LaunchStore {
 
   async repair(instanceId: string) {
     if (this.busy) return
-    this.#begin('校验游戏文件')
+    this.#begin(instanceId, '校验游戏文件')
     if (!inTauri()) return this.#preview()
     try {
       await invoke('prepare_instance', { instanceId })

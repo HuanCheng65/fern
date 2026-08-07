@@ -4,6 +4,10 @@
  * 只放后端真的给得出来的字段。游玩时长、模组数量这些暂时没有数据源，
  * 界面上就不该出现它们的位置——留着一个永远显示 0 的格子，比没有这个
  * 格子更糟。
+ *
+ * 「当前实例」和「正在看的实例」是两件事。曲库里点开一张卡片只是看，把它
+ * 送上启动场景是另一个明确的动作——混淆这两者是很多启动器难用的根源：
+ * 用户只想翻一眼模组列表，结果下次打开发现要玩的实例被换掉了。
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -15,6 +19,8 @@ export interface Instance {
   loader: string
   /** 封面的恒定种子。用它而不是名字——改个名字不该换一张脸。 */
   cover: string
+  /** 上次玩过的 Unix 秒。从没玩过是 undefined。 */
+  lastPlayed?: number
 }
 
 export interface VersionOption {
@@ -35,6 +41,7 @@ interface CoreInstance {
   gameVersion: string
   loader: string
   cover?: { identity: string }
+  lastPlayed?: number
 }
 
 export const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -56,6 +63,7 @@ const toInstance = (profile: CoreInstance): Instance => ({
   gameVersion: profile.gameVersion,
   loader: loaderName(profile.loader),
   cover: profile.cover?.identity || profile.id,
+  lastPlayed: profile.lastPlayed,
 })
 
 const SELECTED_KEY = 'fern.instance.selected'
@@ -73,6 +81,20 @@ class InstanceStore {
   loaders = $state<LoaderOption[]>([])
 
   current = $derived(this.list.find((item) => item.id === this.selectedId) ?? this.list[0])
+
+  /**
+   * 曲库的排列顺序：最近玩过的在前，没玩过的按名字排在后面。
+   *
+   * 「上次玩的那个」几乎总是「这次要玩的那个」，所以这个顺序本身就是一次
+   * 免费的推荐；从没玩过的实例反而需要一个稳定的位置才找得到。
+   */
+  recent = $derived(
+    [...this.list].sort((left, right) => {
+      const a = left.lastPlayed ?? 0
+      const b = right.lastPlayed ?? 0
+      return b - a || left.name.localeCompare(right.name, 'zh-Hans-CN')
+    }),
+  )
 
   select(id: string) {
     this.selectedId = id
@@ -135,10 +157,10 @@ class InstanceStore {
     await this.load()
   }
 
-  async duplicate(id: string, name: string) {
+  async duplicate(id: string, name: string): Promise<string> {
     const created = await invoke<CoreInstance>('duplicate_instance', { instanceId: id, name })
     await this.load()
-    this.select(created.id)
+    return created.id
   }
 
   async remove(id: string) {

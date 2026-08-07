@@ -133,6 +133,12 @@ pub struct InstanceProfile {
     pub cover: CoverSeed,
     #[serde(default)]
     pub settings: InstanceSettings,
+    /// 上次真的把游戏跑起来的时刻，Unix 秒。从没玩过就是 None。
+    ///
+    /// 曲库默认按它排序——「上次玩的那个」几乎总是「这次要玩的那个」。存
+    /// 时刻而不是次数：次数会让一个玩过一次就弃掉的实例永远排在前面。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_played: Option<u64>,
 }
 
 impl InstanceProfile {
@@ -154,6 +160,7 @@ impl InstanceProfile {
                 growth: 0,
             },
             settings: InstanceSettings::default(),
+            last_played: None,
         }
     }
 }

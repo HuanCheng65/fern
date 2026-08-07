@@ -286,6 +286,21 @@ pub fn write_instance_profile(paths: &DataPaths, profile: &InstanceProfile) -> R
     Ok(())
 }
 
+/// 记下「刚刚玩过」。
+///
+/// 在进程真的起来之后才盖章，不是在点下启动时——补全失败、Java 找不到、
+/// JVM 起不来的那些次都不算玩过，否则曲库的排序会被一串失败的尝试顶上去。
+pub fn touch_played(paths: &DataPaths, instance_id: &str) -> Result<()> {
+    let mut profile = load_profile(paths, instance_id)?;
+    profile.last_played = Some(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|since| since.as_secs())
+            .unwrap_or_default(),
+    );
+    write_instance_profile(paths, &profile)
+}
+
 fn load_profile(paths: &DataPaths, instance_id: &str) -> Result<InstanceProfile> {
     list_instances(paths)?
         .into_iter()

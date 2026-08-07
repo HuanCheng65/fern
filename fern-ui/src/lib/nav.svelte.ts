@@ -114,8 +114,11 @@ class NavStore {
     this.commit()
   }
 
+  /** tab 也进地址：详情页的分区是可寻址的，⌘K 才能直接把人送到「模组」那一栏。 */
   setTab(tab: string) {
     this.tab = tab
+    this.params = { ...this.params, tab }
+    this.commit()
   }
 
   /** 收回场景首页。只有一级纵深，所以返回永远只有这一种去处。 */
@@ -160,6 +163,7 @@ class NavStore {
     this.scene = scene
     this.detail = detail ? decodeURIComponent(detail) : ''
     this.params = Object.fromEntries(new URLSearchParams(query))
+    this.tab = this.params.tab ?? ''
   }
 
   connect() {

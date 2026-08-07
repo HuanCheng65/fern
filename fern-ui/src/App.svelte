@@ -17,7 +17,6 @@
   import CommandPalette, { type PaletteAction } from './components/CommandPalette.svelte'
   import CreateInstance from './components/CreateInstance.svelte'
   import CrashReport from './components/CrashReport.svelte'
-  import InstanceSettings from './components/InstanceSettings.svelte'
   import GameLog from './components/GameLog.svelte'
   import WindowFrame from './components/WindowFrame.svelte'
   import LaunchScene from './scenes/Launch.svelte'
@@ -38,9 +37,6 @@
   let setupOpen = $state(false)
   /** 设置在磁盘上，读完才知道该不该出向导。读完之前只铺背景。 */
   let ready = $state(false)
-  /** 实例的详细设置。第二步会并进实例详情页的 tab，先留在浮层里。 */
-  let instanceSettingsOpen = $state(false)
-
   const isMac = platform === 'macos'
   /** 背景用当前实例的封面当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.cover ?? 'Fern')
@@ -88,6 +84,12 @@
             title: '校验游戏文件',
             run: () => void launch.repair(instances.current!.id),
           },
+          {
+            id: 'configure',
+            title: '打开实例详情',
+            hint: instances.current.name,
+            run: () => nav.enter('instances', instances.current!.id),
+          },
         ]
       : []),
     { id: 'create', title: '新建实例', run: () => nav.show('create') },
@@ -125,16 +127,15 @@
       return
     }
     if (event.key === 'Escape') {
-      // 由外向内关：先收浮层，再收实例设置，最后才退出详情。
+      // 由外向内关：先收浮层，再退出详情。
       if (nav.overlay) nav.dismiss()
-      else if (instanceSettingsOpen) instanceSettingsOpen = false
       else nav.back()
       return
     }
     // 左右方向键就是镜头。输入框里除外——那时候方向键属于光标。
     const tag = (event.target as HTMLElement | null)?.tagName
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
-    if (nav.overlay || instanceSettingsOpen) return
+    if (nav.overlay) return
     if (event.key === 'ArrowRight') nav.step(1)
     if (event.key === 'ArrowLeft') nav.step(-1)
   }
@@ -197,14 +198,9 @@
             <LaunchScene
               onswitch={() => nav.show('palette')}
               oncreate={() => nav.show('create')}
-              onopenDirectory={() => void openDirectory()}
             />
           {:else if nav.scene === 'instances'}
-            <InstancesScene
-              oncreate={() => nav.show('create')}
-              onopenDirectory={() => void openDirectory()}
-              onconfigure={() => (instanceSettingsOpen = true)}
-            />
+            <InstancesScene oncreate={() => nav.show('create')} />
           {:else if nav.scene === 'supply'}
             <SupplyScene onback={() => nav.go('launch')} />
           {:else if nav.scene === 'multiplayer'}
@@ -250,14 +246,6 @@
       report={launch.crash}
       onclose={() => launch.dismissCrash()}
       onopenLogs={() => void invoke('open_logs_directory')}
-    />
-  {/if}
-
-  {#if instanceSettingsOpen && instances.current}
-    <InstanceSettings
-      instanceId={instances.current.id}
-      instanceName={instances.current.name}
-      onclose={() => (instanceSettingsOpen = false)}
     />
   {/if}
 

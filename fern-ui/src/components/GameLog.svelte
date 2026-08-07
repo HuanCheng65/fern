@@ -1,16 +1,17 @@
 <script lang="ts">
   /**
-   * 游戏日志。
+   * 游戏日志（浮层）。
    *
    * 平时不该出现——这一屏存在的理由只有一个：出事了要能看见发生了什么，
-   * 以及能整段复制给别人。所以它是浮层不是场景，从命令面板进。
+   * 以及能整段复制给别人。所以它是浮层不是场景，从命令面板或顶栏的状态块进。
    *
-   * 等级只用颜色区分，不加图标也不加标签：一屏几百行，每行前面挂个图标是
-   * 噪音；而警告和错误本来就该靠颜色一眼扫出来。
+   * 实例详情页里也有同一段日志，那边是 tab。两处的渲染共用 LogLines，
+   * 免得过滤和配色在两个地方各长各的。
    */
-  import { Copy, X } from 'lucide-svelte'
+  import { X } from 'lucide-svelte'
   import Overlay from './Overlay.svelte'
-  import { launch, type LogLevel } from '../lib/launch.svelte'
+  import LogLines from './LogLines.svelte'
+  import { launch } from '../lib/launch.svelte'
 
   interface Props {
     onclose: () => void
@@ -18,33 +19,10 @@
 
   let { onclose }: Props = $props()
 
-  /** 只看有问题的。默认全看——过滤是找问题时才用的动作。 */
-  let onlyProblems = $state(false)
-  let copied = $state(false)
-
-  const shown = $derived(
-    onlyProblems
-      ? launch.log.filter((line) => line.level === 'warn' || line.level === 'error')
-      : launch.log,
-  )
-
   const counts = $derived({
     warn: launch.log.filter((line) => line.level === 'warn').length,
     error: launch.log.filter((line) => line.level === 'error').length,
   })
-
-  const levelClass = (level: LogLevel) =>
-    level === 'error' ? 'error' : level === 'warn' ? 'warn' : level === 'info' ? '' : 'quiet'
-
-  async function copyAll() {
-    try {
-      await navigator.clipboard.writeText(shown.map((line) => line.message).join('\n'))
-      copied = true
-      setTimeout(() => (copied = false), 1400)
-    } catch {
-      // 剪贴板被拒绝时内容本身可以选中，手动复制照样完成这件事。
-    }
-  }
 </script>
 
 <Overlay label="游戏日志" width="820px" {onclose}>
@@ -60,27 +38,9 @@
     <button class="btn btn--icon" aria-label="关闭" onclick={onclose}><X size={16} /></button>
   </header>
 
-  {#if launch.log.length === 0}
-    <p class="empty t-quiet">本次运行尚无输出。</p>
-  {:else}
-    <div class="lines scroll">
-      {#each shown as line, index (index)}
-        <p class="line t-mono {levelClass(line.level)}">{line.message}</p>
-      {/each}
-      {#if shown.length === 0}
-        <p class="empty t-quiet">无警告或错误。</p>
-      {/if}
-    </div>
-  {/if}
-
-  <footer>
-    <button class="btn btn--link" onclick={() => (onlyProblems = !onlyProblems)}>
-      {onlyProblems ? '显示全部' : '仅显示警告与错误'}
-    </button>
-    <button class="btn btn--ghost" disabled={shown.length === 0} onclick={() => void copyAll()}>
-      <Copy size={14} strokeWidth={1.9} />{copied ? '已复制' : '复制'}
-    </button>
-  </footer>
+  <div class="body">
+    <LogLines lines={launch.log} />
+  </div>
 </Overlay>
 
 <style>
@@ -100,48 +60,11 @@
     margin: var(--s1) 0 0;
   }
 
-  .lines {
+  .body {
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     max-height: 62vh;
-    padding: 0 var(--s5);
-  }
-
-  .line {
-    margin: 0;
-    padding: 1px 0;
-    color: var(--ink-2);
-    font-size: var(--t-micro);
-    line-height: 1.55;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    /* 整段复制出去要能对得上原样，所以可以选中。 */
-    user-select: text;
-  }
-
-  .line.quiet {
-    color: var(--ink-4);
-  }
-
-  .line.warn {
-    color: #e0b341;
-  }
-
-  .line.error {
-    color: #e8705f;
-  }
-
-  .empty {
-    margin: 0;
-    padding: var(--s6) var(--s5);
-    text-align: center;
-  }
-
-  footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s3);
-    padding: var(--s3) var(--s5) var(--s4);
-    box-shadow: inset 0 1px 0 var(--hairline-2);
+    padding: 0 var(--s5) var(--s4);
   }
 </style>

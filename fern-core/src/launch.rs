@@ -371,6 +371,11 @@ pub async fn launch_instance(
         .spawn()
         .with_context(|| format!("start Java from {}", java_binary.display()))?;
     append_launch_log(&launch_log, &format!("started pid={}", child.id()))?;
+    // 进程起来了才算玩过。写不进去不该让已经跑起来的游戏被判失败——排序
+    // 差一次，比启动被一个写盘错误打断好。
+    if let Err(error) = crate::catalog::touch_played(paths, instance_id) {
+        append_launch_log(&launch_log, &format!("last-played not recorded: {error}"))?;
+    }
 
     // 崩溃分析要用最后这一段，两个流写进同一个缓冲区——异常往往是 stderr
     // 的栈配上 stdout 的上下文，分开看反而少一半信息。

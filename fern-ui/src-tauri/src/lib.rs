@@ -281,6 +281,13 @@ fn list_mods(instance_id: String) -> Result<Vec<fern_core::ModFile>, String> {
     fern_core::list_mods(&paths, &instance_id).map_err(|error| format!("{error:#}"))
 }
 
+/// 这个实例里的存档。只读——删世界交给文件管理器。
+#[tauri::command]
+fn list_saves(instance_id: String) -> Result<Vec<fern_core::SaveEntry>, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::list_saves(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+}
+
 /// 开或关一个模组。改的是扩展名，文件还在。
 #[tauri::command]
 fn set_mod_enabled(
@@ -469,6 +476,7 @@ pub fn run() {
             project_versions,
             install_from_modrinth,
             list_mods,
+            list_saves,
             set_mod_enabled,
             remove_mod,
             install_mods,

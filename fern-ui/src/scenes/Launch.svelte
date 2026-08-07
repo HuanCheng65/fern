@@ -1,14 +1,17 @@
 <script lang="ts">
   /**
-   * 启动场景（见 docs/UI_DESIGN.md 五）。
+   * 启动场景——正在播放（见 docs/UI_DESIGN.md 五）。
    *
-   * 首页只回答一个问题：现在玩哪个。所以这一屏上有名字的东西只有三样——
-   * 实例名、启动键、出事时的错误。其余全部退到二级。
+   * 这一屏只展示一个东西：当前实例。它的群系封面就是整个舞台的背景，所以
+   * 这里几乎没有 UI——实例名、一颗启动键、出事时的错误，仅此而已。这正是
+   * 「界面隐去、世界向前」：启动场景本质上就是当前实例的封面艺术本身。
    *
-   * 内容压在左下角，右边和上边整片留给背景。这不是没排满，是画框的意思：
-   * 界面自己不画花纹，装饰由生成式封面承担。
+   * 所有管理欲望都引导去实例场景：游戏目录、校验文件、模组、存档、设置全在
+   * 那边的详情页里。打开启动器十秒就走的那九成会话，不该看见它们。
+   *
+   * 内容压在左下角，右边和上边整片留给背景。这不是没排满，是画框的意思。
    */
-  import { ChevronDown, FolderOpen, Play, RefreshCw, X } from 'lucide-svelte'
+  import { ChevronDown, Play, X } from 'lucide-svelte'
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { prefs } from '../lib/prefs.svelte'
@@ -16,10 +19,9 @@
   interface Props {
     onswitch: () => void
     oncreate: () => void
-    onopenDirectory: () => void
   }
 
-  let { onswitch, oncreate, onopenDirectory }: Props = $props()
+  let { onswitch, oncreate }: Props = $props()
 
   const current = $derived(instances.current)
 </script>
@@ -72,15 +74,6 @@
           </button>
         </div>
       {/if}
-
-      <div class="secondary">
-        <button class="btn btn--link" onclick={onopenDirectory}>
-          <FolderOpen size={13} strokeWidth={1.9} />游戏目录
-        </button>
-        <button class="btn btn--link" onclick={() => void launch.repair(current.id)}>
-          <RefreshCw size={13} strokeWidth={1.9} />校验文件
-        </button>
-      </div>
     </div>
   {:else}
     <div class="copy">
@@ -215,21 +208,6 @@
     flex: 1;
     min-width: 0;
     overflow-wrap: anywhere;
-  }
-
-  .secondary {
-    display: flex;
-    gap: var(--s5);
-    margin-top: var(--s5);
-  }
-
-  .secondary .btn {
-    gap: 6px;
-    color: var(--ink-3);
-  }
-
-  .secondary .btn:hover {
-    color: var(--ink);
   }
 
   @media (max-width: 720px) {

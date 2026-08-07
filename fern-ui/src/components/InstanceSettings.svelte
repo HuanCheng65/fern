@@ -1,6 +1,9 @@
 <script lang="ts">
   /**
-   * 实例设置。
+   * 实例设置——实例详情页的一个 tab。
+   *
+   * 它不是浮层：这些开关属于某一个实例，只有站在那个实例的页面上才有意义。
+   * 从全局浮层里改「这个实例的内存」，改完还得自己记住刚才改的是谁。
    *
    * 这一屏只放「这个实例和别的实例不一样」的东西。全局的偏好在设置页，向导
    * 里问过的更不该在这儿再问一遍。
@@ -12,7 +15,6 @@
    */
   import { invoke } from '@tauri-apps/api/core'
   import { ChevronRight } from 'lucide-svelte'
-  import Overlay from './Overlay.svelte'
   import Choice from './Choice.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
 
@@ -43,10 +45,11 @@
   interface Props {
     instanceId: string
     instanceName: string
-    onclose: () => void
+    /** 实例没了或者变成了另一个，页面得离开这里。 */
+    ongone: (replacement?: string) => void
   }
 
-  let { instanceId, instanceName, onclose }: Props = $props()
+  let { instanceId, instanceName, ongone }: Props = $props()
 
   let renamed = $state('')
   let confirmingDelete = $state(false)
@@ -135,8 +138,8 @@
 
   async function duplicate() {
     try {
-      await instances.duplicate(instanceId, `${instanceName} 副本`)
-      onclose()
+      const copy = await instances.duplicate(instanceId, `${instanceName} 副本`)
+      ongone(copy)
     } catch (cause) {
       error = String(cause)
     }
@@ -145,7 +148,7 @@
   async function remove() {
     try {
       await instances.remove(instanceId)
-      onclose()
+      ongone()
     } catch (cause) {
       error = String(cause)
     }
@@ -154,16 +157,10 @@
   void load()
 </script>
 
-<Overlay label="{instanceName} 的设置" width="520px" {onclose}>
-  <header>
-    <h2 class="t-h2">{instanceName}</h2>
-    <p class="t-quiet">仅作用于此实例</p>
-  </header>
-
-  {#if loading}
-    <p class="t-quiet pad">读取中</p>
-  {:else}
-    <div class="body scroll">
+{#if loading}
+  <p class="t-quiet pad">读取中</p>
+{:else}
+  <div class="body">
       <section>
         <div class="row-head">
           <span class="label">内存</span>
@@ -313,38 +310,19 @@
             {/if}
           </div>
         {/if}
-      </section>
-    </div>
-  {/if}
+    </section>
+  </div>
+{/if}
 
-  {#if error}<div class="alert pad">{error}</div>{/if}
-
-  <footer>
-    <button class="btn btn--primary" onclick={onclose}>完成</button>
-  </footer>
-</Overlay>
+{#if error}<div class="alert pad">{error}</div>{/if}
 
 <style>
-  header {
-    padding: var(--s5) var(--s5) var(--s4);
-  }
-
-  header h2 {
-    margin: 0;
-    overflow-wrap: anywhere;
-  }
-
-  header p {
-    margin: var(--s1) 0 0;
-  }
-
   .pad {
-    margin: 0 var(--s5) var(--s4);
+    margin: 0;
   }
 
   .body {
-    min-height: 0;
-    padding: 0 var(--s5);
+    max-width: 620px;
   }
 
   section {
@@ -487,9 +465,4 @@
     overflow-wrap: anywhere;
   }
 
-  footer {
-    display: flex;
-    justify-content: flex-end;
-    padding: var(--s4) var(--s5) var(--s5);
-  }
 </style>
