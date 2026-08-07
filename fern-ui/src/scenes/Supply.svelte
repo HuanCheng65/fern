@@ -12,7 +12,7 @@
    * 结果无限滚动，翻到哪、搜的什么、筛选了什么全在 store 里——点进一个项目
    * 再返回，接着看，不用重新往下滑一遍。
    */
-  import { Search } from 'lucide-svelte'
+  import { Check, Search } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
   import FilterGroup from '../components/FilterGroup.svelte'
   import Loading from '../components/Loading.svelte'
@@ -27,13 +27,37 @@
   let sentinel = $state<HTMLElement>()
 
   let versionQuery = $state('')
+  /**
+   * 快照默认不出现。
+   *
+   * Mojang 的版本清单里快照占了绝大多数，混在一起就是几百条 `24w14a` 淹掉
+   * 十几个正式版——而来补给站找模组的人九成九在玩正式版。
+   */
+  let snapshots = $state(false)
 
-  /** 版本筛选使用完整的 Mojang 版本清单，搜索框负责在长列表中定位版本号。 */
-  const releases = $derived(
+  /** 搜索框负责在这张几百条的清单里定位版本号。 */
+  const versions = $derived(
     instances.versions
+      .filter((item) => snapshots || item.kind === 'release')
       .filter((item) => item.id.toLowerCase().includes(versionQuery.trim().toLowerCase()))
       .map((item) => ({ id: item.id, label: item.id })),
   )
+
+  /**
+   * 关掉快照时，如果当前正按着一个快照筛，就把它一起放掉。
+   *
+   * 否则会留下一个看不见的筛选条件：列表里找不到选中的那一条，结果却还被它
+   * 限制着——用户只会觉得补给站坏了。
+   */
+  function toggleSnapshots() {
+    snapshots = !snapshots
+    if (snapshots) return
+    const picked = instances.versions.find((item) => item.id === supply.gameVersion)
+    if (picked && picked.kind !== 'release') {
+      supply.gameVersion = ''
+      supply.refresh()
+    }
+  }
 
   // 从实例的模组页跳过来时带着实例 id，直接把条件对准它。用掉就从地址里去掉，
   // 否则用户随后改了「安装到」，下一次求值又会被它盖回去。
@@ -112,30 +136,49 @@
         }}
       />
 
-      <div class="version-filter">
-        <div class="version-search">
-          <Search size={13} strokeWidth={1.8} />
-          <input
-            class="input"
-            bind:value={versionQuery}
-            spellcheck="false"
-            aria-label="搜索游戏版本"
-            placeholder="搜索版本号"
-          />
-        </div>
-        <div class="version-options">
-          <FilterGroup
-            label="游戏版本"
-            value={supply.gameVersion}
-            options={releases}
-            anyLabel="全部"
-            onchange={(value) => {
-              supply.gameVersion = value
-              supply.refresh()
-            }}
-          />
-        </div>
-      </div>
+      <FilterGroup
+        label="游戏版本"
+        value={supply.gameVersion}
+        options={versions}
+        anyLabel="全部"
+        scrolls
+        onchange={(value) => {
+          supply.gameVersion = value
+          supply.refresh()
+        }}
+      >
+        {#snippet aside()}
+          <!--
+            这是个开关，不是又一个标题——所以给它一个方框。第三级的其他控件靠
+            透明度区分选中，那套语言只说得清「N 选 1」；一个布尔值光靠深浅，
+            用户根本不知道它可以点。
+          -->
+          <button
+            class="snap"
+            class:on={snapshots}
+            aria-pressed={snapshots}
+            onclick={toggleSnapshots}
+          >
+            <span class="box">
+              {#if snapshots}<Check size={9} strokeWidth={3.4} />{/if}
+            </span>
+            含快照
+          </button>
+        {/snippet}
+
+        {#snippet control()}
+          <div class="version-search">
+            <Search size={13} strokeWidth={1.8} />
+            <input
+              class="input"
+              bind:value={versionQuery}
+              spellcheck="false"
+              aria-label="搜索游戏版本"
+              placeholder="搜索版本号"
+            />
+          </div>
+        {/snippet}
+      </FilterGroup>
 
       <!-- 资源包和光影没有加载器这个概念，摆一组选了没用的选项是噪音。 -->
       {#if supply.kind === 'mod' || supply.kind === 'modpack'}
@@ -247,10 +290,40 @@
     padding-bottom: var(--s3);
   }
 
-  .version-filter {
+  .snap {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    padding: 0;
+    color: var(--ink);
+    font-size: var(--t-micro);
+    /* 比旁边的标题（0.35）亮一档：它是控件，不是说明。 */
+    opacity: 0.6;
+    transition: opacity var(--t-fast) var(--ease);
+  }
+
+  .snap:hover,
+  .snap.on {
+    opacity: 1;
+  }
+
+  .box {
     display: grid;
-    gap: var(--s2);
-    min-width: 0;
+    place-items: center;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px var(--tint-3);
+    color: var(--accent-ink);
+    transition:
+      background var(--t-fast) var(--ease),
+      box-shadow var(--t-fast) var(--ease);
+  }
+
+  .snap.on .box {
+    background: var(--accent);
+    box-shadow: none;
   }
 
   .version-search {
@@ -270,18 +343,6 @@
     min-height: 30px;
     padding: 0 var(--s2) 0 28px;
     font-size: var(--t-small);
-  }
-
-  .version-options {
-    max-height: 300px;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: var(--tint-3) transparent;
-    padding-right: var(--s1);
-  }
-
-  .version-options :global(.group) {
-    gap: var(--s2);
   }
 
   .sort {

@@ -147,6 +147,9 @@
    */
   --t-fast: calc(130ms * var(--motion) + 1ms);
   --t-base: calc(190ms * var(--motion) + 1ms);
+  /* 点得到的最小尺寸。见下面那条最小点击区的规则。 */
+  --hit: 24px;
+
   --t-slow: calc(340ms * var(--motion) + 1ms);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --spring: cubic-bezier(0.18, 0.92, 0.24, 1.04);
@@ -189,6 +192,45 @@ textarea {
   background: none;
   border: none;
   cursor: pointer;
+}
+
+/*
+ * 最小点击区。
+ *
+ * 这套界面的第三级控件是刻意的纯文字——12px 的筛选项、没有边框的链接按钮、
+ * 顶栏那几个词。视觉上这是对的，错的是把「看起来多大」和「点得到多大」绑成
+ * 了一件事：一个 20px 高的盒子等于逼用户拿鼠标去瞄准，而鼠标不像手指有容错。
+ *
+ * 所以放大的是**判定区**，不是视觉。一个居中的透明伪元素，尺寸取「元素本身」
+ * 和 `--hit` 里的大者——本来就够大的控件它就是 100%×100%，完全没有影响；小
+ * 控件才向外撑开。它绝对定位，不占布局，所以密度一个像素都没变。
+ *
+ * 24px 是 WCAG 2.2 target size 的下限。真正拥挤的清单（版本筛选那种一屏几百
+ * 条的）另外把行高本身提到这个数——纯靠伪元素向外够，会让相邻两项的判定区
+ * 互相重叠，**点错比点不中更糟**。
+ *
+ * 伪元素不是事件目标，落在它上面的点击算在宿主元素头上，所以不需要额外接线。
+ * 组件里 `position: absolute` 的按钮（顶栏的返回箭头、卡片上的启动键）作用域
+ * 类选择器权重更高，不会被这里的 relative 顶掉。
+ */
+button,
+summary,
+[role='button'] {
+  position: relative;
+}
+
+button::after,
+summary::after,
+[role='button']::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  min-width: var(--hit);
+  min-height: var(--hit);
+  transform: translate(-50%, -50%);
 }
 
 :focus-visible {

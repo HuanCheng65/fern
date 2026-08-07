@@ -9,6 +9,8 @@
    * 纯文字加可选的数量徽标。一个筛选项长成按钮的样子，就会和它右边的结果
    * 争视觉重量。
    */
+  import type { Snippet } from 'svelte'
+
   interface Option {
     id: string
     label: string
@@ -22,17 +24,44 @@
     options: Option[]
     /** 给一个「不限」的入口。空串是它的值。 */
     anyLabel?: string
+    /**
+     * 标题行右侧。放一个只作用于这一组的开关（「含快照」），比另起一组省地方，
+     * 也说清了它管的是谁。
+     */
+    aside?: Snippet
+    /**
+     * 标题之下、选项之上。长清单里定位用的搜索框放这里。
+     *
+     * 留这个位置是因为它必须在标题**之下**：摆在标题上面，它看起来就成了另一
+     * 件独立的事，而不是「在这一组里找」。
+     */
+    control?: Snippet
+    /** 选项多到几百条时自己滚，而不是把左栏撑成一条长带。 */
+    scrolls?: boolean
     onchange: (value: string) => void
   }
 
-  let { label, value, options, anyLabel = '', onchange }: Props = $props()
+  let {
+    label,
+    value,
+    options,
+    anyLabel = '',
+    aside,
+    control,
+    scrolls = false,
+    onchange,
+  }: Props = $props()
 
   const all = $derived(anyLabel ? [{ id: '', label: anyLabel }, ...options] : options)
 </script>
 
 <section class="group">
-  <h3 class="heading">{label}</h3>
-  <div class="items">
+  <div class="head">
+    <h3 class="heading">{label}</h3>
+    {#if aside}{@render aside()}{/if}
+  </div>
+  {#if control}{@render control()}{/if}
+  <div class="items" class:scrolls>
     {#each all as option (option.id)}
       <button
         class="item"
@@ -54,6 +83,14 @@
     min-width: 0;
   }
 
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
   .heading {
     margin: 0;
     color: var(--ink);
@@ -69,12 +106,27 @@
     min-width: 0;
   }
 
+  /* 几百条版本号自己滚，不把左栏撑成一条长带。 */
+  .items.scrolls {
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: var(--s1);
+    scrollbar-width: thin;
+    scrollbar-color: var(--tint-3) transparent;
+  }
+
+  /*
+   * 行高就是最小点击区，而不是靠伪元素向外够。
+   *
+   * 这一列可能有几百条，条与条之间只隔 1px——判定区互相压着的话，点错版本比
+   * 点不中更糟。这里多出来的是空白，不是字号，第三级的安静度没有变。
+   */
   .item {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--s2);
-    padding: 3px 0;
+    min-height: var(--hit);
     color: var(--ink);
     font-size: var(--t-small);
     text-align: left;
@@ -110,6 +162,13 @@
       grid-auto-flow: column;
       grid-auto-columns: max-content;
       gap: var(--s3);
+    }
+
+    /* 横排的时候没法纵向滚，改成横向。 */
+    .items.scrolls {
+      max-height: none;
+      overflow-x: auto;
+      padding-right: 0;
     }
   }
 </style>
