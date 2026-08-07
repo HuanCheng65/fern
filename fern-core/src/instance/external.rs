@@ -50,35 +50,63 @@ pub struct ExternalVersion {
     pub mods: u32,
 }
 
+/// 扫描的结果。
+///
+/// 除了扫到什么，还要说清楚**没扫到的是什么**。一个装了几十个版本的目录里
+/// 总有几个目录是别的东西——残留、备份、启动器自己的文件夹。上一版把它们
+/// 一律静默跳过，于是全部被跳过时界面上只剩一句「没有可用的版本」，用户和
+/// 我们都无从判断是目录选错了、还是我们读不懂。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalScan {
+    /// 真正读的那个目录。用户选了它的上一层时，这里是解析之后的结果。
+    pub root: PathBuf,
+    pub versions: Vec<ExternalVersion>,
+    pub skipped: Vec<SkippedVersion>,
+}
+
+/// `versions/` 下面一个没能成为版本的目录，以及原因。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedVersion {
+    pub name: String,
+    pub reason: String,
+}
+
 /// 看一眼那个目录里有什么。不改任何东西。
-pub fn scan(paths: &DataPaths, root: &Path) -> Result<Vec<ExternalVersion>> {
-    let root = normalise(root)?;
+pub fn scan(paths: &DataPaths, root: &Path) -> Result<ExternalScan> {
+    let root = locate(root)?;
     let versions = root.join("versions");
-    if !versions.is_dir() {
-        return Err(anyhow!(
-            "{} 里没有 versions 目录，它不像一个 .minecraft",
-            root.display()
-        ));
-    }
 
     let claimed = claimed_versions(paths, &root);
     let mut found = Vec::new();
+    let mut skipped = Vec::new();
     for entry in std::fs::read_dir(&versions).context("读取 versions 目录")? {
         let entry = entry.context("读取 versions 里的条目")?;
         if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
             continue;
         }
         let id = entry.file_name().to_string_lossy().into_owned();
-        // 目录名会被拼进路径，也会被写进实例描述——它来自别人的磁盘，照样过关口。
-        if !crate::launch::version::is_safe_id(&id) {
+        let mut skip = |reason: String| {
+            skipped.push(SkippedVersion {
+                name: id.clone(),
+                reason,
+            })
+        };
+
+        // 目录名会被拼进路径——它来自别人的磁盘，照样过关口。
+        if !is_usable_name(&id) {
+            skip("目录名无法作为路径使用".to_owned());
             continue;
         }
         let json = entry.path().join(format!("{id}.json"));
         if !json.is_file() {
             // 有目录没描述的多半是删了一半的残留，不是一个能启动的版本。
+            skip(format!("缺少 {id}.json"));
             continue;
         }
         let Some(described) = describe(&json, &id) else {
+            skip(format!("{id}.json 无法解析"));
             continue;
         };
         let isolation = detect_isolation(&root, &id);
@@ -92,7 +120,12 @@ pub fn scan(paths: &DataPaths, root: &Path) -> Result<Vec<ExternalVersion>> {
         });
     }
     found.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok(found)
+    skipped.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(ExternalScan {
+        root,
+        versions: found,
+        skipped,
+    })
 }
 
 /// 把其中一个版本添加为实例。
@@ -104,8 +137,8 @@ pub fn attach(
     version_id: &str,
     shared_libraries: bool,
 ) -> Result<InstanceProfile> {
-    let root = normalise(root)?;
-    if !crate::launch::version::is_safe_id(version_id) {
+    let root = locate(root)?;
+    if !is_usable_name(version_id) {
         return Err(anyhow!("版本 id 不可用作目录名：{version_id}"));
     }
     let json = root
@@ -315,6 +348,46 @@ fn display_name(version_id: &str, described: &ExternalVersion) -> String {
     }
 }
 
+/// 这个目录名能不能安全地拼进路径。
+///
+/// 这里**不能**用 [`crate::launch::version::is_safe_id`]：那一条说的是我们自己
+/// 下载的版本该叫什么，只放行 ASCII 字母数字和几个符号。别人目录里的版本名是
+/// 人起的——`1.20.1-Fabric 0.16.9` 带空格，整合包常常直接叫中文名——按那条规则
+/// 扫，一个装满了版本的目录会扫出一片空白，而且不说为什么。
+///
+/// 真正的要求只有一条：它必须是一个普通的路径分量，不能借着 `..` 或路径分隔符
+/// 跳到别处去。
+fn is_usable_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.contains(['/', '\\', '\0'])
+        && matches!(
+            Path::new(name).components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+        && Path::new(name).components().count() == 1
+}
+
+/// 用户选的目录，解析成真正要读的那一个。
+///
+/// 选高一层是最常见的一件事：目录选择器打开时看到的正是**包含** `.minecraft`
+/// 的那个文件夹，点一下确定就选中了它。里面正好有一个 `.minecraft` 时不必让
+/// 用户重来一次。
+fn locate(root: &Path) -> Result<PathBuf> {
+    let root = normalise(root)?;
+    if root.join("versions").is_dir() {
+        return Ok(root);
+    }
+    let nested = root.join(".minecraft");
+    if nested.join("versions").is_dir() {
+        return normalise(&nested);
+    }
+    Err(anyhow!(
+        "{} 里没有 versions 目录，它不像一个游戏目录",
+        root.display()
+    ))
+}
+
 /// 绝对化，并挡住不存在的路径。
 ///
 /// 存进实例描述的必须是绝对路径：相对路径会随工作目录漂移，而启动器的工作
@@ -323,7 +396,31 @@ fn normalise(root: &Path) -> Result<PathBuf> {
     if !root.is_dir() {
         return Err(anyhow!("{} 不是一个目录", root.display()));
     }
-    std::fs::canonicalize(root).with_context(|| format!("解析 {}", root.display()))
+    let real = std::fs::canonicalize(root).with_context(|| format!("解析 {}", root.display()))?;
+    Ok(plain(real))
+}
+
+/// 去掉 Windows 上 `canonicalize` 加的 `\\?\` 前缀。
+///
+/// 这个路径要显示在界面上、写进实例描述，还要作为工作目录交给 Java。带着
+/// 前缀的形式很多程序处理不了，而它只有在路径超过 260 个字符时才是必需的。
+fn plain(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    match path.to_str().and_then(without_verbatim) {
+        Some(text) => PathBuf::from(text),
+        None => path,
+    }
+}
+
+fn without_verbatim(text: &str) -> Option<String> {
+    let rest = text.strip_prefix(r"\\?\")?;
+    // 网络路径去掉前缀之后要把两条反斜杠补回来，否则指向的就不是同一个地方了。
+    Some(match rest.strip_prefix(r"UNC\") {
+        Some(share) => format!(r"\\{share}"),
+        None => rest.to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -353,7 +450,7 @@ mod tests {
         write_version(&root, "1.21.1", serde_json::json!({"id": "1.21.1"}));
         let paths = DataPaths::new(root.join("fern-data"));
 
-        let found = scan(&paths, &root).expect("scan");
+        let found = scan(&paths, &root).expect("scan").versions;
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].id, "1.21.1");
         assert_eq!(found[0].game_version, "1.21.1");
@@ -379,7 +476,7 @@ mod tests {
         );
         let paths = DataPaths::new(root.join("fern-data"));
 
-        let found = scan(&paths, &root).expect("scan");
+        let found = scan(&paths, &root).expect("scan").versions;
         assert_eq!(found[0].loader, LoaderKind::Forge);
         assert_eq!(found[0].loader_version.as_deref(), Some("1.20.1-47.2.0"));
         // 目录名是用户可以随手改的，版本要从 inheritsFrom 读。
@@ -403,7 +500,7 @@ mod tests {
         std::fs::create_dir_all(root.join("saves/backups")).expect("create backups");
         let paths = DataPaths::new(root.join("fern-data"));
 
-        let found = scan(&paths, &root).expect("scan");
+        let found = scan(&paths, &root).expect("scan").versions;
         let by_id = |id: &str| {
             found
                 .iter()
@@ -440,7 +537,7 @@ mod tests {
         assert!(root.join("saves/world").is_dir());
 
         // 添加过的版本再扫一次会被标出来，而且不能添加第二次。
-        let found = scan(&paths, &root).expect("rescan");
+        let found = scan(&paths, &root).expect("rescan").versions;
         assert!(found[0].attached);
         assert!(attach(&paths, &root, "1.21.1", true).is_err());
         std::fs::remove_dir_all(&root).ok();
@@ -454,6 +551,102 @@ mod tests {
         let error = scan(&paths, &root).expect_err("not a game directory");
         assert!(format!("{error}").contains("versions"));
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 版本名是人起的，不归我们管。
+    ///
+    /// 这是「选了 `.minecraft` 却一个版本都扫不出来」的原因：早先套用的是我们
+    /// 自己下载版本时那条只认 ASCII 的规则，于是带空格的、中文的全被丢掉，
+    /// 界面上只剩一句「没有可用的版本」。
+    #[test]
+    fn versions_named_by_a_human_are_not_thrown_away() {
+        let root = temporary("named");
+        for id in ["1.20.1-Fabric 0.16.9", "空岛生存", "1.21.1"] {
+            write_version(&root, id, serde_json::json!({"id": id}));
+        }
+        // 只有目录、没有描述的那些仍然不算版本，但要说得出为什么。
+        std::fs::create_dir_all(root.join("versions/半个残留")).expect("create leftovers");
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let scanned = scan(&paths, &root).expect("scan");
+        let mut names: Vec<&str> = scanned
+            .versions
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, ["1.20.1-Fabric 0.16.9", "1.21.1", "空岛生存"]);
+        assert_eq!(scanned.skipped.len(), 1);
+        assert_eq!(scanned.skipped[0].name, "半个残留");
+        assert!(scanned.skipped[0].reason.contains("半个残留.json"));
+
+        // 名字照样过关口：能跳出这个目录的一律不放行。
+        assert!(!is_usable_name("../escape"));
+        assert!(!is_usable_name("a/b"));
+        assert!(!is_usable_name(".."));
+        assert!(is_usable_name("1.20.1-Fabric 0.16.9"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 目录选择器打开时看到的是**包含** `.minecraft` 的那个文件夹。
+    #[test]
+    fn choosing_the_folder_that_contains_minecraft_still_works() {
+        let root = temporary("parent");
+        let game = root.join(".minecraft");
+        write_version(&game, "1.21.1", serde_json::json!({"id": "1.21.1"}));
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let scanned = scan(&paths, &root).expect("scan");
+        assert_eq!(
+            scanned.root,
+            std::fs::canonicalize(&game).expect("real path")
+        );
+        assert_eq!(scanned.versions.len(), 1);
+        // 添加时同样解析，两边指向的是同一个目录。
+        let profile = attach(&paths, &root, "1.21.1", true).expect("attach");
+        assert_eq!(profile.external.expect("external").root, scanned.root);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 字段名要和界面上那一份 TypeScript 对得上。这条链路编译期没有任何
+    /// 检查——名字错了只会安静地渲染出一片 undefined。
+    #[test]
+    fn the_scan_reaches_the_interface_in_the_shape_it_expects() {
+        let root = temporary("shape");
+        write_version(&root, "1.21.1", serde_json::json!({"id": "1.21.1"}));
+        std::fs::create_dir_all(root.join("versions/残留")).expect("create leftovers");
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let json = serde_json::to_value(scan(&paths, &root).expect("scan")).expect("serialize");
+        let version = &json["versions"][0];
+        for key in [
+            "id",
+            "gameVersion",
+            "loader",
+            "isolation",
+            "attached",
+            "saves",
+            "mods",
+        ] {
+            assert!(!version[key].is_null(), "versions[0].{key} 应当存在");
+        }
+        assert!(!json["root"].is_null());
+        assert_eq!(json["skipped"][0]["name"], "残留");
+        assert!(json["skipped"][0]["reason"].is_string());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_windows_verbatim_prefix_is_stripped() {
+        assert_eq!(
+            without_verbatim(r"\\?\C:\Games\.minecraft").as_deref(),
+            Some(r"C:\Games\.minecraft")
+        );
+        assert_eq!(
+            without_verbatim(r"\\?\UNC\nas\games\.minecraft").as_deref(),
+            Some(r"\\nas\games\.minecraft")
+        );
+        assert_eq!(without_verbatim(r"C:\Games\.minecraft"), None);
     }
 
     #[test]

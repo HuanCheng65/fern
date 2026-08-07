@@ -61,7 +61,8 @@ pub use instance::catalog::{
     update_instance_settings, write_instance_profile,
 };
 pub use instance::external::{
-    ExternalVersion, attach as attach_external_version, scan as scan_external_directory,
+    ExternalScan, ExternalVersion, SkippedVersion, attach as attach_external_version,
+    scan as scan_external_directory,
 };
 pub use instance::mods::{
     ModFile, install as install_mod, list as list_mods, remove as remove_mod,

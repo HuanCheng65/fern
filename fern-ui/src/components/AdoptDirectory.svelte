@@ -30,6 +30,19 @@
     mods: number
   }
 
+  /** 一个没能成为版本的目录，以及原因。 */
+  interface SkippedVersion {
+    name: string
+    reason: string
+  }
+
+  interface ExternalScan {
+    /** 真正读的那个目录。选中的是它的上一层时，两者不同。 */
+    root: string
+    versions: ExternalVersion[]
+    skipped: SkippedVersion[]
+  }
+
   interface Props {
     /** 一开始就指向某个目录（首次启动时发现的那一个）。 */
     initial?: string
@@ -39,6 +52,7 @@
 
   let directory = $state('')
   let versions = $state<ExternalVersion[] | null>(null)
+  let skipped = $state<SkippedVersion[]>([])
   let busy = $state('')
   let error = $state('')
   /**
@@ -73,9 +87,13 @@
     busy = 'scan'
     error = ''
     versions = null
+    skipped = []
     try {
-      versions = await invoke<ExternalVersion[]>('scan_game_directory', { path })
-      directory = path
+      const result = await invoke<ExternalScan>('scan_game_directory', { path })
+      versions = result.versions
+      skipped = result.skipped
+      // 选中的目录里正好有一个 `.minecraft` 时读的是它，后续的添加也用它。
+      directory = result.root
     } catch (cause) {
       error = String(cause)
       directory = path
@@ -182,6 +200,25 @@
         {/each}
       </ul>
     {/if}
+
+    <!--
+      跳过的目录要说出来，而不是从列表里悄悄消失。用户是对着一个自己装了
+      十几个版本的目录看这一屏的，少了哪个他一眼就看得出来，缺的是原因；
+      一个都没扫出来时，这里就是唯一能解释发生了什么的地方。
+    -->
+    {#if skipped.length > 0}
+      <details class="skipped" open={versions.length === 0}>
+        <summary>{skipped.length} 个目录未被识别为版本</summary>
+        <ul>
+          {#each skipped as item (item.name)}
+            <li>
+              <span class="t-mono">{item.name}</span>
+              <small>{item.reason}</small>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
   {/if}
 
   {#if error}<div class="alert">{error}</div>{/if}
@@ -280,5 +317,42 @@
   .done {
     flex: none;
     font-size: var(--t-small);
+  }
+
+  /* 收起来的次要信息：多数时候不看，扫不出东西时是唯一的线索。 */
+  .skipped {
+    font-size: var(--t-small);
+  }
+
+  .skipped summary {
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .skipped ul {
+    display: grid;
+    gap: var(--s1);
+    margin: var(--s2) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .skipped li {
+    display: flex;
+    gap: var(--s2);
+    min-width: 0;
+    color: var(--ink-3);
+    font-size: var(--t-micro);
+  }
+
+  .skipped li span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .skipped li small {
+    flex: none;
+    color: var(--ink-4);
   }
 </style>

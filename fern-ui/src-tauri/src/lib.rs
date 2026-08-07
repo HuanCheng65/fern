@@ -597,7 +597,7 @@ fn nearby_game_directory() -> Option<std::path::PathBuf> {
 
 /// 看一眼一个外部 `.minecraft` 里有哪些版本。什么都不改。
 #[tauri::command]
-async fn scan_game_directory(path: String) -> Result<Vec<fern_core::ExternalVersion>, String> {
+async fn scan_game_directory(path: String) -> Result<fern_core::ExternalScan, String> {
     off_thread(move || {
         fern_core::scan_external_directory(&paths()?, std::path::Path::new(&path))
             .map_err(|error| format!("{error:#}"))
