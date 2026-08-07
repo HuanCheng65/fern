@@ -11,7 +11,10 @@
 //! 按 B 拼 classpath，就会出现「文件明明下好了却说缺」这种最难查的问题。所以
 //! 只有这一个入口。
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
 use anyhow::{Context, Result, anyhow};
 use fern_meta::VersionMetadata;
@@ -38,18 +41,23 @@ pub fn effective_id(profile: &InstanceProfile) -> String {
 
 /// 版本 id 能不能拿去当目录名。
 ///
-/// 这些 id 全都来自网络——Mojang 的清单、加载器的 profile、以及别人写的
-/// `inheritsFrom`——而它们会被直接拼进 `versions/<id>/<id>.json`。实例 id
-/// 那套规则在这里不能用：版本号本来就带点（`1.21.1`、`1.21-pre1`），一律
-/// 禁掉点就没有一个真实版本能过。所以放行点，但堵死 `..`。
+/// 它会被直接拼进 `versions/<id>/<id>.json`，而来源全都不可信——Mojang 的
+/// 清单、加载器的 profile、别人写的 `inheritsFrom`、别人磁盘上的目录名。所以
+/// 要有这道关口，而它要挡的**只有一件事**：跳出那个目录。
+///
+/// 因此判据是「它是不是一个普通的路径分量」，不是一张字符白名单。曾经这里
+/// 只放行 ASCII 字母数字和 `-_.+`，那是照着我们自己下载的那些 id 写的；而
+/// 用户目录里的版本名是人起的——`Simply Craftmine` 带空格，整合包常常直接
+/// 叫中文名。白名单把它们一律判成非法，表现出来是扫不出版本，或者添加进来
+/// 之后一启动就报「版本 id 无法作为目录名」。
 pub fn is_safe_id(version_id: &str) -> bool {
+    let path = Path::new(version_id);
     !version_id.is_empty()
-        && version_id.len() <= 128
-        && !version_id.contains("..")
-        && !version_id.starts_with('.')
-        && version_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'+'))
+        && version_id.len() <= 255
+        && !version_id.contains(['/', '\\', '\0'])
+        // `.` 和 `..` 走的是 CurDir / ParentDir，都不是 Normal。
+        && matches!(path.components().next(), Some(Component::Normal(_)))
+        && path.components().count() == 1
 }
 
 pub fn metadata_path(paths: &DataPaths, version_id: &str) -> PathBuf {
@@ -204,10 +212,16 @@ mod tests {
             "fabric-loader-0.16.5-1.21.1",
             "quilt-loader-0.26.0-1.21.1",
             "1.20.1-forge-47.2.0",
+            // 别人目录里的版本名是人起的，不归我们管。
+            "Simply Craftmine",
+            "1.20.1-Fabric 0.16.9",
+            "空岛生存",
+            ".hidden",
+            "a..b",
         ] {
             assert!(is_safe_id(id), "{id} 应该是合法的版本 id");
         }
-        for id in ["", "..", "../etc", "a/b", "a\\b", ".hidden", "a..b"] {
+        for id in ["", ".", "..", "../etc", "a/b", "a\\b"] {
             assert!(!is_safe_id(id), "{id} 不该被当成版本 id");
         }
     }

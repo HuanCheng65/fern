@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DataPaths, InstanceId, InstanceProfile, LoaderKind, LoaderProfile,
     data::{ExternalGame, Isolation},
+    launch::version::is_safe_id,
 };
 
 /// 目录里扫到的一个版本。
@@ -95,7 +96,7 @@ pub fn scan(paths: &DataPaths, root: &Path) -> Result<ExternalScan> {
         };
 
         // 目录名会被拼进路径——它来自别人的磁盘，照样过关口。
-        if !is_usable_name(&id) {
+        if !is_safe_id(&id) {
             skip("目录名无法作为路径使用".to_owned());
             continue;
         }
@@ -138,7 +139,7 @@ pub fn attach(
     shared_libraries: bool,
 ) -> Result<InstanceProfile> {
     let root = locate(root)?;
-    if !is_usable_name(version_id) {
+    if !is_safe_id(version_id) {
         return Err(anyhow!("版本 id 不可用作目录名：{version_id}"));
     }
     let json = root
@@ -346,26 +347,6 @@ fn display_name(version_id: &str, described: &ExternalVersion) -> String {
     } else {
         version_id.to_owned()
     }
-}
-
-/// 这个目录名能不能安全地拼进路径。
-///
-/// 这里**不能**用 [`crate::launch::version::is_safe_id`]：那一条说的是我们自己
-/// 下载的版本该叫什么，只放行 ASCII 字母数字和几个符号。别人目录里的版本名是
-/// 人起的——`1.20.1-Fabric 0.16.9` 带空格，整合包常常直接叫中文名——按那条规则
-/// 扫，一个装满了版本的目录会扫出一片空白，而且不说为什么。
-///
-/// 真正的要求只有一条：它必须是一个普通的路径分量，不能借着 `..` 或路径分隔符
-/// 跳到别处去。
-fn is_usable_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 255
-        && !name.contains(['/', '\\', '\0'])
-        && matches!(
-            Path::new(name).components().next(),
-            Some(std::path::Component::Normal(_))
-        )
-        && Path::new(name).components().count() == 1
 }
 
 /// 用户选的目录，解析成真正要读的那一个。
@@ -581,10 +562,10 @@ mod tests {
         assert!(scanned.skipped[0].reason.contains("半个残留.json"));
 
         // 名字照样过关口：能跳出这个目录的一律不放行。
-        assert!(!is_usable_name("../escape"));
-        assert!(!is_usable_name("a/b"));
-        assert!(!is_usable_name(".."));
-        assert!(is_usable_name("1.20.1-Fabric 0.16.9"));
+        assert!(!is_safe_id("../escape"));
+        assert!(!is_safe_id("a/b"));
+        assert!(!is_safe_id(".."));
+        assert!(is_safe_id("1.20.1-Fabric 0.16.9"));
         std::fs::remove_dir_all(&root).ok();
     }
 
