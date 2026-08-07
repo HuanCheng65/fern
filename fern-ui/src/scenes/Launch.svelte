@@ -35,11 +35,13 @@
       <p class="meta t-mono">Minecraft {current.gameVersion} · {current.loader}</p>
 
       <div class="go-row">
+        <!-- 游戏已经开着的时候不再提供「启动」：再点一下会起第二个进程，
+             两份游戏抢同一个存档目录。 -->
         <button
           class="btn btn--primary go"
           class:busy={launch.busy}
           onclick={() => void launch.launch(current.id, prefs.playerName)}
-          disabled={launch.busy}
+          disabled={launch.busy || launch.running}
         >
           <span
             class="fill"
@@ -47,7 +49,9 @@
             style:width={launch.progress >= 0 ? `${launch.progress}%` : '100%'}
           ></span>
           <span class="go-text">
-            {#if launch.busy}
+            {#if launch.running}
+              游戏运行中
+            {:else if launch.busy}
               {launch.label || '准备中'}
             {:else}
               <Play size={16} fill="currentColor" strokeWidth={0} />启动游戏

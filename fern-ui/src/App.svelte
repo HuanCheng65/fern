@@ -100,12 +100,16 @@
   const actions = $derived<PaletteAction[]>([
     ...(instances.current
       ? [
-          {
-            id: 'launch',
-            title: '启动当前实例',
-            hint: instances.current.name,
-            run: () => void launch.launch(instances.current!.id, prefs.playerName),
-          },
+          ...(launch.running
+            ? []
+            : [
+                {
+                  id: 'launch',
+                  title: '启动当前实例',
+                  hint: instances.current.name,
+                  run: () => void launch.launch(instances.current!.id, prefs.playerName),
+                },
+              ]),
           { id: 'dir', title: '打开游戏目录', run: () => void openDirectory() },
           {
             id: 'repair',

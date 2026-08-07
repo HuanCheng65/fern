@@ -74,10 +74,11 @@
         <div class="actions">
           <button
             class="btn btn--primary"
-            disabled={launch.busy}
+            disabled={launch.busy || launch.running}
             onclick={() => void launch.launch(current.id, prefs.playerName)}
           >
-            <Play size={15} fill="currentColor" strokeWidth={0} />启动
+            <Play size={15} fill="currentColor" strokeWidth={0} />
+            {launch.running ? '运行中' : '启动'}
           </button>
           <button class="btn btn--ghost" onclick={onopenDirectory}>
             <FolderOpen size={15} strokeWidth={1.8} />游戏目录
