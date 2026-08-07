@@ -34,6 +34,18 @@
   let anchor = $state({ left: 0, right: 0 })
 
   const inDetail = $derived(nav.depth > 0 && detailLabel !== '')
+
+  /**
+   * 收起时名字要留在原地被卷走。
+   *
+   * 返回的那一刻 detailLabel 就空了，直接渲染它的话 clip-path 卷的是一段空
+   * 文字——动画在跑，只是看不见。所以这里留住最后一个非空的名字，让它自己
+   * 从右向左收回去。
+   */
+  let held = $state('')
+  $effect(() => {
+    if (detailLabel) held = detailLabel
+  })
   const isMac = $derived(platform === 'macos')
   const initials = $derived((prefs.playerName || 'FERN').slice(0, 2).toUpperCase())
   const busy = $derived(launch.busy || launch.running)
@@ -94,7 +106,7 @@
       的词上面，所以它不吃指针事件，底下的词照样可点、可悬停恢复。
     -->
     <span class="crumb" class:on={inDetail} style:left={`${anchor.right + 14}px`}>
-      {detailLabel}
+      {held}
     </span>
   </nav>
 
@@ -250,6 +262,7 @@
     opacity: 0.4;
     transition:
       opacity var(--t-base) var(--ease),
+      filter var(--t-base) var(--ease),
       color var(--t-base) var(--ease);
   }
 
@@ -261,13 +274,21 @@
     opacity: 1;
   }
 
-  /* 推入详情：其余四个词位置一个像素不动，只是存在感让位。 */
+  /*
+   * 推入详情：其余四个词位置一个像素不动，只是退到景深之外。
+   *
+   * 只压暗不够——实例名压在它们上面是叠字，两层都是清晰的文字就会互相争。
+   * 加一点失焦才真的分出前后：模糊过的那层不再被当成文字读，名字才立得住。
+   */
   nav.deep .scene:not(.on) {
-    opacity: 0.14;
+    opacity: 0.09;
+    filter: blur(2.5px);
   }
 
+  /* 悬停就回到焦点上——横跳能力保留，它们仍然可点。 */
   nav.deep .scene:not(.on):hover {
     opacity: 0.7;
+    filter: none;
   }
 
   .back {

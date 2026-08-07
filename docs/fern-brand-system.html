@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fern · 品牌标识系统</title>
+<style>
+  :root{
+    --pine:   #0E2018;
+    --paper:  #F6F4EC;
+    --fern:   #35714A;
+    --sprout: #BFE4B2;
+    --ink:    #17251D;
+    --line:   #E2E0D6;
+    --mut:    #6B7A6F;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#FBFAF6;color:var(--ink);
+    font-family:-apple-system,"Helvetica Neue","PingFang SC","Noto Sans SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:64px 24px 96px}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+
+  header{margin-bottom:56px}
+  .eyebrow{font-size:11px;letter-spacing:.18em;color:var(--mut);text-transform:uppercase}
+  h1{font-size:38px;font-weight:700;letter-spacing:-0.02em;margin-top:8px}
+  header p{margin-top:12px;max-width:600px;font-size:14px;line-height:1.8;color:var(--mut)}
+
+  section{border-top:1px solid var(--line);padding:40px 0}
+  .snum{font-size:11px;letter-spacing:.14em;color:var(--mut)}
+  h2{font-size:18px;font-weight:600;margin:4px 0 4px}
+  .desc{font-size:13px;line-height:1.9;color:var(--mut);max-width:640px;margin-bottom:24px}
+
+  .row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+  .tile{border-radius:22.5%;overflow:hidden;
+        box-shadow:0 1px 2px rgba(20,32,26,.08),0 8px 24px rgba(20,32,26,.06)}
+  .tile.dark{background:var(--pine)}
+  .tile.light{background:var(--paper);border:1px solid var(--line)}
+  .tile.green{background:var(--fern)}
+  .tile svg{display:block}
+  .cap{font-size:11px;color:var(--mut);margin-top:8px}
+  .fig{display:flex;flex-direction:column}
+
+  .panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:24px 28px;width:fit-content}
+  .panel.paper{background:var(--paper)}
+  .panel.pine{background:var(--pine);border:none}
+
+  /* 色彩 */
+  .swatches{display:flex;gap:16px;flex-wrap:wrap}
+  .sw{width:150px}
+  .sw .chip{height:88px;border-radius:10px;border:1px solid var(--line)}
+  .sw dl{margin-top:10px;font-size:12px;line-height:1.7}
+  .sw dt{font-weight:600}
+  .sw dd{color:var(--mut)}
+
+  /* 字标 */
+  .lockup{display:flex;align-items:center;gap:16px;padding:32px 40px;width:fit-content;
+          background:var(--paper);border:1px solid var(--line);border-radius:16px}
+  .lockup .word{font-size:36px;font-weight:650;letter-spacing:-0.015em}
+  .lockup.dark{background:var(--pine);border:none}
+  .lockup.dark .word{color:var(--paper)}
+  .lockup.v{flex-direction:column;gap:12px;padding:36px 48px}
+  .lockup.v .word{font-size:26px}
+
+  /* 动效 */
+  .demo{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .demo .stage{background:var(--paper);border:1px solid var(--line);border-radius:14px;
+               display:flex;align-items:center;justify-content:center;padding:26px}
+  .demo .stage.pine{background:var(--pine);border:none}
+  .ctl{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--mut)}
+  input[type=range]{accent-color:var(--fern);width:150px}
+  .inline-demo{display:flex;align-items:center;gap:12px;padding:14px 20px;
+               background:#fff;border:1px solid var(--line);border-radius:10px;
+               font-size:13px;width:fit-content}
+  .inline-demo .mono{color:var(--mut);font-size:12px}
+
+  /* 误用 */
+  .bad{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .bad .box{width:120px;height:120px;background:var(--paper);border:1px solid var(--line);
+            border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .bad small{font-size:11px;color:var(--mut)}
+  .bad small::before{content:"✕ ";color:#B4543E}
+
+  footer{border-top:1px solid var(--line);padding-top:30px;font-size:13px;
+         line-height:2;color:var(--mut);max-width:660px}
+  footer b{color:var(--ink);font-weight:600}
+
+  @keyframes fernPulse{
+    0%{opacity:.14}
+    6%{opacity:1}
+    30%{opacity:.14}
+    100%{opacity:.14}
+  }
+  .spin rect{opacity:.14;animation:fernPulse var(--dur,1.8s) linear infinite}
+  @media (prefers-reduced-motion:reduce){
+    .spin rect{animation:none;opacity:.6}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow mono">FERN · BRAND IDENTITY SYSTEM · V1.0</div>
+    <h1>Fern 标识系统</h1>
+    <p>标志是一条 7×9 网格上的直角螺线：2.5 圈、圈距一格、茎两格，终点为芽尖。
+       全部几何由八个矩形构成，可用一段走线规则完整复述。
+       蕨芽展开即启动；同一条走线亦是加载动画的轨道。</p>
+  </header>
+
+  <!-- 01 标志 -->
+  <section>
+    <div class="snum mono">01</div>
+    <h2>标志</h2>
+    <p class="desc">主标使用连续格（无缝隙、直角）。左为构造网格：
+       走线自茎底起，经右侧上行、顶部左行、左侧下行、底部右行收入内圈，止于芽尖。</p>
+    <div class="row">
+      <div class="fig"><div class="panel" id="construction"></div><span class="cap">构造 · 7×9 网格</span></div>
+      <div class="fig"><div class="tile dark" id="m-dark"></div><span class="cap">深底 · 嫩芽 #BFE4B2</span></div>
+      <div class="fig"><div class="tile light" id="m-light"></div><span class="cap">浅底 · 蕨绿 #35714A</span></div>
+    </div>
+  </section>
+
+  <!-- 02 留白与最小尺寸 -->
+  <section>
+    <div class="snum mono">02</div>
+    <h2>留白与最小尺寸</h2>
+    <p class="desc">保护区为标志四周各一格（以标志自身网格为单位）。
+       屏幕最小使用尺寸 16px；16px 场景使用茎缩短一格的 favicon 精确版（7×8 格，每格恰为 2px）。</p>
+    <div class="row">
+      <div class="fig"><div class="panel" id="clearspace"></div><span class="cap">保护区 · x = 1 格</span></div>
+      <div class="fig"><div class="panel" id="minsize" style="display:flex;align-items:flex-end;gap:24px"></div><span class="cap">最小尺寸实测</span></div>
+    </div>
+  </section>
+
+  <!-- 03 色彩 -->
+  <section>
+    <div class="snum mono">03</div>
+    <h2>色彩</h2>
+    <p class="desc">系统只有四个值。深底配嫩芽、浅底配蕨绿、品牌绿底配纸白；标志不使用渐变，不新增颜色。</p>
+    <div class="swatches">
+      <div class="sw"><div class="chip" style="background:#0E2018"></div>
+        <dl><dt>墨松</dt><dd class="mono">#0E2018</dd><dd>深色底 · 图标底板</dd></dl></div>
+      <div class="sw"><div class="chip" style="background:#F6F4EC"></div>
+        <dl><dt>纸白</dt><dd class="mono">#F6F4EC</dd><dd>浅色底 · 绿底上的标志</dd></dl></div>
+      <div class="sw"><div class="chip" style="background:#35714A"></div>
+        <dl><dt>蕨绿</dt><dd class="mono">#35714A</dd><dd>浅底上的标志 · 强调底</dd></dl></div>
+      <div class="sw"><div class="chip" style="background:#BFE4B2"></div>
+        <dl><dt>嫩芽</dt><dd class="mono">#BFE4B2</dd><dd>深底上的标志</dd></dl></div>
+    </div>
+  </section>
+
+  <!-- 04 字标 -->
+  <section>
+    <div class="snum mono">04</div>
+    <h2>字标</h2>
+    <p class="desc">小写 fern，字重 650、字距 −1.5%。横排间距为两格，纵排为一格半。
+       正式字体贴瑞士系无衬线（Neue Haas Grotesk / Inter 方向）。</p>
+    <div class="row">
+      <div class="lockup"><span id="lk-h"></span><span class="word" style="color:var(--ink)">fern</span></div>
+      <div class="lockup dark"><span id="lk-hd"></span><span class="word">fern</span></div>
+      <div class="lockup v"><span id="lk-v"></span><span class="word" style="color:var(--ink)">fern</span></div>
+    </div>
+  </section>
+
+  <!-- 05 应用图标 -->
+  <section>
+    <div class="snum mono">05</div>
+    <h2>应用图标与 Favicon</h2>
+    <p class="desc">圆角半径 22.5%。三种底色按场景取用；favicon 用精确版并逐像素导出。</p>
+    <div class="row" id="appicons"></div>
+  </section>
+
+  <!-- 06 动效 -->
+  <section>
+    <div class="snum mono">06</div>
+    <h2>加载动效</h2>
+    <p class="desc">动画轨道即标志走线本身，方向恒定为茎底 → 芽尖：螺线画完，启动完成。
+       共 33 格，有进度版的粒度为 1/33，刻意保留像素感的顿挫。未点亮的格子以 14% 透明度示轨。</p>
+    <div class="row" style="gap:32px">
+      <div class="demo">
+        <div class="stage" id="spin-l"></div>
+        <span class="cap">不定进度 · 浅底 64px</span>
+      </div>
+      <div class="demo">
+        <div class="stage pine" id="spin-d"></div>
+        <span class="cap">不定进度 · 深底 64px</span>
+      </div>
+      <div class="demo">
+        <div class="stage" id="prog-stage"></div>
+        <div class="ctl">
+          <label><input type="checkbox" id="auto" checked> 自动演示</label>
+          <input type="range" id="slider" min="0" max="100" value="0">
+          <span class="mono" id="pct">0%</span>
+        </div>
+        <span class="cap">有进度 · 64px</span>
+      </div>
+    </div>
+    <div class="row" style="margin-top:28px">
+      <div class="inline-demo"><span id="mini-spin"></span>正在启动 <span class="mono">1.21.4 · Fabric</span></div>
+      <div class="inline-demo"><span id="mini-prog"></span>下载资源包 <span class="mono">64%</span></div>
+    </div>
+  </section>
+
+  <!-- 07 误用 -->
+  <section>
+    <div class="snum mono">07</div>
+    <h2>误用</h2>
+    <p class="desc">标志不旋转、不拉伸、不描边、不加渐变、不使用系统色以外的颜色。</p>
+    <div class="row" id="misuse"></div>
+  </section>
+
+  <footer>
+    <b>随附资产</b>：fern-mark.svg（主标，<span class="mono">currentColor</span> 继承环境色）、
+    fern-favicon.svg（7×8 精确版）、fern-app-icon.svg（512px 墨松底）。
+    走线定义与动效实现均在本页源码内，可直接移植到 Tauri 前端。
+  </footer>
+
+</div>
+
+<script>
+/* ---------- 定义 ---------- */
+const NS='http://www.w3.org/2000/svg';
+const el=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);return e;};
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const PINE=css('--pine'),PAPER=css('--paper'),FERN=css('--fern'),SPROUT=css('--sprout'),LINE=css('--line');
+
+const RUNS=[
+  [7,9,7,8],[7,7,7,1],[6,1,1,1],[1,2,1,7],
+  [2,7,5,7],[5,6,5,3],[4,3,3,3],[3,4,3,5],
+];
+const RUNS_FAV=RUNS.map((r,i)=>i===0?[7,8,7,8]:r);
+
+function cells(runs){
+  const out=[],seen=new Set();
+  for(const[a,b,c,d]of runs){
+    const dx=Math.sign(c-a),dy=Math.sign(d-b);let x=a,y=b;
+    for(;;){const k=x+','+y;
+      if(!seen.has(k)){seen.add(k);out.push([x,y]);}
+      if(x===c&&y===d)break;x+=dx;y+=dy;}
+  }
+  return out;
+}
+const CELLS=cells(RUNS),CELLS_FAV=cells(RUNS_FAV);
+
+/* 有序单元渲染：返回 {svg, rects[]}，rects 按走线顺序排列 */
+function mark({list=CELLS,color=SPROUT,size=200,pad=14,box=100}={}){
+  const xs=list.map(c=>c[0]),ys=list.map(c=>c[1]);
+  const x0=Math.min(...xs),y0=Math.min(...ys),
+        w=Math.max(...xs)-x0+1,h=Math.max(...ys)-y0+1;
+  const cell=(box-2*pad)/Math.max(w,h),
+        ox=(box-w*cell)/2,oy=(box-h*cell)/2;
+  const s=el('svg',{xmlns:NS,viewBox:`0 0 ${box} ${box}`,width:size,height:size});
+  s.setAttribute('shape-rendering','crispEdges');
+  const rects=list.map(([x,y])=>{
+    const r=el('rect',{x:(ox+(x-x0)*cell).toFixed(3),y:(oy+(y-y0)*cell).toFixed(3),
+      width:cell.toFixed(3),height:cell.toFixed(3),fill:color});
+    s.appendChild(r);return r;
+  });
+  return{svg:s,rects};
+}
+
+/* ---------- 01 构造图 ---------- */
+{
+  const C=20,W=7*C,H=9*C,pad=10;
+  const s=el('svg',{xmlns:NS,viewBox:`0 0 ${W+2*pad} ${H+2*pad}`,width:W+2*pad,height:H+2*pad});
+  for(let i=0;i<=7;i++)s.appendChild(el('line',{x1:pad+i*C,y1:pad,x2:pad+i*C,y2:pad+H,stroke:LINE,'stroke-width':1}));
+  for(let j=0;j<=9;j++)s.appendChild(el('line',{x1:pad,y1:pad+j*C,x2:pad+W,y2:pad+j*C,stroke:LINE,'stroke-width':1}));
+  for(const[x,y]of CELLS)
+    s.appendChild(el('rect',{x:pad+(x-1)*C,y:pad+(y-1)*C,width:C,height:C,fill:FERN,opacity:.9}));
+  const tip=CELLS[CELLS.length-1];
+  s.appendChild(el('circle',{cx:pad+(tip[0]-1)*C+C/2,cy:pad+(tip[1]-1)*C+C/2,r:3.2,fill:PAPER}));
+  document.getElementById('construction').appendChild(s);
+}
+
+/* ---------- 01 主标 ---------- */
+document.getElementById('m-dark').appendChild(mark({size:180}).svg);
+document.getElementById('m-light').appendChild(mark({size:180,color:FERN}).svg);
+
+/* ---------- 02 保护区 ---------- */
+{
+  const C=18,pad=C;   // 四周各留 1 格
+  const W=7*C,H=9*C;
+  const s=el('svg',{xmlns:NS,viewBox:`0 0 ${W+2*pad} ${H+2*pad}`,width:(W+2*pad)*0.95,height:(H+2*pad)*0.95});
+  s.appendChild(el('rect',{x:.5,y:.5,width:W+2*pad-1,height:H+2*pad-1,fill:'none',
+    stroke:FERN,'stroke-width':1,'stroke-dasharray':'4 4',opacity:.7}));
+  for(const[x,y]of CELLS)
+    s.appendChild(el('rect',{x:pad+(x-1)*C,y:pad+(y-1)*C,width:C,height:C,fill:FERN}));
+  document.getElementById('clearspace').appendChild(s);
+}
+
+/* ---------- 02 最小尺寸 ---------- */
+{
+  const m=document.getElementById('minsize');
+  for(const px of[32,24,16]){
+    const d=document.createElement('div');d.style.textAlign='center';
+    d.appendChild(mark({size:px,color:FERN,pad:0}).svg);
+    const lab=document.createElement('div');lab.className='cap mono';lab.textContent=px+'px';
+    d.appendChild(lab);m.appendChild(d);
+  }
+  const d=document.createElement('div');d.style.textAlign='center';
+  d.appendChild(mark({list:CELLS_FAV,size:16,color:FERN,pad:0}).svg);
+  const lab=document.createElement('div');lab.className='cap mono';lab.textContent='16 精确';
+  d.appendChild(lab);m.appendChild(d);
+}
+
+/* ---------- 04 字标 ---------- */
+document.getElementById('lk-h').appendChild(mark({size:50,color:FERN,pad:6}).svg);
+document.getElementById('lk-hd').appendChild(mark({size:50,pad:6}).svg);
+document.getElementById('lk-v').appendChild(mark({size:56,color:FERN,pad:6}).svg);
+
+/* ---------- 05 应用图标 ---------- */
+{
+  const A=document.getElementById('appicons');
+  for(const[bg,fg,name]of[['dark',SPROUT,'墨松 · 深色系统'],['light',FERN,'纸白 · 浅色系统'],['green',PAPER,'蕨绿 · 商店页']]){
+    const f=document.createElement('div');f.className='fig';
+    const t=document.createElement('div');t.className='tile '+bg;
+    t.appendChild(mark({size:140,color:fg}).svg);
+    const c=document.createElement('span');c.className='cap';c.textContent=name;
+    f.append(t,c);A.appendChild(f);
+  }
+  const f=document.createElement('div');f.className='fig';
+  const p=document.createElement('div');p.className='panel paper';
+  p.style.display='flex';p.style.alignItems='center';p.style.justifyContent='center';
+  p.style.width='140px';p.style.height='140px';
+  p.appendChild(mark({list:CELLS_FAV,size:32,color:FERN,pad:0}).svg);
+  const c=document.createElement('span');c.className='cap';c.textContent='favicon · 精确版';
+  f.append(p,c);A.appendChild(f);
+}
+
+/* ---------- 06 不定进度 ---------- */
+function spinner({color,size,dur=1.8}){
+  const{svg,rects}=mark({color,size,pad:8});
+  svg.classList.add('spin');
+  svg.style.setProperty('--dur',dur+'s');
+  const N=rects.length;
+  rects.forEach((r,i)=>{r.style.animationDelay=(i/N*dur)+'s';});
+  return svg;
+}
+document.getElementById('spin-l').appendChild(spinner({color:FERN,size:64}));
+document.getElementById('spin-d').appendChild(spinner({color:SPROUT,size:64}));
+document.getElementById('mini-spin').appendChild(spinner({color:FERN,size:18,dur:1.4}));
+
+/* ---------- 06 有进度 ---------- */
+function progressMark({color,size}){
+  const{svg,rects}=mark({color,size,pad:8});
+  rects.forEach(r=>r.style.opacity=.14);
+  return{svg,set(p){
+    const n=Math.round(p*rects.length);
+    rects.forEach((r,i)=>r.style.opacity=i<n?1:.14);
+  }};
+}
+const P=progressMark({color:FERN,size:64});
+document.getElementById('prog-stage').appendChild(P.svg);
+const slider=document.getElementById('slider'),pct=document.getElementById('pct'),
+      auto=document.getElementById('auto');
+function setP(v){P.set(v/100);slider.value=v;pct.textContent=Math.round(v)+'%';}
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let t0=performance.now();
+function loop(t){
+  if(auto.checked&&!reduced){
+    const cyc=3.6,u=((t-t0)/1000)%cyc;
+    let p;
+    if(u<2.6){const x=u/2.6;p=100*(x<.5?2*x*x:1-Math.pow(-2*x+2,2)/2);} // easeInOut
+    else p=100;                                                          // 满格停留
+    setP(p);
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+slider.addEventListener('input',()=>{auto.checked=false;setP(+slider.value);});
+if(reduced)setP(64);
+
+const MP=progressMark({color:FERN,size:18});
+MP.set(0.64);
+document.getElementById('mini-prog').appendChild(MP.svg);
+
+/* ---------- 07 误用 ---------- */
+{
+  const M=document.getElementById('misuse');
+  function bad(label,build){
+    const d=document.createElement('div');d.className='bad';
+    const box=document.createElement('div');box.className='box';
+    box.appendChild(build());
+    const s=document.createElement('small');s.textContent=label;
+    d.append(box,s);M.appendChild(d);
+  }
+  bad('旋转',()=>{const m=mark({size:84,color:FERN}).svg;m.style.transform='rotate(45deg)';return m;});
+  bad('拉伸',()=>{const m=mark({size:84,color:FERN}).svg;m.style.transform='scaleX(1.45)';return m;});
+  bad('渐变',()=>{
+    const{svg,rects}=mark({size:84,color:FERN});
+    const defs=el('defs',{}),g=el('linearGradient',{id:'nope',x1:0,y1:0,x2:1,y2:1});
+    g.appendChild(el('stop',{offset:'0%','stop-color':'#35714A'}));
+    g.appendChild(el('stop',{offset:'100%','stop-color':'#BFE4B2'}));
+    defs.appendChild(g);svg.insertBefore(defs,svg.firstChild);
+    rects.forEach(r=>r.setAttribute('fill','url(#nope)'));return svg;});
+  bad('描边',()=>{
+    const{svg,rects}=mark({size:84,color:'none'});
+    rects.forEach(r=>{r.setAttribute('fill','none');r.setAttribute('stroke',FERN);r.setAttribute('stroke-width','1.4');});
+    return svg;});
+  bad('系统外颜色',()=>mark({size:84,color:'#7C5CBF'}).svg);
+}
+</script>
+</body>
+</html>
