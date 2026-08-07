@@ -38,11 +38,25 @@ export const emptyDoc = (): SettingsDoc => ({
 let doc: SettingsDoc = emptyDoc()
 let timer: ReturnType<typeof setTimeout> | undefined
 
-/** 0.1.0 把设置拆在几个 localStorage 键里。读一次搬过来，之后就只认文件。 */
-function migrateLegacy(target: SettingsDoc) {
+const LEGACY_KEYS = ['fern.theme', 'fern.prefs', 'fern.account.name', 'fern.landing.seen']
+
+/**
+ * 0.1.0 把设置拆在几个 localStorage 键里。
+ *
+ * 这是**搬走**，不是抄一份：读进来、落盘、删掉旧键。抄一份的话，旧键会一直
+ * 留在 webview 里，而它触发的条件恰好是「文件里没有设置」——删掉
+ * settings.json 之后设置会原样变回来，文件就不再是唯一的来源。
+ *
+ * 返回是否真的读到了东西：没读到就不该去动磁盘，也不该删任何键。
+ */
+function migrateLegacy(target: SettingsDoc): boolean {
+  let found = false
   try {
     const appearance = localStorage.getItem('fern.theme')
-    if (appearance) target.appearance = JSON.parse(appearance) as Record<string, unknown>
+    if (appearance) {
+      target.appearance = JSON.parse(appearance) as Record<string, unknown>
+      found = true
+    }
     const prefs = localStorage.getItem('fern.prefs')
     if (prefs) {
       const parsed = JSON.parse(prefs) as Record<string, unknown>
@@ -53,19 +67,32 @@ function migrateLegacy(target: SettingsDoc) {
       }
       target.setupDone = parsed.setupDone === true
       target.minimizeOnLaunch = parsed.minimizeOnLaunch === true
+      found = true
     }
     const name = localStorage.getItem('fern.account.name')
     if (name && !target.account.playerName) {
       target.account.playerName = name
       target.setupDone = localStorage.getItem('fern.landing.seen') === '1'
+      found = true
     }
   } catch {
     // 旧数据读不出来就当没有，用默认值继续。
+  }
+  return found
+}
+
+/** 落盘成功之后才调用——写失败时旧数据还得留着。 */
+function dropLegacy() {
+  try {
+    for (const key of LEGACY_KEYS) localStorage.removeItem(key)
+  } catch {
+    // 存储被禁用时旧键本来也读不出来，没有要清的东西。
   }
 }
 
 export async function hydrate(): Promise<SettingsDoc> {
   const next = emptyDoc()
+  let migrated = false
   if (inTauri()) {
     try {
       Object.assign(next, await invoke<SettingsDoc>('get_settings'))
@@ -73,17 +100,19 @@ export async function hydrate(): Promise<SettingsDoc> {
       // 读不出来（首次启动、文件损坏）就用默认值，下一次保存会把它写回去。
     }
     // 文件是空的说明这台机器还没迁过来，把旧的浏览器存储搬进去。
-    if (!next.setupDone && !next.account.playerName) migrateLegacy(next)
+    if (!next.setupDone && !next.account.playerName) migrated = migrateLegacy(next)
   } else {
     try {
       const raw = localStorage.getItem(FALLBACK_KEY)
       if (raw) Object.assign(next, JSON.parse(raw) as SettingsDoc)
-      else migrateLegacy(next)
+      else migrated = migrateLegacy(next)
     } catch {
       // 同上。
     }
   }
   doc = next
+  // 立刻落盘再清旧键：搬迁要在这一次启动里就完成，不能等用户碰一下设置。
+  if (migrated && (await flush())) dropLegacy()
   return doc
 }
 
@@ -98,20 +127,24 @@ export function patch(mutate: (target: SettingsDoc) => void) {
   timer = setTimeout(() => void flush(), SAVE_DELAY)
 }
 
-export async function flush() {
+/** 写盘。返回是否写成功——搬迁要靠它决定能不能删旧数据。 */
+export async function flush(): Promise<boolean> {
   clearTimeout(timer)
   const settings = doc
   if (!inTauri()) {
     try {
       localStorage.setItem(FALLBACK_KEY, JSON.stringify(settings))
+      return true
     } catch {
       // 无痕模式：这次生效，下次打开回到默认。
+      return false
     }
-    return
   }
   try {
     await invoke('save_settings', { settings })
+    return true
   } catch {
     // 磁盘写不进去（只读、满盘）时界面已经是新的样子了，下次改动会再试一次。
+    return false
   }
 }
