@@ -7,18 +7,49 @@ fn app_name() -> &'static str {
 
 #[tauri::command]
 fn data_paths() -> Result<fern_core::DataPaths, String> {
+    // 纯算路径，不碰磁盘，留在主线程上。
+    paths()
+}
+
+/// 把一段同步的活挪出主线程。
+///
+/// Tauri 里不带 `async` 的命令在主线程上执行——那正是 webview 事件循环所在的
+/// 线程。于是复制一个几 GB 的实例目录、扫一遍磁盘找 Java、读两百个 jar 的
+/// 清单，这些事一发生，整个窗口连动画都停住，看起来就是「点了没反应，过一会
+/// 自己好了」。
+///
+/// 不用 `#[tauri::command(async)]`：那只是挪到异步运行时上，而同一条运行时正
+/// 在跑下载，拿阻塞占掉它一个 worker 等于把问题换了个地方。阻塞的活交给专门
+/// 的阻塞线程池，它闲置时不占任何东西。
+///
+/// 规则：**碰磁盘、碰钥匙串、起进程的命令一律走这里。** 只算路径、不做 I/O 的
+/// 留在原地——为它们付一次线程调度不值得。
+async fn off_thread<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("后台任务没能跑完：{error}"))
+}
+
+/// 拿到数据目录，顺带把错误变成界面能显示的字符串。
+fn paths() -> Result<fern_core::DataPaths, String> {
     fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn list_instances() -> Result<Vec<fern_core::InstanceProfile>, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))
+async fn list_instances() -> Result<Vec<fern_core::InstanceProfile>, String> {
+    off_thread(|| fern_core::list_instances(&paths()?).map_err(|error| format!("{error:#}")))
+        .await?
 }
 
 #[tauri::command]
 async fn list_versions() -> Result<Vec<fern_core::VersionOption>, String> {
-    fern_core::list_versions().await.map_err(|error| format!("{error:#}"))
+    fern_core::list_versions()
+        .await
+        .map_err(|error| format!("{error:#}"))
 }
 
 /// 建实例。`loader` 是 `vanilla` / `fabric` / `quilt`。
@@ -85,84 +116,75 @@ fn offline_account(player_name: String) -> fern_core::Credentials {
 /// storage: they survive a cleared webview, and the user can open, back up, or
 /// share the file.
 #[tauri::command]
-fn get_settings() -> Result<fern_core::Settings, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    Ok(fern_core::load_settings(&paths))
+async fn get_settings() -> Result<fern_core::Settings, String> {
+    off_thread(|| Ok(fern_core::load_settings(&paths()?))).await?
 }
 
 #[tauri::command]
-fn save_settings(settings: fern_core::Settings) -> Result<(), String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::save_settings(&paths, &settings).map_err(|error| format!("{error:#}"))
+async fn save_settings(settings: fern_core::Settings) -> Result<(), String> {
+    off_thread(move || {
+        fern_core::save_settings(&paths()?, &settings).map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// Returns null when nothing usable was found, which is the only case the
 /// setup wizard has anything to say about.
 #[tauri::command]
-fn detect_java() -> Option<fern_core::JavaRuntime> {
-    fern_core::detect_java()
+async fn detect_java() -> Option<fern_core::JavaRuntime> {
+    // 扫的是整个 PATH 加几个系统目录，慢起来是秒级的。
+    off_thread(fern_core::detect_java).await.ok().flatten()
 }
 
 /// 打开实例的游戏目录，或者它下面的某个子目录（`mods`、`saves`……）。
 #[tauri::command]
-fn open_instance_directory(instance_id: String, sub: Option<String>) -> Result<(), String> {
-    let id = fern_core::InstanceId::parse(instance_id).map_err(|error| error.to_string())?;
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    let mut directory = paths.game_directory(id.as_str());
-    if let Some(sub) = sub.filter(|sub| !sub.is_empty()) {
-        // 子目录名来自界面，不能原样拼。
-        if sub.contains(['/', '\\']) || sub.contains("..") {
-            return Err(format!("非法的子目录：{sub}"));
+async fn open_instance_directory(instance_id: String, sub: Option<String>) -> Result<(), String> {
+    off_thread(move || {
+        let id = fern_core::InstanceId::parse(instance_id).map_err(|error| error.to_string())?;
+        let mut directory = paths()?.game_directory(id.as_str());
+        if let Some(sub) = sub.filter(|sub| !sub.is_empty()) {
+            // 子目录名来自界面，不能原样拼。
+            if sub.contains(['/', '\\']) || sub.contains("..") {
+                return Err(format!("非法的子目录：{sub}"));
+            }
+            directory.push(sub);
         }
-        directory.push(sub);
-    }
-    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-
-    #[cfg(target_os = "windows")]
-    std::process::Command::new("explorer")
-        .arg(&directory)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-
-    #[cfg(target_os = "macos")]
-    std::process::Command::new("open")
-        .arg(&directory)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-
-    #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open")
-        .arg(&directory)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-
-    Ok(())
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        hand_to_system(directory.as_os_str())
+    })
+    .await?
 }
 
 #[tauri::command]
-fn open_logs_directory() -> Result<(), String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    std::fs::create_dir_all(&paths.logs).map_err(|error| error.to_string())?;
+async fn open_logs_directory() -> Result<(), String> {
+    off_thread(|| {
+        let logs = paths()?.logs;
+        std::fs::create_dir_all(&logs).map_err(|error| error.to_string())?;
+        hand_to_system(logs.as_os_str())
+    })
+    .await?
+}
 
+/// 把一个目录或者一条链接交给系统的打开程序。
+///
+/// 三个平台上都是同一个动作，只是程序名不同；目录和链接对这些程序来说也是
+/// 同一种东西——一个参数。所以这里收 `OsStr` 而不是 `Path`，免得为了复用把
+/// 一条 URL 说成是路径。
+fn hand_to_system(target: &std::ffi::OsStr) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    std::process::Command::new("explorer")
-        .arg(&paths.logs)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    let mut command = std::process::Command::new("explorer");
 
     #[cfg(target_os = "macos")]
-    std::process::Command::new("open")
-        .arg(&paths.logs)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    let mut command = std::process::Command::new("open");
 
     #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open")
-        .arg(&paths.logs)
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    let mut command = std::process::Command::new("xdg-open");
 
-    Ok(())
+    command
+        .arg(target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// 把核心的事件流接到前端。
@@ -171,7 +193,9 @@ fn open_logs_directory() -> Result<(), String> {
 /// 返回之后才陆续到来的，命令一结束就关掉通道，界面就再也收不到游戏在说
 /// 什么。发送端全部丢掉时（下载结束、游戏退出、读线程收摊）通道自己关，
 /// 任务随之结束。
-fn launcher_events(app: &tauri::AppHandle) -> tokio::sync::mpsc::UnboundedSender<fern_core::LauncherEvent> {
+fn launcher_events(
+    app: &tauri::AppHandle,
+) -> tokio::sync::mpsc::UnboundedSender<fern_core::LauncherEvent> {
     let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -226,7 +250,9 @@ async fn launch_instance(
 /// 条件全部由界面给出，不从「当前实例」推断——补给站是一个独立的地方，
 /// 装不装得上是标注，不是过滤器。
 #[tauri::command]
-async fn search_resources(query: fern_core::SearchQuery) -> Result<fern_core::SearchResult, String> {
+async fn search_resources(
+    query: fern_core::SearchQuery,
+) -> Result<fern_core::SearchResult, String> {
     fern_core::search_modrinth(&query)
         .await
         .map_err(|error| format!("{error:#}"))
@@ -290,8 +316,12 @@ async fn install_modpack(
 
 /// 先看一眼本地这个 .mrpack 里是什么，不动磁盘。
 #[tauri::command]
-fn inspect_modpack(path: String) -> Result<fern_core::PackSummary, String> {
-    fern_core::inspect_modpack(std::path::Path::new(&path)).map_err(|error| format!("{error:#}"))
+async fn inspect_modpack(path: String) -> Result<fern_core::PackSummary, String> {
+    off_thread(move || {
+        fern_core::inspect_modpack(std::path::Path::new(&path))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 导入一个本地的 .mrpack。
@@ -319,118 +349,132 @@ async fn import_modpack(
 /// 详情页上的链接是 Modrinth 给的字符串，会被原样递给系统的打开程序，所以
 /// 只放行 https——`file://` 会打开本地文件，Windows 上还有一堆自定义协议。
 #[tauri::command]
-fn open_external(url: String) -> Result<(), String> {
+async fn open_external(url: String) -> Result<(), String> {
     if !fern_core::is_external_url(&url) {
         return Err("只能打开 https 链接".to_owned());
     }
-
-    #[cfg(target_os = "windows")]
-    let mut command = std::process::Command::new("explorer");
-
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-
-    #[cfg(target_os = "linux")]
-    let mut command = std::process::Command::new("xdg-open");
-
-    command
-        .arg(&url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    // 起浏览器要 fork 一个进程，在主线程上做就是一次可见的卡顿。
+    off_thread(move || hand_to_system(url.as_ref())).await?
 }
 
 /// 这个实例装了哪些模组。
 #[tauri::command]
-fn list_mods(instance_id: String) -> Result<Vec<fern_core::ModFile>, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::list_mods(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+async fn list_mods(instance_id: String) -> Result<Vec<fern_core::ModFile>, String> {
+    // 每个 jar 都要开一次 zip 读清单，两百个模组的实例上这是实打实的活。
+    off_thread(move || {
+        fern_core::list_mods(&paths()?, &instance_id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 这个实例里的存档。只读——删世界交给文件管理器。
 #[tauri::command]
-fn list_saves(instance_id: String) -> Result<Vec<fern_core::SaveEntry>, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::list_saves(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+async fn list_saves(instance_id: String) -> Result<Vec<fern_core::SaveEntry>, String> {
+    off_thread(move || {
+        fern_core::list_saves(&paths()?, &instance_id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 开或关一个模组。改的是扩展名，文件还在。
 #[tauri::command]
-fn set_mod_enabled(
+async fn set_mod_enabled(
     instance_id: String,
     file_name: String,
     enabled: bool,
 ) -> Result<String, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::set_mod_enabled(&paths, &instance_id, &file_name, enabled)
-        .map_err(|error| format!("{error:#}"))
+    off_thread(move || {
+        fern_core::set_mod_enabled(&paths()?, &instance_id, &file_name, enabled)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 #[tauri::command]
-fn remove_mod(instance_id: String, file_name: String) -> Result<(), String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::remove_mod(&paths, &instance_id, &file_name).map_err(|error| format!("{error:#}"))
+async fn remove_mod(instance_id: String, file_name: String) -> Result<(), String> {
+    off_thread(move || {
+        fern_core::remove_mod(&paths()?, &instance_id, &file_name)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 把本地的 jar 装进实例。界面上是拖进来或者选文件。
 #[tauri::command]
-fn install_mods(
+async fn install_mods(
     instance_id: String,
     paths_to_install: Vec<String>,
 ) -> Result<Vec<fern_core::ModFile>, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    let mut installed = Vec::new();
-    for source in paths_to_install {
-        installed.push(
-            fern_core::install_mod(&paths, &instance_id, std::path::Path::new(&source))
-                .map_err(|error| format!("{error:#}"))?,
-        );
-    }
-    Ok(installed)
+    off_thread(move || {
+        let data = paths()?;
+        let mut installed = Vec::new();
+        for source in paths_to_install {
+            installed.push(
+                fern_core::install_mod(&data, &instance_id, std::path::Path::new(&source))
+                    .map_err(|error| format!("{error:#}"))?,
+            );
+        }
+        Ok(installed)
+    })
+    .await?
 }
 
 #[tauri::command]
-fn delete_instance(instance_id: String) -> Result<(), String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::delete_instance(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+async fn delete_instance(instance_id: String) -> Result<(), String> {
+    // 删的是整棵游戏目录，可能上万个文件。
+    off_thread(move || {
+        fern_core::delete_instance(&paths()?, &instance_id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 #[tauri::command]
-fn rename_instance(
+async fn rename_instance(
     instance_id: String,
     name: String,
 ) -> Result<fern_core::InstanceProfile, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::rename_instance(&paths, &instance_id, &name).map_err(|error| format!("{error:#}"))
+    off_thread(move || {
+        fern_core::rename_instance(&paths()?, &instance_id, &name)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
+/// 复制一个实例。整个游戏目录都要抄一份，几个 GB 是常态。
 #[tauri::command]
-fn duplicate_instance(
+async fn duplicate_instance(
     instance_id: String,
     name: String,
 ) -> Result<fern_core::InstanceProfile, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::duplicate_instance(&paths, &instance_id, &name)
-        .map_err(|error| format!("{error:#}"))
+    off_thread(move || {
+        fern_core::duplicate_instance(&paths()?, &instance_id, &name)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 这个实例在这台机器上会得到什么：自动算出来的内存、会选中的 Java。
 ///
 /// 设置面板要能回答「不改的话会怎样」——光写「自动」两个字什么都没解释。
 #[tauri::command]
-fn instance_runtime(instance_id: String) -> Result<fern_core::InstanceRuntime, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::instance_runtime(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+async fn instance_runtime(instance_id: String) -> Result<fern_core::InstanceRuntime, String> {
+    // 它要读实例配置，还要挑一个 Java——两件都是磁盘上的事。
+    off_thread(move || {
+        fern_core::instance_runtime(&paths()?, &instance_id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 #[tauri::command]
-fn update_instance_settings(
+async fn update_instance_settings(
     instance_id: String,
     settings: fern_core::InstanceSettings,
 ) -> Result<fern_core::InstanceProfile, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::update_instance_settings(&paths, &instance_id, settings)
-        .map_err(|error| format!("{error:#}"))
+    off_thread(move || {
+        fern_core::update_instance_settings(&paths()?, &instance_id, settings)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 外置登录。密码只在这一次调用里存在，登录成功后进系统钥匙串的是令牌。
@@ -440,26 +484,33 @@ async fn yggdrasil_login(
     username: String,
     password: String,
 ) -> Result<fern_core::AccountView, String> {
-    let client_token = fern_core::client_token().map_err(|error| format!("{error:#}"))?;
+    let client_token =
+        off_thread(|| fern_core::client_token().map_err(|error| format!("{error:#}"))).await??;
     let session = fern_core::authenticate(&api_root, &username, &password, &client_token)
         .await
         .map_err(|error| format!("{error:#}"))?;
-    fern_core::store_session(&session).map_err(|error| format!("{error:#}"))?;
     // 只把界面用得着的那部分交出去，令牌留在这一侧。
-    Ok(fern_core::AccountView::from(&session))
+    let view = fern_core::AccountView::from(&session);
+    off_thread(move || fern_core::store_session(&session).map_err(|error| format!("{error:#}")))
+        .await??;
+    Ok(view)
 }
 
 /// 当前登录的是谁。没登录过返回 null——那是正常状态，不是错误。
 #[tauri::command]
-fn yggdrasil_session() -> Result<Option<fern_core::AccountView>, String> {
-    fern_core::load_session()
-        .map(|session| session.as_ref().map(fern_core::AccountView::from))
-        .map_err(|error| format!("{error:#}"))
+async fn yggdrasil_session() -> Result<Option<fern_core::AccountView>, String> {
+    // 钥匙串是一次 IPC，对方还可能弹窗问你要不要放行——绝不能在主线程上等。
+    off_thread(|| {
+        fern_core::load_session()
+            .map(|session| session.as_ref().map(fern_core::AccountView::from))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 #[tauri::command]
-fn yggdrasil_logout() -> Result<(), String> {
-    fern_core::clear_session().map_err(|error| format!("{error:#}"))
+async fn yggdrasil_logout() -> Result<(), String> {
+    off_thread(|| fern_core::clear_session().map_err(|error| format!("{error:#}"))).await?
 }
 
 /// 微软正版登录。
@@ -478,35 +529,44 @@ async fn microsoft_login(app: tauri::AppHandle) -> Result<fern_core::AccountView
     let session = fern_core::finish_microsoft_login(&challenge)
         .await
         .map_err(|error| format!("{error:#}"))?;
-    fern_core::store_microsoft_session(&session).map_err(|error| format!("{error:#}"))?;
-    Ok(fern_core::AccountView::from(&session))
+    let view = fern_core::AccountView::from(&session);
+    off_thread(move || {
+        fern_core::store_microsoft_session(&session).map_err(|error| format!("{error:#}"))
+    })
+    .await??;
+    Ok(view)
 }
 
 #[tauri::command]
-fn microsoft_session() -> Result<Option<fern_core::AccountView>, String> {
-    fern_core::load_microsoft_session()
-        .map(|session| session.as_ref().map(fern_core::AccountView::from))
-        .map_err(|error| format!("{error:#}"))
+async fn microsoft_session() -> Result<Option<fern_core::AccountView>, String> {
+    off_thread(|| {
+        fern_core::load_microsoft_session()
+            .map(|session| session.as_ref().map(fern_core::AccountView::from))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 #[tauri::command]
-fn microsoft_logout() -> Result<(), String> {
-    fern_core::clear_microsoft_session().map_err(|error| format!("{error:#}"))
+async fn microsoft_logout() -> Result<(), String> {
+    off_thread(|| fern_core::clear_microsoft_session().map_err(|error| format!("{error:#}")))
+        .await?
 }
 
 /// 这台机器上的 Java。设置页要能看见 Fern 到底会用哪一个。
 #[tauri::command]
-fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    Ok(fern_core::discover_java(Some(&paths)))
+async fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
+    off_thread(|| Ok(fern_core::discover_java(Some(&paths()?)))).await?
 }
 
 /// 删掉一份 Fern 自己下载的运行时。核心那边会拒绝 `runtimes/` 以外的路径。
 #[tauri::command]
-fn remove_java_runtime(home: String) -> Result<(), String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::remove_runtime(&paths, std::path::Path::new(&home))
-        .map_err(|error| format!("{error:#}"))
+async fn remove_java_runtime(home: String) -> Result<(), String> {
+    off_thread(move || {
+        fern_core::remove_runtime(&paths()?, std::path::Path::new(&home))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

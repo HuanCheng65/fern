@@ -246,7 +246,12 @@ async fn lay_out(
         message: "展开整合包自带的文件".to_owned(),
     });
     // overrides 先铺，client-overrides 后铺——后者按格式定义就是用来盖前者的。
-    extract_overrides(archive_path, game)?;
+    //
+    // 解压是同步的，而且大包的 overrides 有几十兆。摆在 async 函数里直接调，
+    // 占住的是跑下载的那条运行时的一个 worker——交给阻塞线程池。
+    let archive = archive_path.to_path_buf();
+    let destination = game.to_path_buf();
+    tokio::task::spawn_blocking(move || extract_overrides(&archive, &destination)).await??;
     Ok(())
 }
 
