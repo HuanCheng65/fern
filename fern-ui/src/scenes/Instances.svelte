@@ -16,27 +16,29 @@
   import { Play, Plus } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
   import InstanceDetail from './InstanceDetail.svelte'
+  import NewInstance from './NewInstance.svelte'
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
 
-  interface Props {
-    oncreate: () => void
-  }
+  /** 新建页占用的那个纵深位。实例 id 是随机发的，撞不上这个词。 */
+  const CREATE = 'new'
 
-  let { oncreate }: Props = $props()
-
+  const creating = $derived(nav.detail === CREATE)
   const viewing = $derived(instances.list.find((item) => item.id === nav.detail))
+  const oncreate = () => nav.open(CREATE)
 
   // 地址里指着一个已经不存在的实例（删掉了、手改了地址栏）就退回网格，
   // 而不是留在一屏空白上。
   $effect(() => {
-    if (nav.detail && !instances.loading && !viewing) nav.back()
+    if (nav.detail && !creating && !instances.loading && !viewing) nav.back()
   })
 </script>
 
-{#if viewing}
+{#if creating}
+  <NewInstance />
+{:else if viewing}
   <InstanceDetail instance={viewing} />
 {:else if instances.list.length === 0}
   <section class="blank">

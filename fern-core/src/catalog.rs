@@ -91,8 +91,7 @@ pub fn create_instance_with_loader(
     paths
         .ensure_exists()
         .context("create launcher data directories")?;
-    let base = slug_for(name);
-    let id = unique_id(paths, &base)?;
+    let id = allocate_id(paths)?;
     let mut profile = InstanceProfile::vanilla(InstanceId::parse(&id)?, name, game_version);
     if loader != crate::LoaderKind::Vanilla {
         // 拦在这里而不是补全时：建一个永远补全不了的实例，比直接说不行更糟——
@@ -330,34 +329,25 @@ pub async fn list_versions() -> Result<Vec<VersionOption>> {
     Ok(manifest.versions.iter().map(VersionOption::from).collect())
 }
 
-fn slug_for(name: &str) -> String {
-    let mut slug = String::new();
-    for byte in name.bytes() {
-        if byte.is_ascii_alphanumeric() {
-            slug.push(byte.to_ascii_lowercase() as char);
-        } else if !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        "instance".to_owned()
-    } else {
-        slug[..slug.len().min(48)].to_owned()
-    }
-}
+/// Crockford 的 base32：去掉了 I、L、O、U，剩下的字符念出来、抄下来都不会
+/// 混。目录名是会被人读出来贴到聊天框里的东西。
+const ID_ALPHABET: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+const ID_LENGTH: usize = 10;
 
-fn unique_id(paths: &DataPaths, base: &str) -> Result<String> {
-    let direct = paths.instance_root(base);
-    if !direct.exists() {
-        return Ok(base.to_owned());
-    }
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| anyhow!(error))?
-        .as_secs();
-    for index in 1..1000 {
-        let candidate = format!("{base}-{stamp}-{index}");
+/// 发一个实例 id。
+///
+/// **id 和名字没有关系。** 它是目录名、日志目录名，也是封面的恒定种子，一旦
+/// 发出去就永不改变；名字则是随时能改的标签。曾经这里是把名字转写成 slug，
+/// 三个问题：全中文的名字整串塌成同一个词（于是每台机器上第一个中文实例长着
+/// 同一张脸），界面用来指代「不是某个实例」的词（地址里的 `new`）会被撞上，
+/// 而且改完名字之后 id 成了旧名字的化石——一个会过期的可读名字比不可读的更
+/// 糟，因为人会信它。
+///
+/// 那就干脆不可读。找哪个文件夹是哪个实例，走详情页的「游戏目录」，概览里也
+/// 把 id 摆着可以复制。
+fn allocate_id(paths: &DataPaths) -> Result<String> {
+    for _ in 0..64 {
+        let candidate = token()?;
         if !paths.instance_root(&candidate).exists() {
             return Ok(candidate);
         }
@@ -368,9 +358,48 @@ fn unique_id(paths: &DataPaths, base: &str) -> Result<String> {
     ))
 }
 
+/// 只要求在这台机器上不重名，所以取模带来的那点偏差无所谓。用随机数而不是
+/// 时间戳：时间戳会泄露创建时刻，系统时钟往回跳一下还会撞。
+fn token() -> Result<String> {
+    let mut bytes = [0u8; ID_LENGTH];
+    getrandom::fill(&mut bytes).context("draw random bytes for the instance id")?;
+    Ok(bytes
+        .iter()
+        .map(|byte| ID_ALPHABET[(byte % 32) as usize] as char)
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ids_are_opaque_and_carry_nothing_from_the_name() {
+        let root = std::env::temp_dir().join(format!("fern-ids-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+
+        // 中文名以前会整串塌成同一个 id，于是两个实例长着同一张脸。
+        let first = create_instance(&paths, "余烬谷", "1.21.1").expect("create first");
+        let second = create_instance(&paths, "余烬谷", "1.21.1").expect("create second");
+        assert_ne!(first.id, second.id);
+        assert_ne!(first.cover.identity, second.cover.identity);
+
+        // 名字本身照常保留，转写的只是不再发生。
+        assert_eq!(first.name, "余烬谷");
+        for id in [first.id.as_str(), second.id.as_str()] {
+            assert_eq!(id.len(), ID_LENGTH);
+            assert!(
+                id.bytes().all(|byte| ID_ALPHABET.contains(&byte)),
+                "{id} 里有字母表之外的字符"
+            );
+        }
+
+        // 地址里 instances/new 指的是新建页，实例 id 不该撞上它。
+        let named_new = create_instance(&paths, "New", "1.21.1").expect("create third");
+        assert_ne!(named_new.id.as_str(), "new");
+
+        fs::remove_dir_all(root).expect("remove test root");
+    }
 
     #[test]
     fn every_installable_loader_is_accepted_at_creation() {

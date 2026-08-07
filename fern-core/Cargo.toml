@@ -13,6 +13,7 @@ base64.workspace = true
 flate2.workspace = true
 fern-download.workspace = true
 fern-meta.workspace = true
+getrandom.workspace = true
 keyring.workspace = true
 md-5.workspace = true
 pearl-core.workspace = true

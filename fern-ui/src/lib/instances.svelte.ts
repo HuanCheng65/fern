@@ -168,9 +168,20 @@ class InstanceStore {
     await this.load()
   }
 
-  async create(name: string, gameVersion: string, loader = 'vanilla'): Promise<Instance> {
+  async create(
+    name: string,
+    gameVersion: string,
+    loader = 'vanilla',
+    loaderVersion = '',
+  ): Promise<Instance> {
     const created: CoreInstance = inTauri()
-      ? await invoke<CoreInstance>('create_instance', { name, gameVersion, loader })
+      ? await invoke<CoreInstance>('create_instance', {
+          name,
+          gameVersion,
+          loader,
+          // 留空就让后端取最新稳定版——那是绝大多数人想要的答案。
+          loaderVersion: loaderVersion || null,
+        })
       : { id: `preview-${Date.now()}`, name, gameVersion, loader }
     const instance = toInstance(created)
     this.list = [...this.list, instance]

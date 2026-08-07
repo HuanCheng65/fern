@@ -15,7 +15,6 @@
   import Backdrop from './components/Backdrop.svelte'
   import TopBar from './components/TopBar.svelte'
   import CommandPalette, { type PaletteAction } from './components/CommandPalette.svelte'
-  import CreateInstance from './components/CreateInstance.svelte'
   import CrashReport from './components/CrashReport.svelte'
   import GameLog from './components/GameLog.svelte'
   import WindowFrame from './components/WindowFrame.svelte'
@@ -42,16 +41,20 @@
   const seed = $derived(instances.current?.cover ?? 'Fern')
   /** 顶栏的面包屑只要一个词。目前只有实例场景有纵深。 */
   const detailLabel = $derived(
-    nav.scene === 'instances' && nav.detail
-      ? (instances.list.find((item) => item.id === nav.detail)?.name ?? '')
-      : '',
+    nav.scene !== 'instances' || !nav.detail
+      ? ''
+      : nav.detail === 'new'
+        ? '新建实例'
+        : (instances.list.find((item) => item.id === nav.detail)?.name ?? ''),
   )
+
+  const createInstance = () => nav.enter('instances', 'new')
   const away = $derived(nav.overlay !== '')
 
   async function openDirectory() {
     const current = instances.current
     if (!current) {
-      nav.show('create')
+      createInstance()
       return
     }
     try {
@@ -92,7 +95,7 @@
           },
         ]
       : []),
-    { id: 'create', title: '新建实例', run: () => nav.show('create') },
+    { id: 'create', title: '新建实例', run: createInstance },
     // 日志平时不该占地方，但出事的时候必须找得到——所以放在命令面板里，
     // 而且只在真的有内容时才列出来。
     ...(launch.log.length > 0
@@ -185,7 +188,7 @@
       ondone={(create) => {
         setupOpen = false
         nav.go('launch')
-        if (create) nav.show('create')
+        if (create) createInstance()
       }}
     />
   {:else}
@@ -195,12 +198,9 @@
       {#key nav.scene}
         <div class="scene" in:fly={enter}>
           {#if nav.scene === 'launch'}
-            <LaunchScene
-              onswitch={() => nav.show('palette')}
-              oncreate={() => nav.show('create')}
-            />
+            <LaunchScene onswitch={() => nav.show('palette')} oncreate={createInstance} />
           {:else if nav.scene === 'instances'}
-            <InstancesScene oncreate={() => nav.show('create')} />
+            <InstancesScene />
           {:else if nav.scene === 'supply'}
             <SupplyScene onback={() => nav.go('launch')} />
           {:else if nav.scene === 'multiplayer'}
@@ -253,9 +253,6 @@
     <GameLog onclose={() => nav.dismiss()} />
   {/if}
 
-  {#if nav.overlay === 'create'}
-    <CreateInstance onclose={() => nav.dismiss()} oncreated={() => nav.go('launch')} />
-  {/if}
 </div>
 
 <style>
