@@ -481,6 +481,21 @@
               <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
             </button>
           </div>
+          <div class="row">
+            <span class="label">
+              启动后最小化
+              <small>游戏窗口开出来之后把 Fern 收起来，不是点启动那一刻。</small>
+            </span>
+            <Choice
+              label="启动后最小化"
+              value={prefs.minimizeOnLaunch ? 'on' : 'off'}
+              onchange={(next) => prefs.setMinimizeOnLaunch(next === 'on')}
+              options={[
+                { value: 'off', label: '不动' },
+                { value: 'on', label: '最小化' },
+              ]}
+            />
+          </div>
           {#if pathError}<div class="alert">{pathError}</div>{/if}
           <!-- Java 平时是隐形的；能看见的唯一理由是它占了地方，要能删。 -->
           <div class="row stack">

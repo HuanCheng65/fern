@@ -64,6 +64,11 @@ pub struct Settings {
     pub download: DownloadSettings,
     /// 首次启动向导走完过一次。
     pub setup_done: bool,
+    /// 游戏窗口开出来之后把启动器收起来（文档 §5.4 末句）。
+    ///
+    /// 这是行为不是长相，所以没有塞进不透明的 appearance 段。核心不执行它——
+    /// 最小化是窗口的事，只有界面做得到——但它该和其余设置一样是有类型的。
+    pub minimize_on_launch: bool,
 }
 
 impl Default for Settings {
@@ -73,6 +78,7 @@ impl Default for Settings {
             account: AccountSettings::default(),
             download: DownloadSettings::default(),
             setup_done: false,
+            minimize_on_launch: false,
         }
     }
 }
@@ -132,6 +138,7 @@ mod tests {
         settings.account.player_name = "Steve".to_owned();
         settings.download.source = SourcePreference::Bmclapi;
         settings.setup_done = true;
+        settings.minimize_on_launch = true;
         settings.appearance = serde_json::json!({ "density": "compact" });
         save(&paths, &settings).expect("save settings");
 

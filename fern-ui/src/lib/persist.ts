@@ -20,6 +20,8 @@ export interface SettingsDoc {
   account: { kind: string; playerName: string }
   download: { source: string }
   setupDone: boolean
+  /** 游戏窗口开出来之后把启动器收起来。 */
+  minimizeOnLaunch: boolean
 }
 
 const FALLBACK_KEY = 'fern.settings'
@@ -30,6 +32,7 @@ export const emptyDoc = (): SettingsDoc => ({
   account: { kind: 'offline', playerName: '' },
   download: { source: 'official' },
   setupDone: false,
+  minimizeOnLaunch: false,
 })
 
 let doc: SettingsDoc = emptyDoc()
@@ -49,6 +52,7 @@ function migrateLegacy(target: SettingsDoc) {
         target.download.source = parsed.downloadSource
       }
       target.setupDone = parsed.setupDone === true
+      target.minimizeOnLaunch = parsed.minimizeOnLaunch === true
     }
     const name = localStorage.getItem('fern.account.name')
     if (name && !target.account.playerName) {

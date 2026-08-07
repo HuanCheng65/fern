@@ -36,6 +36,7 @@ class PrefsStore {
   playerName = $state('')
   downloadSource = $state<DownloadSource>('official')
   setupDone = $state(false)
+  minimizeOnLaunch = $state(false)
 
   /** 从磁盘读到的设置装进来。App 启动时调一次。 */
   hydrate() {
@@ -46,6 +47,7 @@ class PrefsStore {
     this.playerName = typeof doc.account.playerName === 'string' ? doc.account.playerName : ''
     this.downloadSource = doc.download.source === 'bmclapi' ? 'bmclapi' : 'official'
     this.setupDone = doc.setupDone === true
+    this.minimizeOnLaunch = doc.minimizeOnLaunch === true
   }
 
   setAccount(kind: AccountKind, playerName: string) {
@@ -61,6 +63,11 @@ class PrefsStore {
   setDownloadSource(source: DownloadSource) {
     this.downloadSource = source
     patch((doc) => (doc.download = { source }))
+  }
+
+  setMinimizeOnLaunch(minimize: boolean) {
+    this.minimizeOnLaunch = minimize
+    patch((doc) => (doc.minimizeOnLaunch = minimize))
   }
 
   finishSetup() {

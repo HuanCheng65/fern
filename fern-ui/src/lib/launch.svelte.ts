@@ -15,7 +15,9 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { inTauri } from './instances.svelte'
+import { prefs } from './prefs.svelte'
 
 /** 类型标签是 snake_case，数据字段是 camelCase——后端一条规则，这里照抄。 */
 type DownloadEvent =
@@ -143,6 +145,11 @@ class LaunchStore {
       this.running = true
       // 窗口开出来了，进度条就该功成身退——它描述的是「还要多久能玩上」。
       this.#finish('游戏运行中')
+      // 这一刻才最小化，不是点启动那一刻：补全可能要几分钟，中途把启动器
+      // 收走，用户就看不到进度了。
+      if (prefs.minimizeOnLaunch && inTauri()) {
+        void getCurrentWindow().minimize()
+      }
       return
     }
     if (stage === 'exited') return

@@ -11,7 +11,9 @@
    * 人才需要看见它。
    */
   import { invoke } from '@tauri-apps/api/core'
+  import { ChevronRight } from 'lucide-svelte'
   import Overlay from './Overlay.svelte'
+  import Choice from './Choice.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
   interface JavaRuntime {
@@ -34,6 +36,8 @@
     javaPath: string | null
     maxMemoryMb: number | null
     resolution: { width: number; height: number } | null
+    garbageCollector: 'g1' | 'z' | null
+    processPriority: 'low' | 'normal' | 'high' | null
   }
 
   interface Props {
@@ -46,7 +50,15 @@
 
   let runtime = $state<InstanceRuntime | null>(null)
   let runtimes = $state<JavaRuntime[]>([])
-  let settings = $state<InstanceSettings>({ javaPath: null, maxMemoryMb: null, resolution: null })
+  let settings = $state<InstanceSettings>({
+    javaPath: null,
+    maxMemoryMb: null,
+    resolution: null,
+    garbageCollector: null,
+    processPriority: null,
+  })
+  /** 高级项默认收起：绝大多数人不该看到它们。 */
+  let advanced = $state(false)
   let loading = $state(true)
   let error = $state('')
 
@@ -180,6 +192,48 @@
           {/each}
         </div>
       </section>
+
+      <section>
+        <button class="btn btn--link advanced" onclick={() => (advanced = !advanced)}>
+          <ChevronRight size={13} strokeWidth={2} class={advanced ? 'turned' : ''} />高级
+        </button>
+        {#if advanced}
+          <div class="row-head adv">
+            <span class="label">垃圾回收器</span>
+            <span class="t-quiet">默认 G1；ZGC 停顿更短，但更吃内存和 CPU</span>
+          </div>
+          <Choice
+            label="垃圾回收器"
+            value={settings.garbageCollector ?? 'g1'}
+            onchange={(next) => {
+              settings.garbageCollector = next === 'g1' ? null : 'z'
+              void persist()
+            }}
+            options={[
+              { value: 'g1', label: 'G1' },
+              { value: 'z', label: 'ZGC' },
+            ]}
+          />
+
+          <div class="row-head adv">
+            <span class="label">进程优先级</span>
+            <span class="t-quiet">一边挂机一边干别的时才有意义</span>
+          </div>
+          <Choice
+            label="进程优先级"
+            value={settings.processPriority ?? 'normal'}
+            onchange={(next) => {
+              settings.processPriority = next === 'normal' ? null : next
+              void persist()
+            }}
+            options={[
+              { value: 'low', label: '低' },
+              { value: 'normal', label: '正常' },
+              { value: 'high', label: '高' },
+            ]}
+          />
+        {/if}
+      </section>
     </div>
   {/if}
 
@@ -257,6 +311,31 @@
 
   .slider:disabled {
     opacity: 0.4;
+  }
+
+  .advanced {
+    color: var(--ink-3);
+  }
+
+  .advanced:hover {
+    color: var(--ink);
+  }
+
+  /* 箭头转 90 度表示展开，和崩溃报告里那处是同一套。 */
+  .advanced :global(svg) {
+    transition: transform var(--t-base) var(--ease);
+  }
+
+  .advanced :global(svg.turned) {
+    transform: rotate(90deg);
+  }
+
+  .row-head.adv {
+    margin-top: var(--s4);
+  }
+
+  .row-head.adv + :global(.choice) {
+    margin-top: var(--s2);
   }
 
   .choices {
