@@ -114,7 +114,7 @@
     if (target === 'new') return '添加账户'
     return accounts.list.find((item) => item.id === target)?.playerName ?? '账户'
   })
-  let paths = $state({ root: '', logs: '', portable: false })
+  let paths = $state({ root: '', game: '', logs: '', portable: false })
   let pathError = $state('')
   interface JavaRuntime {
     path: string
@@ -234,7 +234,7 @@
   onMount(() => {
     themeCode = theme.export()
     if (!inTauri()) return
-    void invoke<{ root: string; logs: string; portable: boolean }>('data_paths')
+    void invoke<{ root: string; game: string; logs: string; portable: boolean }>('data_paths')
       .then((value) => (paths = value))
       .catch((error) => (pathError = String(error)))
     void loadRuntimes()
@@ -647,6 +647,9 @@
                 数据目录随可执行文件所在位置。移动整个文件夹即可迁移全部数据。
               </p>
             {/if}
+          </SettingRow>
+          <SettingRow id="data/game" found={focused === 'data/game'}>
+            <p class="path t-mono selectable">{paths.game || '—'}</p>
           </SettingRow>
           <SettingRow id="data/existing" found={focused === 'data/existing'}>
             <button class="btn btn--ghost" onclick={() => nav.show('settings', 'data/existing/browse')}>

@@ -131,6 +131,13 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   { id: 'download/source', label: '下载源', keywords: 'download source mirror bmclapi 镜像 官方源' },
 
   { id: 'data/root', label: '数据目录', keywords: 'data directory 路径 目录', stack: true },
+  {
+    id: 'data/game',
+    label: '游戏目录',
+    note: '共享的资源、依赖库与版本描述。各实例的存档与模组在实例自己的目录中。',
+    keywords: 'minecraft game assets libraries versions 游戏 资源 依赖库 版本',
+    stack: true,
+  },
   { id: 'data/logs', label: '日志目录', keywords: 'log directory 日志', stack: true },
   {
     id: 'data/existing',

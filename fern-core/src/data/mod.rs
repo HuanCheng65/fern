@@ -9,7 +9,10 @@
 pub(crate) mod metacache;
 pub(crate) mod settings;
 
-use std::{env, fs, io, path::PathBuf};
+use std::{
+    env, fs, io,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +58,25 @@ pub enum Isolation {
     PerVersion,
 }
 
+/// 游戏文件那一层的名字。见 [`DataPaths`]。
+pub const GAME_DIRECTORY: &str = ".minecraft";
+
 /// Stable on-disk layout shared by every launcher subsystem.
+///
+/// 数据根下面分成两半，**游戏的东西和启动器的东西不混在一起**：
+///
+/// ```text
+/// <root>/.minecraft/  assets  libraries  versions   游戏要读的
+/// <root>/            instances  runtimes  logs  cache  settings.json   启动器自己的
+/// ```
+///
+/// 分界是「游戏运行时会不会去读它」：资源、依赖库、版本描述会，所以它们按
+/// 官方的名字摆在一个标准的 `.minecraft` 里——那个目录因此也能被别的启动器
+/// 直接打开。Java 运行时是**运行**游戏的东西而不是游戏读的东西，日志和缓存
+/// 更是我们自己的账本，它们都留在外面。
+///
+/// 每个实例自己的游戏目录仍然是 `instances/<id>/.minecraft`：那是它的存档和
+/// 模组，和上面这份共享的资源不是一回事。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataPaths {
@@ -82,11 +103,12 @@ pub struct DataPaths {
 impl DataPaths {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
+        let game = root.join(GAME_DIRECTORY);
         Self {
-            assets: root.join("assets"),
-            libraries: root.join("libraries"),
+            assets: game.join("assets"),
+            libraries: game.join("libraries"),
+            versions: game.join("versions"),
             runtimes: root.join("runtimes"),
-            versions: root.join("versions"),
             instances: root.join("instances"),
             logs: root.join("logs"),
             cache: root.join("cache"),
@@ -138,17 +160,20 @@ impl DataPaths {
 
     /// 这台机器上该用哪一套目录。
     ///
-    /// 先看便携：可执行文件旁边有 `.minecraft`，或者有一个 `fern-portable`
-    /// 标记文件，数据根就跟着可执行文件走。这是「把启动器和游戏放在一起」
-    /// 那种用法——U 盘上、游戏盘上、和整合包打包发出去的那一份，用户期待
-    /// 它自成一体，而不是在 `AppData` 深处另起一套。
+    /// 便携模式要**显式**开启：可执行文件旁边放一个 `fern-portable` 标记文件。
+    /// 开启之后数据放在 `fern-data/` 这一个子目录里，整个文件夹拷走即可迁移。
     ///
-    /// 标记文件是必需的第二条：有些人的 `.minecraft` 旁边就是桌面，那时候
-    /// 只有显式的标记才说明「我要便携」。反过来，`.minecraft` 在旁边这件事
-    /// 本身也足够明确——没有人会把启动器随手扔进一个游戏目录旁边。
+    /// 曾经的规则是「旁边有 `.minecraft` 就算便携」，而且直接把可执行文件所在
+    /// 的目录当数据根。两条都是错的：把启动器和 `.minecraft` 放在一起是最常见
+    /// 的摆法，它表达的是「这里有个现成的游戏目录」（见 [`nearby_game_directory`]），
+    /// 不是「把你的数据摊在我旁边」；而摊开的后果是用户的文件夹里凭空多出
+    /// assets、libraries、instances、versions、logs、cache 和 settings.json。
     pub fn resolve() -> io::Result<Self> {
         match portable_root() {
-            Some(root) => Ok(Self::new(root)),
+            Some(root) => {
+                gather_scattered(&root)?;
+                Ok(Self::new(root))
+            }
             None => Self::for_current_user(),
         }
     }
@@ -170,6 +195,7 @@ impl DataPaths {
     }
 
     pub fn ensure_exists(&self) -> io::Result<()> {
+        self.tidy_game_directories()?;
         for path in [
             &self.root,
             &self.assets,
@@ -183,6 +209,37 @@ impl DataPaths {
             fs::create_dir_all(path)?;
         }
         Ok(())
+    }
+
+    /// 把早先摊在数据根下的 assets、libraries、versions 挪进 `.minecraft/`。
+    ///
+    /// 同一个卷上的目录改名，不复制内容——几个 GB 的资源不会被搬一遍。目标
+    /// 已经存在时两边都不动：那说明有人手工搬过一半，合并两棵目录树不是这里
+    /// 该替他做的决定，而少下载的文件补全时会自己长回来。
+    fn tidy_game_directories(&self) -> io::Result<()> {
+        let game = self.root.join(GAME_DIRECTORY);
+        for (name, current) in [
+            ("assets", &self.assets),
+            ("libraries", &self.libraries),
+            ("versions", &self.versions),
+        ] {
+            let legacy = self.root.join(name);
+            // 只认「就在数据根下、而且我们现在要用的不是它」这一种情况。
+            if legacy == *current || !legacy.is_dir() || current.exists() {
+                continue;
+            }
+            fs::create_dir_all(&game)?;
+            fs::rename(&legacy, current)?;
+        }
+        Ok(())
+    }
+
+    /// 共享游戏文件那一层：`<root>/.minecraft`。
+    ///
+    /// 说的是 Fern 自己那一份，与外部实例无关——[`scoped`](Self::scoped) 之后
+    /// `assets` 之类会指向别人的目录，而 `root` 始终是我们的。
+    pub fn shared_game_root(&self) -> PathBuf {
+        self.root.join(GAME_DIRECTORY)
     }
 
     /// 用户设置。放在数据根目录下，和实例、日志平级——它是一份能被打开、
@@ -237,12 +294,58 @@ pub fn nearby_game_directory() -> Option<PathBuf> {
     directory.join("versions").is_dir().then_some(directory)
 }
 
-/// 可执行文件旁边那个目录，如果它该被当作数据根的话。
+/// 便携模式下数据放在哪一个子目录里。
+pub const PORTABLE_DIRECTORY: &str = "fern-data";
+
+/// 便携模式下的数据根：可执行文件旁边的 `fern-data/`，前提是有标记文件。
+///
+/// **只认标记，不猜。** 猜的代价是把数据写进一个不属于我们的文件夹：旁边有
+/// `.minecraft` 说明不了什么，而 MultiMC 那一系的便携目录同样有 `instances`、
+/// `libraries`、`assets`，光看目录名分不出是谁的。
 fn portable_root() -> Option<PathBuf> {
     let directory = env::current_exe().ok()?.parent()?.to_path_buf();
-    let portable =
-        directory.join(PORTABLE_MARKER).exists() || directory.join(".minecraft").is_dir();
-    portable.then_some(directory)
+    directory
+        .join(PORTABLE_MARKER)
+        .exists()
+        .then(|| directory.join(PORTABLE_DIRECTORY))
+}
+
+/// 把早先摊在可执行文件同级的那一套收进 `fern-data/`。
+///
+/// 便携模式曾经直接把数据根定在可执行文件所在的目录上，于是那个文件夹里多出
+/// 七个目录和一个 settings.json。这里只搬**我们自己建的那几个名字**，
+/// `.minecraft` 一个字都不碰——它多半是用户自己的游戏目录。
+///
+/// 签名要求 `settings.json` 和 `instances/` 同时在：单看 `instances/` 会把
+/// MultiMC 的便携目录也算进来，而那不是我们该动的东西。
+fn gather_scattered(root: &Path) -> io::Result<()> {
+    let Some(outside) = root.parent() else {
+        return Ok(());
+    };
+    if root.exists()
+        || !outside.join("settings.json").is_file()
+        || !outside.join("instances").is_dir()
+    {
+        return Ok(());
+    }
+    fs::create_dir_all(root)?;
+    for name in [
+        "assets",
+        "libraries",
+        "versions",
+        "instances",
+        "runtimes",
+        "logs",
+        "cache",
+        "settings.json",
+    ] {
+        let from = outside.join(name);
+        let to = root.join(name);
+        if from.exists() && !to.exists() {
+            fs::rename(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 fn platform_data_root() -> Option<PathBuf> {
@@ -280,9 +383,18 @@ mod tests {
     #[test]
     fn layout_separates_shared_and_instance_files() {
         let paths = DataPaths::new("/tmp/fern-contract-test");
+        // 游戏要读的东西在 `.minecraft/` 里，启动器自己的在外面。
         assert_eq!(
             paths.assets,
-            PathBuf::from("/tmp/fern-contract-test/assets")
+            PathBuf::from("/tmp/fern-contract-test/.minecraft/assets")
+        );
+        assert_eq!(
+            paths.versions,
+            PathBuf::from("/tmp/fern-contract-test/.minecraft/versions")
+        );
+        assert_eq!(
+            paths.runtimes,
+            PathBuf::from("/tmp/fern-contract-test/runtimes")
         );
         assert_eq!(
             paths.game_directory("cinder-valley"),
@@ -311,5 +423,76 @@ mod tests {
         }
 
         fs::remove_dir_all(root).expect("remove test data layout");
+    }
+
+    /// 布局分开之前的数据要跟过来，而不是留在原地变成孤儿。
+    #[test]
+    fn an_older_layout_is_moved_under_the_game_directory() {
+        let root = env::temp_dir().join(format!("fern-tidy-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for name in ["assets/indexes", "libraries/net", "versions/1.21.1"] {
+            fs::create_dir_all(root.join(name)).expect("create legacy layout");
+        }
+        fs::write(root.join("versions/1.21.1/1.21.1.json"), b"{}").expect("write version");
+
+        let paths = DataPaths::new(&root);
+        paths.ensure_exists().expect("create data layout");
+
+        assert!(paths.versions.join("1.21.1/1.21.1.json").is_file());
+        assert!(paths.assets.join("indexes").is_dir());
+        assert!(paths.libraries.join("net").is_dir());
+        // 挪走之后数据根下不该还剩一个空壳。
+        assert!(!root.join("versions").exists());
+
+        // 再跑一次不会把已经就位的东西再动一遍。
+        paths.ensure_exists().expect("second run");
+        assert!(paths.versions.join("1.21.1/1.21.1.json").is_file());
+
+        fs::remove_dir_all(root).expect("remove test tree");
+    }
+
+    /// 便携模式曾经把数据摊在可执行文件同级，改规则不能把那些实例丢在原地。
+    #[test]
+    fn a_scattered_portable_layout_is_gathered_into_one_directory() {
+        let outside = env::temp_dir().join(format!("fern-gather-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        for name in ["instances/oak", "versions/1.21.1", "logs"] {
+            fs::create_dir_all(outside.join(name)).expect("create scattered layout");
+        }
+        fs::write(outside.join("settings.json"), b"{}").expect("write settings");
+        // 用户自己的游戏目录也在这里。它不归我们动。
+        fs::create_dir_all(outside.join(".minecraft/saves/world")).expect("create game directory");
+
+        let root = outside.join(PORTABLE_DIRECTORY);
+        gather_scattered(&root).expect("gather");
+        assert!(root.join("instances/oak").is_dir());
+        assert!(root.join("settings.json").is_file());
+        assert!(!outside.join("instances").exists());
+        assert!(outside.join(".minecraft/saves/world").is_dir());
+
+        // 收拢过一次就不再动了，哪怕之后旁边又出现了同名的文件夹。
+        fs::create_dir_all(outside.join("instances/from-somewhere-else")).expect("create");
+        gather_scattered(&root).expect("second run");
+        assert!(outside.join("instances/from-somewhere-else").is_dir());
+
+        fs::remove_dir_all(outside).expect("remove test tree");
+    }
+
+    /// 别的启动器的便携目录长得很像：MultiMC 那一系同样有 instances、
+    /// libraries、assets。搬错了是在动不属于我们的数据。
+    #[test]
+    fn another_launchers_directory_is_left_alone() {
+        let outside = env::temp_dir().join(format!("fern-foreign-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        for name in ["instances/1.21.1", "libraries", "assets"] {
+            fs::create_dir_all(outside.join(name)).expect("create foreign layout");
+        }
+        fs::write(outside.join("multimc.cfg"), b"").expect("write config");
+
+        gather_scattered(&outside.join(PORTABLE_DIRECTORY)).expect("gather");
+        assert!(outside.join("instances/1.21.1").is_dir());
+        assert!(!outside.join(PORTABLE_DIRECTORY).exists());
+
+        fs::remove_dir_all(outside).expect("remove test tree");
     }
 }

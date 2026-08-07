@@ -317,15 +317,22 @@ resolution_width  resolution_height（feature 控制）
 
 `game_directory` 指向实例私有目录（存档、mods、config、resourcepacks、封面种子全部归属实例）；`assets_root` 与 `libraries` 全局共享。这与"每实例独立身份"的设计天然一致。
 
+游戏的东西和启动器的东西不混在一起。分界是**游戏运行时会不会去读它**：
+
 ```
 <data_root>/
-  assets/            共享
-  libraries/         共享
-  runtimes/          共享（自动下载的 Java）
+  .minecraft/        游戏要读的，就是一个标准的 .minecraft
+    assets/          共享
+    libraries/       共享
+    versions/        共享（版本描述与客户端 jar）
+  runtimes/          启动器自动下载的 Java——是运行游戏的东西，不是游戏读的东西
+  logs/ cache/ settings.json
   instances/<id>/
     instance.json    实例元数据（版本、加载器、封面种子、设置覆盖）
-    .minecraft/      game_directory
+    .minecraft/      game_directory（这个实例自己的存档与模组）
 ```
+
+早先这三个共享目录直接摊在数据根下。`DataPaths::ensure_exists` 会把它们改名挪进 `.minecraft/`（同卷改名，不复制内容）；目标已存在时两边都不动。
 
 ### 5.3.1 外部游戏目录
 
@@ -342,7 +349,9 @@ resolution_width  resolution_height（feature 控制）
 
 实现上只有一个入口：`DataPaths::scoped(external, version_id)` 返回一份指向那个目录的 `DataPaths`，每条链路在入口处换一次，下游三十来处路径拼接一个字都不用改。散在下游判断「这个实例是不是外部的」，漏掉的那一处会把文件写进错误的目录。
 
-数据根本身也可以跟着可执行文件走（`DataPaths::resolve`）：旁边有 `.minecraft` 或 `fern-portable` 标记时即为便携模式。
+数据根本身也可以跟着可执行文件走（`DataPaths::resolve`）：可执行文件旁边有 `fern-portable` 标记文件时即为便携模式，数据放在旁边的 `fern-data/` 里。
+
+**旁边有 `.minecraft` 不算便携。** 那是最常见的摆法，它表达的是「这里有个现成的游戏目录」（`nearby_game_directory`，首次启动时问一句），不是「把你的数据摊在我旁边」——曾经的规则会让用户放游戏的那个文件夹里凭空多出七个目录和一个 settings.json。旁边已经有一套我们自己的数据时仍然认（`instances/` 是判据），否则改规则会让已有的实例凭空消失。
 
 ### 5.4 进程管理
 

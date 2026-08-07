@@ -185,6 +185,7 @@ fn data_paths() -> Result<DataLocation, String> {
     let paths = paths()?;
     Ok(DataLocation {
         portable: paths.is_portable(),
+        game: paths.shared_game_root(),
         root: paths.root,
         logs: paths.logs,
     })
@@ -195,8 +196,10 @@ fn data_paths() -> Result<DataLocation, String> {
 #[serde(rename_all = "camelCase")]
 struct DataLocation {
     root: std::path::PathBuf,
+    /// 共享的资源、依赖库与版本描述。是一个标准的 `.minecraft` 布局。
+    game: std::path::PathBuf,
     logs: std::path::PathBuf,
-    /// 数据根跟着可执行文件走。旁边有 `.minecraft` 或便携标记时就是这样。
+    /// 数据根跟着可执行文件走。旁边有 `fern-portable` 标记时就是这样。
     portable: bool,
 }
 
@@ -225,8 +228,8 @@ where
 
 /// 拿到数据目录，顺带把错误变成界面能显示的字符串。
 fn paths() -> Result<fern_core::DataPaths, String> {
-    // 可执行文件旁边有 `.minecraft` 或便携标记时跟着它走，否则用平台的用户
-    // 数据目录。整个应用只在这一个函数里回答「数据根在哪」。
+    // 可执行文件旁边有 `fern-portable` 标记时跟着它走，否则用平台的用户数据
+    // 目录。整个应用只在这一个函数里回答「数据根在哪」。
     fern_core::DataPaths::resolve().map_err(|error| error.to_string())
 }
 
