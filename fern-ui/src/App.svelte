@@ -23,6 +23,7 @@
   import LaunchScene from './scenes/Launch.svelte'
   import InstancesScene from './scenes/Instances.svelte'
   import Placeholder from './scenes/Placeholder.svelte'
+  import SupplyScene from './scenes/Supply.svelte'
   import Setup from './routes/Setup.svelte'
   import Settings from './routes/Settings.svelte'
   import { frame, frameless, selfRounded } from './lib/frame.svelte'
@@ -261,12 +262,7 @@
               onconfigure={() => (instanceSettingsOpen = true)}
             />
           {:else if scene === 'supply'}
-            <Placeholder
-              seed="supply"
-              title="资源站尚未接入"
-              note="模组、整合包与资源包的搜索与安装将在此处提供。"
-              onback={() => goScene('launch')}
-            />
+            <SupplyScene onback={() => goScene('launch')} />
           {:else if scene === 'multiplayer'}
             <Placeholder
               seed="multiplayer"

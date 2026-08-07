@@ -221,6 +221,59 @@ async fn launch_instance(
     result
 }
 
+/// 补给站搜索。按目标实例的游戏版本和加载器过滤——用户是在为某个实例找东西，
+/// 列出装不上的结果只会浪费他一次点击。
+#[tauri::command]
+async fn search_mods(
+    query: String,
+    instance_id: String,
+    offset: u32,
+    limit: u32,
+) -> Result<fern_core::SearchResult, String> {
+    let (game_version, loader) = instance_target(&instance_id)?;
+    fern_core::search_modrinth(&query, &game_version, loader, offset, limit)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 一个项目在这个实例下有哪些可选版本。
+#[tauri::command]
+async fn project_versions(
+    project: String,
+    instance_id: String,
+) -> Result<Vec<fern_core::ProjectVersion>, String> {
+    let (game_version, loader) = instance_target(&instance_id)?;
+    fern_core::modrinth_versions(&project, &game_version, loader)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 装一个版本，连同它的必需依赖。
+#[tauri::command]
+async fn install_from_modrinth(
+    app: tauri::AppHandle,
+    instance_id: String,
+    version_id: String,
+) -> Result<Vec<String>, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let events = launcher_events(&app);
+    let downloads = fern_core::download_bridge(&events);
+    fern_core::install_from_modrinth(&paths, &instance_id, &version_id, &downloads)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 补给站的两个查询都要知道「装到哪个实例」，那决定了过滤条件。
+fn instance_target(instance_id: &str) -> Result<(String, fern_core::LoaderKind), String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let profile = fern_core::list_instances(&paths)
+        .map_err(|error| format!("{error:#}"))?
+        .into_iter()
+        .find(|profile| profile.id.as_str() == instance_id)
+        .ok_or_else(|| format!("实例 {instance_id} 不存在"))?;
+    Ok((profile.game_version, profile.loader))
+}
+
 /// 这个实例装了哪些模组。
 #[tauri::command]
 fn list_mods(instance_id: String) -> Result<Vec<fern_core::ModFile>, String> {
@@ -412,6 +465,9 @@ pub fn run() {
             list_java_runtimes,
             remove_java_runtime,
             instance_runtime,
+            search_mods,
+            project_versions,
+            install_from_modrinth,
             list_mods,
             set_mod_enabled,
             remove_mod,

@@ -17,6 +17,7 @@ mod java;
 mod launch;
 mod loader;
 mod microsoft;
+mod modrinth;
 mod mods;
 mod prepare;
 mod registry;
@@ -42,7 +43,7 @@ pub use credentials::{
     store_microsoft_session, store_session,
 };
 pub use data::DataPaths;
-pub use event::{LaunchStage, LauncherEvent, LogLevel};
+pub use event::{LaunchStage, LauncherEvent, LogLevel, download_bridge};
 pub use fern_download::DownloadEvent;
 pub use fern_meta::{VersionManifest, VersionManifestEntry};
 pub use gamelog::{LogLine, LogParser};
@@ -65,6 +66,10 @@ pub use loader::{
 pub use microsoft::{
     DeviceCodeChallenge, MicrosoftSession, begin_login as begin_microsoft_login,
     ensure_fresh as refresh_microsoft_session, finish_login as finish_microsoft_login,
+};
+pub use modrinth::{
+    ProjectVersion, SearchHit, SearchResult, install as install_from_modrinth,
+    search as search_modrinth, versions as modrinth_versions,
 };
 pub use mods::{
     ModFile, install as install_mod, list as list_mods, remove as remove_mod,

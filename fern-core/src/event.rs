@@ -62,7 +62,7 @@ pub enum LauncherEvent {
 ///
 /// 下载器只认得 [`DownloadEvent`]，而界面只该订阅一条「启动器在干什么」的
 /// 流。桥在这里搭一次，比让下载器去认识启动器的事件模型好。
-pub(crate) fn download_bridge(
+pub fn download_bridge(
     events: &tokio::sync::mpsc::UnboundedSender<LauncherEvent>,
 ) -> tokio::sync::mpsc::UnboundedSender<DownloadEvent> {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
