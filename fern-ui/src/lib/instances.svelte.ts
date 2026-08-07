@@ -11,6 +11,8 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import { commands, provides, type Subject } from './palette.svelte'
+import { nav } from './nav.svelte'
 
 export interface Instance {
   id: string
@@ -219,3 +221,66 @@ class InstanceStore {
 }
 
 export const instances = new InstanceStore()
+
+/**
+ * 实例是这个面板的主角，所以它们平铺在顶层，不藏在一次下钻后面。
+ *
+ * 默认动作是「送上启动场景」而不是「打开详情」：点实例名呼出的切换器和 ⌘K
+ * 是同一个东西，而切换器的意思就是换一个来玩。
+ */
+provides(() =>
+  instances.list.map(
+    (item): Subject => ({
+      type: 'instance',
+      id: item.id,
+      title: item.name,
+      hint: `${item.gameVersion} · ${item.loader}`,
+      seed: item.cover,
+      run: () => {
+        instances.select(item.id)
+        nav.go('launch')
+      },
+    }),
+  ),
+)
+
+const asSubject = (id: string): Subject | undefined => {
+  const item = instances.list.find((entry) => entry.id === id)
+  if (!item) return undefined
+  return {
+    type: 'instance',
+    id: item.id,
+    title: item.name,
+    hint: `${item.gameVersion} · ${item.loader}`,
+    seed: item.cover,
+    run: () => instances.select(item.id),
+  }
+}
+
+/** 当前实例。动作有它就一步到位，没有就下钻去问「对哪个」。 */
+const current = () => (instances.current ? asSubject(instances.current.id) : undefined)
+
+commands(() => [
+  {
+    id: 'instance.open',
+    title: '打开实例详情',
+    accepts: 'instance',
+    subject: current,
+    run: (subject) => subject && nav.enter('instances', subject.id),
+  },
+  {
+    id: 'instance.directory',
+    title: '打开游戏目录',
+    accepts: 'instance',
+    subject: current,
+    run: (subject) => {
+      if (subject) void invoke('open_instance_directory', { instanceId: subject.id })
+    },
+  },
+  {
+    id: 'instance.create',
+    title: '新建实例',
+    accepts: 'none',
+    run: () => nav.enter('instances', 'new'),
+  },
+])

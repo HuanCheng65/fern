@@ -14,7 +14,7 @@
   import { fly } from 'svelte/transition'
   import Backdrop from './components/Backdrop.svelte'
   import TopBar from './components/TopBar.svelte'
-  import CommandPalette, { type PaletteAction } from './components/CommandPalette.svelte'
+  import CommandPalette from './components/CommandPalette.svelte'
   import Mark from './components/Mark.svelte'
   import CrashReport from './components/CrashReport.svelte'
   import GameLog from './components/GameLog.svelte'
@@ -26,13 +26,14 @@
   import SupplyScene from './scenes/Supply.svelte'
   import Setup from './routes/Setup.svelte'
   import Settings from './routes/Settings.svelte'
-  import { frame, frameless, platform, selfRounded } from './lib/frame.svelte'
+  import { frame, frameless, selfRounded } from './lib/frame.svelte'
   import { flush, hydrate } from './lib/persist'
   import { accounts } from './lib/accounts.svelte'
   import { instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
   import { DURATION, scaled } from './lib/motion'
-  import { nav, SCENES } from './lib/nav.svelte'
+  import { nav } from './lib/nav.svelte'
+  import { palette } from './lib/palette.svelte'
   import { prefs } from './lib/prefs.svelte'
   import { supply } from './lib/supply.svelte'
   import { theme } from './lib/theme.svelte'
@@ -42,7 +43,6 @@
   let setupOpen = $state(false)
   /** 设置在磁盘上，读完才知道该不该出向导。读完之前只铺背景。 */
   let ready = $state(false)
-  const isMac = platform === 'macos'
   /** 背景用当前实例的封面当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.cover ?? 'Fern')
   /** 顶栏的面包屑只要一个词。哪个场景有纵深，就由那个场景说它叫什么。 */
@@ -66,76 +66,13 @@
     if (accounts.playerName.trim()) session.name = accounts.playerName.trim()
   })
 
-  async function openDirectory() {
-    const current = instances.current
-    if (!current) {
-      createInstance()
-      return
-    }
-    try {
-      await invoke('open_instance_directory', { instanceId: current.id })
-    } catch (error) {
-      launch.error = String(error)
-    }
-  }
-
-  /**
-   * 命令面板是这套路由的键盘化身：每一条都是一次跳转或一个动作，和导航结构
-   * 同构。
-   */
-  const actions = $derived<PaletteAction[]>([
-    ...(instances.current
-      ? [
-          ...(launch.running
-            ? []
-            : [
-                {
-                  id: 'launch',
-                  title: '启动当前实例',
-                  hint: instances.current.name,
-                  run: () => void launch.launch(instances.current!.id),
-                },
-              ]),
-          { id: 'dir', title: '打开游戏目录', run: () => void openDirectory() },
-          {
-            id: 'repair',
-            title: '校验游戏文件',
-            run: () => void launch.repair(instances.current!.id),
-          },
-          {
-            id: 'configure',
-            title: '打开实例详情',
-            hint: instances.current.name,
-            run: () => nav.enter('instances', instances.current!.id),
-          },
-        ]
-      : []),
-    { id: 'create', title: '新建实例', run: createInstance },
-    // 日志平时不该占地方，但出事的时候必须找得到——所以放在命令面板里，
-    // 而且只在真的有内容时才列出来。
-    ...(launch.log.length > 0
-      ? [
-          {
-            id: 'log',
-            title: '查看游戏日志',
-            hint: `${launch.log.length} 行`,
-            run: () => nav.show('log'),
-          },
-        ]
-      : []),
-    ...SCENES.filter((item) => item.id !== nav.scene).map((item) => ({
-      id: `go-${item.id}`,
-      title: `前往 ${item.label}`,
-      run: () => nav.go(item.id),
-    })),
-    { id: 'settings', title: '打开设置', keys: isMac ? '⌘ ,' : 'Ctrl ,', run: () => nav.show('settings') },
-  ])
 
   function onKeydown(event: KeyboardEvent) {
     const mod = event.metaKey || event.ctrlKey
     if (setupOpen) return
     if (mod && event.key.toLowerCase() === 'k') {
       event.preventDefault()
+      if (nav.overlay !== 'palette') palette.open()
       nav.toggle('palette')
       return
     }
@@ -223,7 +160,14 @@
       {#key nav.scene}
         <div class="scene" in:fly={enter}>
           {#if nav.scene === 'launch'}
-            <LaunchScene onswitch={() => nav.show('palette')} oncreate={createInstance} />
+            <LaunchScene
+              onswitch={() => {
+                // 切换器就是面板，只是带着一枚锁定实例的 chip 进来。
+                palette.open({ type: 'instance', label: '实例' })
+                nav.show('palette')
+              }}
+              oncreate={createInstance}
+            />
           {:else if nav.scene === 'instances'}
             <InstancesScene />
           {:else if nav.scene === 'supply'}
@@ -257,7 +201,7 @@
   {/if}
 
   {#if nav.overlay === 'palette'}
-    <CommandPalette {actions} onclose={() => nav.dismiss()} />
+    <CommandPalette onclose={() => nav.dismiss()} />
   {/if}
 
   <!-- 崩溃报告压在所有浮层之上：它是用户此刻唯一需要处理的事。 -->

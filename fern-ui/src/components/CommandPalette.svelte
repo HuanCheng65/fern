@@ -1,124 +1,108 @@
-<script lang="ts" module>
-  export interface PaletteAction {
-    id: string
-    title: string
-    hint?: string
-    /** 显示在右边的快捷键。没有就不画，不要为了对齐编一个出来。 */
-    keys?: string
-    run: () => void
-  }
-</script>
-
 <script lang="ts">
   /**
-   * 命令面板（见 docs/UI_DESIGN.md 五）。
+   * 命令面板（见 docs/UI_DESIGN.md 五、十四）。
    *
-   * 全局唯一：点实例名呼出的「切换器」和 ⌘K 呼出的面板是同一个东西，
-   * 区别只是前者进来时光标已经落在实例这一组上。
+   * 全局唯一：点实例名呼出的「切换器」和 ⌘K 呼出的面板是同一个东西，区别只是
+   * 前者带着一枚锁定实例类型的 chip 进来。下钻（「校验哪个实例」）和预过滤
+   * （「只看实例」）共用这一个机制，不写两套。
    *
-   * 定位是加速器，不是功能的藏身处——这里出现的每一个动作，界面上都有
-   * 一个看得见的入口。所以它可以做得很薄。
+   * 这里只负责画和收键盘。搜什么、怎么排、执行之后关不关，全在
+   * lib/palette.svelte.ts 里——那是语法所在的地方。
    */
-  import { ArrowRight, CornerDownLeft, Search } from 'lucide-svelte'
+  import { ArrowRight, CornerDownLeft, Search, X } from 'lucide-svelte'
   import Overlay from './Overlay.svelte'
   import Cover from './Cover.svelte'
-  import { instances } from '../lib/instances.svelte'
+  import { palette, TYPE_LABEL, type Row } from '../lib/palette.svelte'
 
   interface Props {
-    actions: PaletteAction[]
     onclose: () => void
   }
 
-  let { actions, onclose }: Props = $props()
+  let { onclose }: Props = $props()
 
-  let query = $state('')
-  let cursor = $state(0)
   let listEl = $state<HTMLElement>()
 
-  /**
-   * 子序列匹配：输入的字符按顺序出现就算命中，允许中间跳过。
-   * 「fabopt」能命中「Fabulously Optimized」，不用打全。
-   */
-  function matches(text: string, q: string) {
-    if (!q) return true
-    const haystack = text.toLowerCase()
-    const needle = q.toLowerCase().replace(/\s+/g, '')
-    let i = 0
-    for (const ch of haystack) {
-      if (ch === needle[i]) i++
-      if (i === needle.length) return true
-    }
-    return false
-  }
+  const rows = $derived(palette.rows)
 
-  type Row =
-    | { kind: 'instance'; id: string; title: string; hint: string; run: () => void }
-    | { kind: 'action'; id: string; title: string; hint?: string; keys?: string; run: () => void }
-
-  const instanceRows = $derived<Row[]>(
-    instances.list
-      .filter((item) => matches(`${item.name} ${item.gameVersion} ${item.loader}`, query))
-      .map((item) => ({
-        kind: 'instance' as const,
-        id: item.id,
-        title: item.name,
-        hint: `${item.gameVersion} · ${item.loader}`,
-        run: () => instances.select(item.id),
-      })),
-  )
-
-  const actionRows = $derived<Row[]>(
-    actions
-      .filter((item) => matches(`${item.title} ${item.hint ?? ''}`, query))
-      .map((item) => ({ kind: 'action' as const, ...item })),
-  )
-
-  const rows = $derived([...instanceRows, ...actionRows])
-
-  // 结果变了就把光标收回第一行，否则会停在一个已经不存在的位置上。
+  // 结果变了就把光标收回第一行，否则它会停在一个已经不存在的位置上。
   $effect(() => {
-    void query
-    cursor = 0
+    void palette.query
+    void palette.scope
+    palette.reset()
   })
 
-  function move(delta: number) {
-    if (rows.length === 0) return
-    cursor = (cursor + delta + rows.length) % rows.length
-    listEl?.querySelector<HTMLElement>(`[data-row="${cursor}"]`)?.scrollIntoView({ block: 'nearest' })
+  function scroll() {
+    listEl
+      ?.querySelector<HTMLElement>(`[data-row="${palette.cursor}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
   }
 
   function run(row: Row) {
-    onclose()
-    row.run()
+    if (palette.run(row)) onclose()
   }
 
   function onkeydown(event: KeyboardEvent) {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      move(1)
+      palette.move(1)
+      scroll()
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
-      move(-1)
+      palette.move(-1)
+      scroll()
     }
-    if (event.key === 'Enter' && rows[cursor]) {
+    if (event.key === 'Enter' && rows[palette.cursor]) {
       event.preventDefault()
-      run(rows[cursor])
+      run(rows[palette.cursor])
     }
+    // 由外向内退：先摘 chip，再关面板。Overlay 自己也听 Esc，所以只有
+    // 「还有 chip 可摘」时才拦下来。
+    if (event.key === 'Escape' && palette.scope) {
+      event.preventDefault()
+      event.stopPropagation()
+      palette.back()
+    }
+    // 退格退到底再按一下也是退出下钻，和面包屑的手感一致。
+    if (event.key === 'Backspace' && !palette.query && palette.scope) {
+      event.preventDefault()
+      palette.back()
+    }
+  }
+
+  /** 类型变化的地方插一条分隔线。组序由分数决定，不是固定的。 */
+  function heading(index: number): string | undefined {
+    const row = rows[index]
+    if (!row) return undefined
+    const label = row.kind === 'subject' ? TYPE_LABEL[row.subject.type] : '动作'
+    const before = rows[index - 1]
+    const previous = before
+      ? before.kind === 'subject'
+        ? TYPE_LABEL[before.subject.type]
+        : '动作'
+      : undefined
+    return label === previous ? undefined : label
   }
 </script>
 
 <Overlay label="命令面板" width="600px" align="top" {onclose}>
   <div class="head">
     <Search size={17} strokeWidth={1.8} />
+    {#if palette.scope}
+      <!-- 下钻的落点写在输入框里而不是标题上：它是这次查询的一部分。 -->
+      <button class="chip" onclick={() => palette.back()}>
+        {palette.scope.label}
+        <X size={11} strokeWidth={2.4} />
+      </button>
+    {/if}
     <!-- svelte-ignore a11y_autofocus -->
     <input
       class="query"
-      bind:value={query}
+      bind:value={palette.query}
       {onkeydown}
       autofocus
       spellcheck="false"
-      placeholder="搜索实例与动作"
+      placeholder={palette.scope ? `选择${TYPE_LABEL[palette.scope.type]}` : '搜索实例与动作'}
       aria-label="搜索实例与动作"
     />
     <kbd>esc</kbd>
@@ -128,28 +112,28 @@
     <p class="none">没有匹配的结果</p>
   {:else}
     <div class="list scroll" bind:this={listEl}>
-      {#if instanceRows.length > 0}<p class="group">实例</p>{/if}
-      {#each rows as row, index (row.kind + row.id)}
-        {#if row.kind === 'action' && index === instanceRows.length}
-          <p class="group">动作</p>
-        {/if}
+      {#each rows as row, index (row.key)}
+        {@const label = heading(index)}
+        {#if label}<p class="group">{label}</p>{/if}
         <button
           class="row"
           data-row={index}
-          class:on={cursor === index}
-          onmouseenter={() => (cursor = index)}
+          class:on={palette.cursor === index}
+          onmouseenter={() => (palette.cursor = index)}
           onclick={() => run(row)}
         >
-          {#if row.kind === 'instance'}
-            <span class="thumb"><Cover seed={row.title} quality={0.4} /></span>
+          {#if row.kind === 'subject' && row.subject.seed}
+            <span class="thumb"><Cover seed={row.subject.seed} quality={0.4} /></span>
           {:else}
             <span class="glyph"><ArrowRight size={14} strokeWidth={2} /></span>
           {/if}
           <span class="text">
-            <strong>{row.title}</strong>
-            {#if row.hint}<small>{row.hint}</small>{/if}
+            <strong>{row.kind === 'subject' ? row.subject.title : row.action.title}</strong>
+            {#if row.kind === 'subject' ? row.subject.hint : row.action.hint}
+              <small>{row.kind === 'subject' ? row.subject.hint : row.action.hint}</small>
+            {/if}
           </span>
-          {#if row.kind === 'action' && row.keys}<kbd>{row.keys}</kbd>{/if}
+          {#if row.kind === 'action' && row.action.keys}<kbd>{row.action.keys}</kbd>{/if}
         </button>
       {/each}
     </div>
@@ -169,6 +153,22 @@
     padding: var(--s4) var(--s5);
     color: var(--ink-3);
     box-shadow: inset 0 -1px 0 var(--hairline-2);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+    padding: 3px var(--s2);
+    border-radius: var(--r1);
+    background: var(--tint-2);
+    color: var(--ink-2);
+    font-size: var(--t-small);
+  }
+
+  .chip:hover {
+    color: var(--ink);
   }
 
   .query {

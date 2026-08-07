@@ -18,6 +18,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { instances, inTauri } from './instances.svelte'
 import { contributes, PRIORITY, type Presence } from './island.svelte'
+import { commands } from './palette.svelte'
 import { jobs } from './jobs.svelte'
 import { nav } from './nav.svelte'
 import { prefs } from './prefs.svelte'
@@ -236,3 +237,67 @@ contributes((): Presence[] =>
       ]
     : [],
 )
+
+
+/**
+ * 启动与校验注册在这里，而不是外壳里。
+ *
+ * 外壳曾经手写一张动作表，于是它被迫认识启动、日志、目录、设置——加一个功能
+ * 就要回来改它一次。动作和它在界面上那个看得见的入口住在同一个文件，这条
+ * 纪律才守得住。
+ */
+commands(() => {
+  const current = () => {
+    const item = instances.current
+    if (!item) return undefined
+    return {
+      type: 'instance' as const,
+      id: item.id,
+      title: item.name,
+      hint: `${item.gameVersion} · ${item.loader}`,
+      seed: item.cover,
+      run: () => instances.select(item.id),
+    }
+  }
+  return [
+    // 游戏已经在跑的时候不列出启动：再点一下会起第二个进程，两份游戏抢同一个
+    // 存档目录。
+    ...(launch.running
+      ? []
+      : [
+          {
+            id: 'instance.launch',
+            title: '启动',
+            hint: instances.current?.name,
+            accepts: 'instance' as const,
+            subject: current,
+            run: (subject?: { id: string }) => {
+              if (!subject) return
+              instances.select(subject.id)
+              void launch.launch(subject.id)
+            },
+          },
+        ]),
+    {
+      id: 'instance.repair',
+      title: '校验游戏文件',
+      accepts: 'instance' as const,
+      subject: current,
+      run: (subject?: { id: string }) => {
+        if (subject) void launch.repair(subject.id)
+      },
+    },
+    // 日志平时不该占地方，但出事的时候必须找得到——所以只在真的有内容时出现。
+    ...(launch.log.length > 0
+      ? [
+          {
+            id: 'log.open',
+            title: '查看游戏日志',
+            hint: `${launch.log.length} 行`,
+            accepts: 'none' as const,
+            run: () => nav.show('log'),
+          },
+        ]
+      : []),
+  ]
+})

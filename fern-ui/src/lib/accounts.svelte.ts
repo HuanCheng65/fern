@@ -13,6 +13,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { inTauri } from './instances.svelte'
+import { commands, provides } from './palette.svelte'
 
 export type AccountKind = 'offline' | 'microsoft' | 'authlib'
 
@@ -166,3 +167,33 @@ class AccountStore {
 }
 
 export const accounts = new AccountStore()
+
+/**
+ * 账户不平铺在顶层：它们不是这个面板的主角，一份有五个账户的名单会把实例和
+ * 动作挤下去。所以走「动词需要宾语」那条路——搜「切换账户」，回车之后才列出
+ * 名单，输入框左边挂上一枚 chip。
+ */
+provides(() =>
+  accounts.list.map((item) => ({
+    type: 'account' as const,
+    scoped: true,
+    id: item.id,
+    title: item.playerName,
+    hint: `${KIND_LABEL[item.kind]}${item.apiRoot ? ` · ${siteName(item.apiRoot)}` : ''}`,
+    seed: item.uuid,
+    run: () => void accounts.use(item.id),
+  })),
+)
+
+commands(() => [
+  {
+    id: 'account.switch',
+    title: '切换账户',
+    hint: accounts.playerName,
+    accepts: 'account',
+    // 故意不给默认宾语：这个动词的全部意义就是换一个，一步到位没有意义。
+    run: (subject) => {
+      if (subject) void accounts.use(subject.id)
+    },
+  },
+])

@@ -30,6 +30,7 @@
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { accounts } from '../lib/accounts.svelte'
+  import { SETTINGS_SECTIONS } from '../lib/nav.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
@@ -50,15 +51,7 @@
 
   let { at = '', onback }: Props = $props()
 
-  const sections: { id: SectionId; label: string }[] = [
-    { id: 'appearance', label: '外观' },
-    { id: 'account', label: '账户' },
-    { id: 'game', label: '游戏' },
-    { id: 'java', label: 'Java' },
-    { id: 'download', label: '下载' },
-    { id: 'data', label: '数据' },
-    { id: 'about', label: '关于' },
-  ]
+  const sections = SETTINGS_SECTIONS
 
   let section = $state<SectionId>('appearance')
   // 外面指定了落点就跟着走。设置已经开着时也生效——命令面板搜到一个设置项，
