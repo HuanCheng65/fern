@@ -22,7 +22,7 @@
   {#if controls}
     <div class="controls">{@render controls()}</div>
   {/if}
-  <div class="grid scroll">{@render children()}</div>
+  <div class="grid scroll" data-page-scroll>{@render children()}</div>
 </div>
 
 <style>

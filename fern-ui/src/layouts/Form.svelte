@@ -22,7 +22,7 @@
   let { sections, section, onsection, head, children }: Props = $props()
 </script>
 
-<div class="form scroll">
+<div class="form scroll" data-page-scroll>
   {#if head}
     <header>{@render head()}</header>
   {/if}

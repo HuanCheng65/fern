@@ -578,6 +578,7 @@
     z-index: 5;
     padding: 0 var(--pad-x);
     background: var(--panel);
+    -webkit-backdrop-filter: blur(26px) saturate(1.3);
     backdrop-filter: blur(26px) saturate(1.3);
   }
 

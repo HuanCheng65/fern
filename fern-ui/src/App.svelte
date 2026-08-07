@@ -307,7 +307,7 @@
     z-index: 1;
     flex: 1;
     min-height: 0;
-    padding: var(--s2) var(--pad-x) var(--pad-b);
+    padding: calc(var(--top) + var(--s2)) var(--pad-x) var(--pad-b);
   }
 
   .scene {

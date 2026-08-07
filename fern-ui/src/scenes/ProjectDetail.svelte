@@ -166,22 +166,37 @@
       </div>
     {/snippet}
 
+    {#snippet compactHead()}
+      <span class="mini-title">{detail?.title}</span>
+    {/snippet}
+
     {#if tab === 'versions'}
       <div class="v-head">
         {#if isPack}
-          <span class="t-quiet">选一个版本，它会建成一个新实例</span>
+          <p class="note">整合包自带游戏版本与加载器。选一个版本，它会建成一个新实例。</p>
+        {:else if instances.list.length === 0}
+          <p class="note">还没有实例。先创建一个，才有地方安装。</p>
         {:else}
-          <span class="t-quiet">{fitting.length} 个版本可以装进</span>
-          <!-- 装到哪，在这一页也能改。 -->
-          {#if instances.list.length > 0}
-            <select class="select" bind:value={supply.targetId}>
+          <!--
+            装到哪，在这一页也能改——装东西这个动作发生在这里。
+            值取自实际生效的目标而不是 targetId：没选过时它是空的，绑上去
+            下拉框会显示一片空白，而实际上装的是当前实例。
+          -->
+          <label class="target">
+            <span class="t-quiet">安装到</span>
+            <select
+              class="select"
+              value={target?.id ?? ''}
+              onchange={(event) => (supply.targetId = event.currentTarget.value)}
+            >
               {#each instances.recent as item (item.id)}
-                <option value={item.id}>{item.name} · {item.gameVersion} · {item.loader}</option>
+                <option value={item.id}>{item.name}（{item.gameVersion} · {item.loader}）</option>
               {/each}
             </select>
-          {:else}
-            <span class="t-quiet">还没有实例，创建一个才能安装</span>
-          {/if}
+          </label>
+          <span class="t-quiet">
+            {judged.length} 个版本中 {fitting.length} 个装得上
+          </span>
         {/if}
       </div>
 
@@ -354,7 +369,29 @@
     justify-content: space-between;
     flex-wrap: wrap;
     gap: var(--s3);
-    padding-bottom: var(--s3);
+    padding-bottom: var(--s4);
+  }
+
+  .note {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: var(--t-small);
+  }
+
+  /* 有标签的字段。一个光秃秃的下拉框谁也不知道它在问什么。 */
+  .target {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .target .select {
+    width: auto;
+    min-width: 200px;
+  }
+
+  .mini-title {
+    color: var(--ink-2);
   }
 
   .facts {

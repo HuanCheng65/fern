@@ -165,6 +165,7 @@
     color: #f3f6f6;
     opacity: 0;
     transform: scale(0.9);
+    -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     transition:
       opacity var(--t-fast) var(--ease),

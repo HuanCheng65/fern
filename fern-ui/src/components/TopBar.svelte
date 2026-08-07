@@ -188,13 +188,14 @@
 
 <style>
   .top {
-    position: relative;
+    position: absolute;
+    inset: 0 0 auto;
     z-index: 10;
     display: flex;
     align-items: center;
+    width: 100%;
     height: var(--top);
     padding: 0 calc(var(--pad-x) + var(--frame-controls)) 0 var(--pad-x);
-    flex: none;
     transition:
       background var(--t-base) var(--ease),
       box-shadow var(--t-base) var(--ease);
@@ -208,11 +209,16 @@
   /*
    * 内容滚到顶栏底下才浮现毛玻璃。启动场景永不滚动，所以那里的顶栏永远是
    * 悬在封面上的一行纯文字。
+   *
+   * `-webkit-` 前缀不能省：WebKitGTK 只认带前缀的那个，Linux 和 macOS 上的
+   * Tauri 跑的就是它。缺了它 backdrop-filter 整条失效，只剩底色——于是「毛
+   * 玻璃」变成一块实色板子。
    */
   .top.glass {
-    background: var(--panel);
+    background: var(--top-glass);
     box-shadow: inset 0 -1px 0 var(--hairline-2);
-    backdrop-filter: blur(26px) saturate(1.3);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
+    backdrop-filter: blur(20px) saturate(1.2);
   }
 
   .brand {

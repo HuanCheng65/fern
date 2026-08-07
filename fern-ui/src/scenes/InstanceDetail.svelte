@@ -96,6 +96,10 @@
     </div>
   {/snippet}
 
+  {#snippet compactHead()}
+    <span class="mini-title">{instance.name}</span>
+  {/snippet}
+
   {#if tab === 'overview'}
     <dl class="grid">
       <div><dt>Minecraft</dt><dd class="t-mono">{instance.gameVersion}</dd></div>
@@ -140,6 +144,10 @@
 </Detail>
 
 <style>
+  .mini-title {
+    color: var(--ink-2);
+  }
+
   /* 底边化开，标题才不像压在一张图上。 */
   .titles {
     display: flex;

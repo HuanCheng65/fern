@@ -85,6 +85,12 @@
 
   /* 浮层。整个界面只有这一种「有实体」的表面。 */
   --panel: rgba(11, 14, 16, 0.82);
+  /*
+   * 顶栏浮出来的那一层。比浮层薄得多——顶栏不是一块浮起来的板子，它只需要
+   * 刚好让文字在滚过去的内容上仍然读得出来。用 --panel 的话，一滚动整条就
+   * 变成一根深色横杠，那正是「桌面应用的顶栏该像菜单栏」要避开的样子。
+  */
+  --top-glass: color-mix(in srgb, var(--c0) 34%, transparent);
   --panel-line: rgba(255, 255, 255, 0.12);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.34);
   --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.32), 0 28px 70px rgba(0, 0, 0, 0.46);
@@ -394,6 +400,7 @@ body.frameless {
   box-shadow:
     inset 0 0 0 1px var(--panel-line),
     var(--shadow-lg);
+  -webkit-backdrop-filter: blur(26px) saturate(1.3);
   backdrop-filter: blur(26px) saturate(1.3);
 }
 

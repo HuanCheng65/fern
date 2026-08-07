@@ -183,12 +183,16 @@ class NavStore {
     this.read()
     const onHash = () => this.read()
     /**
-     * 滚动事件不冒泡，但捕获阶段抓得到——场景内部那些 `.scroll` 容器不必
-     * 各自上报。浮层里的列表也会滚，所以只认舞台里的。
+     * 滚动事件不冒泡，但捕获阶段抓得到——布局不必各自上报。
+     *
+     * 只认**标了 `data-page-scroll` 的那一个容器**，不是舞台里的任何滚动条。
+     * 一开始写的是「在舞台里就算」，于是模组列表、图库、筛选栏随便滚一下都会
+     * 让顶栏浮出毛玻璃——毛玻璃回答的是「有内容贴到顶栏底下了吗」，那是页面
+     * 主滚动容器的事，页面内部某个小列表滚到哪跟顶栏没关系。
      */
     const onScroll = (event: Event) => {
       const target = event.target
-      if (!(target instanceof Element) || !target.closest('.stage')) return
+      if (!(target instanceof Element) || !target.matches('[data-page-scroll]')) return
       this.scrolled = target.scrollTop > 4
     }
     window.addEventListener('hashchange', onHash)
