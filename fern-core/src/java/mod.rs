@@ -270,11 +270,13 @@ pub fn detect_java() -> Option<JavaRuntime> {
 
 fn probe_home(home: &Path, managed: bool) -> Option<JavaRuntime> {
     // macOS 的 JDK 是 bundle，目录本身不是 home。
-    let home = if home.join("Contents/Home/bin").is_dir() {
-        home.join("Contents/Home")
-    } else {
-        home.to_path_buf()
-    };
+    let home = [
+        home.join("Contents/Home"),
+        home.join("jre.bundle/Contents/Home"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.join("bin").is_dir())
+    .unwrap_or_else(|| home.to_path_buf());
     let executable = home.join("bin").join(java_executable_name());
     if !executable.is_file() {
         return None;
@@ -687,6 +689,27 @@ mod tests {
         assert_eq!(parse_major("1.8.0_402"), Some(8));
         assert_eq!(parse_major("17"), Some(17));
         assert_eq!(parse_major("not a version"), None);
+    }
+
+    #[test]
+    fn discovers_a_macos_runtime_bundle_nested_under_its_install_root() {
+        let root = env::temp_dir().join(format!("fern-java-bundle-{}", std::process::id()));
+        let home = root.join("jre.bundle/Contents/Home");
+        fs::create_dir_all(home.join("bin")).expect("create bundle");
+        fs::write(home.join("bin").join(java_executable_name()), b"")
+            .expect("write java executable");
+        fs::write(
+            home.join("release"),
+            "JAVA_VERSION=\"25.0.1\"\nOS_ARCH=\"aarch64\"\n",
+        )
+        .expect("write release file");
+
+        let runtime = probe_home(&root, true).expect("discover nested bundle");
+        assert_eq!(runtime.major, 25);
+        assert_eq!(runtime.home, home);
+        assert!(runtime.managed);
+
+        fs::remove_dir_all(root).expect("remove bundle");
     }
 
     #[test]
