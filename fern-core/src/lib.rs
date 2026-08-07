@@ -45,12 +45,12 @@ pub use account::yggdrasil::{
     YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
     prefetched as prefetched_metadata,
 };
-pub use data::DataPaths;
 pub use data::settings::{
     AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,
     current as current_settings, effective as effective_settings, load as load_settings,
     save as save_settings,
 };
+pub use data::{DataPaths, ExternalGame, Isolation, nearby_game_directory};
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;
 pub use fern_meta::{VersionManifest, VersionManifestEntry};
@@ -60,10 +60,14 @@ pub use instance::catalog::{
     read_prepared_java_major, rename_instance, set_instance_account, touch_played,
     update_instance_settings, write_instance_profile,
 };
+pub use instance::external::{
+    ExternalVersion, attach as attach_external_version, scan as scan_external_directory,
+};
 pub use instance::mods::{
     ModFile, install as install_mod, list as list_mods, remove as remove_mod,
     set_enabled as set_mod_enabled,
 };
+pub use instance::paths_for as instance_paths;
 pub use instance::saves::{SaveEntry, list as list_saves, names as save_names};
 pub use instance::servers::{ServerEntry, list as list_servers};
 pub use instance::{

@@ -29,7 +29,9 @@ pub struct ServerEntry {
 /// 文件不存在是正常的：没进过多人游戏的实例就没有这份文件。读坏了也只当没有
 /// ——这份文件不归我们管，格式对不上不该让搜索整个失败。
 pub fn list(paths: &DataPaths, instance_id: &str) -> Vec<ServerEntry> {
-    let path = paths.game_directory(instance_id).join("servers.dat");
+    let path = crate::instance::paths_by_id(paths, instance_id)
+        .game_directory(instance_id)
+        .join("servers.dat");
     let Ok(bytes) = fs::read(&path) else {
         return Vec::new();
     };

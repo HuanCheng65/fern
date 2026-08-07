@@ -149,7 +149,9 @@ pub fn install(paths: &DataPaths, instance_id: &str, source: &Path) -> Result<Mo
 
 fn mods_directory(paths: &DataPaths, instance_id: &str) -> Result<PathBuf> {
     let id = crate::InstanceId::parse(instance_id).map_err(|error| anyhow!("{error}"))?;
-    Ok(paths.game_directory(id.as_str()).join("mods"))
+    Ok(crate::instance::paths_by_id(paths, id.as_str())
+        .game_directory(id.as_str())
+        .join("mods"))
 }
 
 /// 文件名来自界面，必须挡住路径穿越。

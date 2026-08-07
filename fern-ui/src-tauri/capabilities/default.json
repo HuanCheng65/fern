@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-capability.schema.json",
   "identifier": "default",
-  "description": "Window controls and launcher commands. core:window:default already covers is-maximized and internal-toggle-maximize (what data-tauri-drag-region uses for double-click), but not dragging or resizing \u2014 an undecorated window needs those spelled out, or the drag region silently does nothing.",
+  "description": "Window controls and launcher commands. core:window:default already covers is-maximized and internal-toggle-maximize (what data-tauri-drag-region uses for double-click), but not dragging or resizing — an undecorated window needs those spelled out, or the drag region silently does nothing. dialog:allow-open lets the user point at an existing .minecraft; nothing else from that plugin is granted.",
   "windows": [
     "main"
   ],
@@ -11,6 +11,7 @@
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
-    "core:window:allow-start-resize-dragging"
+    "core:window:allow-start-resize-dragging",
+    "dialog:allow-open"
   ]
 }

@@ -28,6 +28,7 @@
   import AccountList from '../components/AccountList.svelte'
   import AccountProfile from '../components/AccountProfile.svelte'
   import AddAccount from '../components/AddAccount.svelte'
+  import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import SettingRow from '../components/SettingRow.svelte'
   import Choice from '../components/Choice.svelte'
   import Form from '../layouts/Form.svelte'
@@ -109,10 +110,11 @@
 
   /** 二级页的标题。 */
   const subtitle = $derived.by(() => {
+    if (page === 'data/existing') return '现有游戏目录'
     if (target === 'new') return '添加账户'
     return accounts.list.find((item) => item.id === target)?.playerName ?? '账户'
   })
-  let paths = $state({ root: '', logs: '' })
+  let paths = $state({ root: '', logs: '', portable: false })
   let pathError = $state('')
   interface JavaRuntime {
     path: string
@@ -232,7 +234,7 @@
   onMount(() => {
     themeCode = theme.export()
     if (!inTauri()) return
-    void invoke<{ root: string; logs: string }>('data_paths')
+    void invoke<{ root: string; logs: string; portable: boolean }>('data_paths')
       .then((value) => (paths = value))
       .catch((error) => (pathError = String(error)))
     void loadRuntimes()
@@ -318,7 +320,9 @@
       </header>
 
       <div class="sub-body">
-        {#if target === 'new'}
+        {#if page === 'data/existing'}
+          <AdoptDirectory />
+        {:else if target === 'new'}
           <AddAccount ondone={(id) => nav.show('settings', `account/list${id ? `/${id}` : ''}`)} />
         {:else}
           <AccountProfile
@@ -638,6 +642,16 @@
         {:else if section === 'data'}
           <SettingRow id="data/root" found={focused === 'data/root'}>
             <p class="path t-mono selectable">{paths.root || '—'}</p>
+            {#if paths.portable}
+              <p class="t-quiet hint">
+                数据目录随可执行文件所在位置。移动整个文件夹即可迁移全部数据。
+              </p>
+            {/if}
+          </SettingRow>
+          <SettingRow id="data/existing" found={focused === 'data/existing'}>
+            <button class="btn btn--ghost" onclick={() => nav.show('settings', 'data/existing/browse')}>
+              选择目录…
+            </button>
           </SettingRow>
           <SettingRow id="data/logs" found={focused === 'data/logs'}>
             <p class="path t-mono selectable">{paths.logs || '—'}</p>

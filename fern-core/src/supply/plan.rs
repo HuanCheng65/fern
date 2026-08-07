@@ -130,7 +130,7 @@ pub async fn resolve(
     let profile = crate::read_instance(paths, instance_id)?;
     let game_version = profile.game_version.as_str();
     let loader = profile.loader;
-    let game_directory = paths.game_directory(instance_id);
+    let game_directory = crate::instance::paths_for(paths, &profile).game_directory(instance_id);
 
     // 只有模组有依赖图，也只有模组需要知道实例里已经有什么。
     let installed = if kind.has_dependencies() {

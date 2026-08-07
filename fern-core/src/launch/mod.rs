@@ -183,6 +183,10 @@ pub async fn launch_instance(
     // 原版。合并在 version 模块里做一次，补全和启动用的必须是同一份——两边
     // 各算各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
     let version_id = version::effective_id(&profile);
+    // 外部实例的版本、库、游戏目录都在它自己的目录树里。这一句之后的每一个
+    // `paths` 都是这个实例的那一套。
+    let scoped = crate::instance::paths_for(paths, &profile);
+    let paths = &scoped;
     let metadata = version::resolve(paths, &version_id)
         .with_context(|| format!("读取 {version_id} 的版本描述"))?;
     // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。

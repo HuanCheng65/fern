@@ -739,7 +739,11 @@ pub async fn install(
     let subdirectory = kind
         .directory()
         .ok_or_else(|| anyhow!("整合包要用来新建实例，不能装进已有的实例"))?;
-    let directory = paths.game_directory(instance_id).join(subdirectory);
+    // 装到这个实例真正的游戏目录里去——外部实例的那个在别人的目录树下。
+    let profile = crate::read_instance(paths, instance_id)?;
+    let directory = crate::instance::paths_for(paths, &profile)
+        .game_directory(instance_id)
+        .join(subdirectory);
     tokio::fs::create_dir_all(&directory).await?;
 
     let plan = plan::resolve(paths, instance_id, version_id, kind).await?;

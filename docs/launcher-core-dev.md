@@ -327,6 +327,23 @@ resolution_width  resolution_height（feature 控制）
     .minecraft/      game_directory
 ```
 
+### 5.3.1 外部游戏目录
+
+大多数人把启动器和 `.minecraft` 放在一起。实例描述里的 `external` 有值时，那个实例的游戏文件就在那个目录里，Fern 只持有一份指向它的描述——**不移动、不复制、不删除任何游戏文件**，删实例只删我们那份 `instance.json`。
+
+两种布局都要认，判断错的后果是存档看起来消失了（游戏会在另一个目录新建一份空的）：
+
+```
+共用      <root>/saves                    所有版本共享（官方启动器）
+版本隔离  <root>/versions/<id>/saves      每个版本一套（HMCL、PCL2）
+```
+
+判据是**哪一边真的有东西**，不是问用户——他多半不知道上一个启动器是怎么设的。加载器从库坐标认（`net.minecraftforge:forge:`），不从目录名认：目录名是启动器起的，用户可以随手改。
+
+实现上只有一个入口：`DataPaths::scoped(external, version_id)` 返回一份指向那个目录的 `DataPaths`，每条链路在入口处换一次，下游三十来处路径拼接一个字都不用改。散在下游判断「这个实例是不是外部的」，漏掉的那一处会把文件写进错误的目录。
+
+数据根本身也可以跟着可执行文件走（`DataPaths::resolve`）：旁边有 `.minecraft` 或 `fern-portable` 标记时即为便携模式。
+
 ### 5.4 进程管理
 
 - spawn 后 **stdout/stderr 必须持续读取**——不读会因管道缓冲满而卡死游戏进程。

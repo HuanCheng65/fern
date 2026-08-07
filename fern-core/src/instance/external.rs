@@ -1,0 +1,469 @@
+//! 把一个已经存在的 `.minecraft` 接进来。
+//!
+//! 大多数人用启动器的方式是把它和 `.minecraft` 放在一起，那个目录里已经有
+//! 版本、有存档、有几百个 Mod。要求这样的用户先导出再导入，等于要求他放弃
+//! 已有的一切，而这一步是不必要的：记下那个目录在哪、按哪种布局摆放，剩下的
+//! 照常工作。
+//!
+//! 这一层只做两件事：**看**（`scan`）和**记**（`attach`）。不移动、不复制、
+//! 不删除任何游戏文件——那些文件不归我们所有，这是整个模块的底线。
+//!
+//! 判断布局是这里最要紧的一件事。第三方启动器分裂出两种约定：
+//!
+//! ```text
+//! 共用      .minecraft/saves        所有版本共享存档与 mods（官方启动器）
+//! 版本隔离  .minecraft/versions/<id>/saves   每个版本一套（HMCL、PCL2 的默认）
+//! ```
+//!
+//! **判断错了的后果是存档看起来消失了**——游戏会在另一个目录里新建一份空的。
+//! 所以要真的去看目录里有什么，不能默认一种，也不能问用户（他多半不知道自己
+//! 上一个启动器是怎么设的）。
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, anyhow};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    DataPaths, InstanceId, InstanceProfile, LoaderKind, LoaderProfile,
+    data::{ExternalGame, Isolation},
+};
+
+/// 目录里扫到的一个版本。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalVersion {
+    /// `versions/` 下面那个目录名，也是版本描述的 id。
+    pub id: String,
+    /// 它最终继承到的原版版本。装了加载器时和 `id` 不同。
+    pub game_version: String,
+    pub loader: LoaderKind,
+    /// 加载器自己的版本号，认得出来才有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loader_version: Option<String>,
+    /// 这个版本按哪种布局摆放。同一个目录里的不同版本可以不一样。
+    pub isolation: Isolation,
+    /// 已经有实例指向它了。再添加一次只会得到两个共用同一份存档的实例。
+    pub attached: bool,
+    /// 这个版本目录下有几个存档、几个 Mod。用来说「这不是一个空目录」。
+    pub saves: u32,
+    pub mods: u32,
+}
+
+/// 看一眼那个目录里有什么。不改任何东西。
+pub fn scan(paths: &DataPaths, root: &Path) -> Result<Vec<ExternalVersion>> {
+    let root = normalise(root)?;
+    let versions = root.join("versions");
+    if !versions.is_dir() {
+        return Err(anyhow!(
+            "{} 里没有 versions 目录，它不像一个 .minecraft",
+            root.display()
+        ));
+    }
+
+    let claimed = claimed_versions(paths, &root);
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(&versions).context("读取 versions 目录")? {
+        let entry = entry.context("读取 versions 里的条目")?;
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().into_owned();
+        // 目录名会被拼进路径，也会被写进实例描述——它来自别人的磁盘，照样过关口。
+        if !crate::launch::version::is_safe_id(&id) {
+            continue;
+        }
+        let json = entry.path().join(format!("{id}.json"));
+        if !json.is_file() {
+            // 有目录没描述的多半是删了一半的残留，不是一个能启动的版本。
+            continue;
+        }
+        let Some(described) = describe(&json, &id) else {
+            continue;
+        };
+        let isolation = detect_isolation(&root, &id);
+        let game = game_directory(&root, &id, isolation);
+        found.push(ExternalVersion {
+            attached: claimed.contains(&id),
+            saves: count_worlds(&game.join("saves")),
+            mods: count_mods(&game.join("mods")),
+            isolation,
+            ..described
+        });
+    }
+    found.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(found)
+}
+
+/// 把其中一个版本添加为实例。
+///
+/// 只写入一份指向该目录的实例描述，不复制任何文件。
+pub fn attach(
+    paths: &DataPaths,
+    root: &Path,
+    version_id: &str,
+    shared_libraries: bool,
+) -> Result<InstanceProfile> {
+    let root = normalise(root)?;
+    if !crate::launch::version::is_safe_id(version_id) {
+        return Err(anyhow!("版本 id 不可用作目录名：{version_id}"));
+    }
+    let json = root
+        .join("versions")
+        .join(version_id)
+        .join(format!("{version_id}.json"));
+    let described =
+        describe(&json, version_id).ok_or_else(|| anyhow!("读不懂 {}", json.display()))?;
+
+    if claimed_versions(paths, &root).contains(&version_id.to_owned()) {
+        return Err(anyhow!("{version_id} 已经添加过了"));
+    }
+
+    paths
+        .ensure_exists()
+        .context("create launcher data directories")?;
+    let id = crate::instance::catalog::allocate_id(paths)?;
+    let mut profile = InstanceProfile::vanilla(
+        InstanceId::parse(&id)?,
+        display_name(version_id, &described),
+        &described.game_version,
+    );
+    profile.loader = described.loader;
+    profile.loader_profile = described
+        .loader
+        .ne(&LoaderKind::Vanilla)
+        .then(|| LoaderProfile {
+            kind: described.loader,
+            version: described.loader_version.clone().unwrap_or_default(),
+            version_id: version_id.to_owned(),
+        });
+    profile.external = Some(ExternalGame {
+        root: root.clone(),
+        isolation: detect_isolation(&root, version_id),
+        shared_libraries,
+    });
+
+    // 实例目录里只有一份描述，没有 `.minecraft`：游戏文件在那个外部目录里。
+    std::fs::create_dir_all(paths.instance_root(&id)).context("create instance directory")?;
+    crate::write_instance_profile(paths, &profile)?;
+    Ok(profile)
+}
+
+/// 这个目录里哪些版本已经有实例指向它们。
+fn claimed_versions(paths: &DataPaths, root: &Path) -> Vec<String> {
+    crate::list_instances(paths)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|profile| {
+            profile
+                .external
+                .as_ref()
+                .is_some_and(|external| external.root == root)
+        })
+        .map(|profile| crate::effective_version_id(&profile))
+        .collect()
+}
+
+/// 从版本描述里读出「它是什么」。
+///
+/// 不走完整的 `version::resolve`：那要把整条继承链读出来合并，而这里只要几个
+/// 字段，而且要能在一个我们还没接管的目录上跑——那里的父版本可能压根不存在。
+fn describe(json: &Path, id: &str) -> Option<ExternalVersion> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Raw {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        inherits_from: Option<String>,
+        #[serde(default)]
+        main_class: Option<String>,
+        #[serde(default)]
+        libraries: Vec<RawLibrary>,
+    }
+
+    #[derive(Deserialize)]
+    struct RawLibrary {
+        #[serde(default)]
+        name: Option<String>,
+    }
+
+    let raw: Raw = serde_json::from_slice(&std::fs::read(json).ok()?).ok()?;
+    let names: Vec<String> = raw
+        .libraries
+        .iter()
+        .filter_map(|library| library.name.clone())
+        .collect();
+    let (loader, loader_version) = detect_loader(&names, raw.main_class.as_deref(), id);
+
+    Some(ExternalVersion {
+        // 原版版本取 `inheritsFrom`；没有继承关系时它自己就是原版。
+        game_version: raw
+            .inherits_from
+            .or(raw.id)
+            .unwrap_or_else(|| id.to_owned()),
+        id: id.to_owned(),
+        loader,
+        loader_version,
+        isolation: Isolation::default(),
+        attached: false,
+        saves: 0,
+        mods: 0,
+    })
+}
+
+/// 从库坐标认加载器。
+///
+/// 认库而不是认目录名：`1.20.1-forge-47.2.0` 这种名字是启动器起的，用户可以
+/// 随手改成「我的整合包」，而 `net.minecraftforge:forge:` 这条坐标是 Forge
+/// 自己写进去的。
+fn detect_loader(
+    libraries: &[String],
+    main_class: Option<&str>,
+    id: &str,
+) -> (LoaderKind, Option<String>) {
+    const MARKERS: [(&str, LoaderKind); 5] = [
+        ("net.neoforged:neoforge:", LoaderKind::NeoForge),
+        ("net.minecraftforge:forge:", LoaderKind::Forge),
+        ("org.quiltmc:quilt-loader:", LoaderKind::Quilt),
+        ("net.fabricmc:fabric-loader:", LoaderKind::Fabric),
+        ("net.neoforged.fancymodloader:", LoaderKind::NeoForge),
+    ];
+    for name in libraries {
+        for (marker, kind) in MARKERS {
+            if let Some(rest) = name.strip_prefix(marker) {
+                let version = rest.split(':').next().filter(|it| !it.is_empty());
+                return (kind, version.map(str::to_owned));
+            }
+        }
+    }
+    // 库里认不出来时退回主类：老版本 Forge 的坐标形状不一样，但主类是稳定的。
+    match main_class {
+        Some(class) if class.contains("fml") || class.contains("forge") => {
+            (LoaderKind::Forge, None)
+        }
+        Some(class) if class.contains("knot") || class.contains("fabric") => {
+            (LoaderKind::Fabric, None)
+        }
+        // 最后才看名字。它是最不可靠的一条，所以排在最后。
+        _ if id.to_ascii_lowercase().contains("optifine") => (LoaderKind::Vanilla, None),
+        _ => (LoaderKind::Vanilla, None),
+    }
+}
+
+/// 这个版本按哪种布局摆放。
+///
+/// 判据是**哪一边真的有东西**：版本目录下有 saves/mods/config 就是版本隔离，
+/// 否则按共用算。这比问用户可靠——他多半不知道自己上一个启动器是怎么设的，
+/// 而这件事看一眼目录就知道。
+fn detect_isolation(root: &Path, version_id: &str) -> Isolation {
+    let per_version = root.join("versions").join(version_id);
+    let occupied = ["saves", "mods", "config", "resourcepacks", "options.txt"]
+        .iter()
+        .any(|name| per_version.join(name).exists());
+    if occupied {
+        Isolation::PerVersion
+    } else {
+        Isolation::Shared
+    }
+}
+
+fn game_directory(root: &Path, version_id: &str, isolation: Isolation) -> PathBuf {
+    match isolation {
+        Isolation::Shared => root.to_path_buf(),
+        Isolation::PerVersion => root.join("versions").join(version_id),
+    }
+}
+
+/// 有几个世界。认 `level.dat` 而不是数目录——`saves/` 下面常有备份、截图
+/// 和别的工具留下的东西，把它们算成存档会让这一行说出一个假的数。
+fn count_worlds(directory: &Path) -> u32 {
+    std::fs::read_dir(directory)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().join("level.dat").is_file())
+                .count() as u32
+        })
+        .unwrap_or(0)
+}
+
+/// 有几个启用的模组。`.disabled` 的不算：加载器不读它们。
+fn count_mods(directory: &Path) -> u32 {
+    std::fs::read_dir(directory)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .to_ascii_lowercase()
+                        .ends_with(".jar")
+                })
+                .count() as u32
+        })
+        .unwrap_or(0)
+}
+
+/// 添加时的实例名称。版本 id 通常已经足够，原版的加一句来源。
+fn display_name(version_id: &str, described: &ExternalVersion) -> String {
+    if described.loader == LoaderKind::Vanilla && version_id == described.game_version {
+        format!("{version_id}（现有目录）")
+    } else {
+        version_id.to_owned()
+    }
+}
+
+/// 绝对化，并挡住不存在的路径。
+///
+/// 存进实例描述的必须是绝对路径：相对路径会随工作目录漂移，而启动器的工作
+/// 目录在不同的启动方式下并不一样。
+fn normalise(root: &Path) -> Result<PathBuf> {
+    if !root.is_dir() {
+        return Err(anyhow!("{} 不是一个目录", root.display()));
+    }
+    std::fs::canonicalize(root).with_context(|| format!("解析 {}", root.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temporary(name: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("fern-external-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
+
+    fn write_version(root: &Path, id: &str, json: serde_json::Value) {
+        let directory = root.join("versions").join(id);
+        std::fs::create_dir_all(&directory).expect("create version directory");
+        std::fs::write(
+            directory.join(format!("{id}.json")),
+            serde_json::to_vec(&json).expect("serialize"),
+        )
+        .expect("write version json");
+    }
+
+    #[test]
+    fn a_vanilla_directory_scans_into_one_version() {
+        let root = temporary("vanilla");
+        write_version(&root, "1.21.1", serde_json::json!({"id": "1.21.1"}));
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let found = scan(&paths, &root).expect("scan");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "1.21.1");
+        assert_eq!(found[0].game_version, "1.21.1");
+        assert_eq!(found[0].loader, LoaderKind::Vanilla);
+        assert_eq!(found[0].isolation, Isolation::Shared);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_loader_is_recognised_from_its_library_coordinates() {
+        let root = temporary("loader");
+        write_version(
+            &root,
+            "my-pack",
+            serde_json::json!({
+                "id": "my-pack",
+                "inheritsFrom": "1.20.1",
+                "libraries": [
+                    {"name": "net.minecraftforge:forge:1.20.1-47.2.0:universal"},
+                    {"name": "org.ow2.asm:asm:9.5"}
+                ]
+            }),
+        );
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let found = scan(&paths, &root).expect("scan");
+        assert_eq!(found[0].loader, LoaderKind::Forge);
+        assert_eq!(found[0].loader_version.as_deref(), Some("1.20.1-47.2.0"));
+        // 目录名是用户可以随手改的，版本要从 inheritsFrom 读。
+        assert_eq!(found[0].game_version, "1.20.1");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn version_isolation_is_detected_from_what_is_actually_there() {
+        let root = temporary("isolation");
+        write_version(&root, "1.21.1", serde_json::json!({"id": "1.21.1"}));
+        write_version(&root, "packed", serde_json::json!({"id": "packed"}));
+        // 共用布局的存档在根下。
+        std::fs::create_dir_all(root.join("saves/world")).expect("create shared saves");
+        std::fs::write(root.join("saves/world/level.dat"), b"x").expect("write level.dat");
+        // 版本隔离的那一个自己带着 saves。
+        std::fs::create_dir_all(root.join("versions/packed/saves/other")).expect("create saves");
+        std::fs::write(root.join("versions/packed/saves/other/level.dat"), b"x")
+            .expect("write level.dat");
+        // saves 下面的备份不是存档，不该被算进去。
+        std::fs::create_dir_all(root.join("saves/backups")).expect("create backups");
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let found = scan(&paths, &root).expect("scan");
+        let by_id = |id: &str| {
+            found
+                .iter()
+                .find(|item| item.id == id)
+                .expect("version")
+                .clone()
+        };
+        assert_eq!(by_id("1.21.1").isolation, Isolation::Shared);
+        assert_eq!(by_id("packed").isolation, Isolation::PerVersion);
+        // 存档数量按各自的游戏目录算。
+        assert_eq!(by_id("1.21.1").saves, 1);
+        assert_eq!(by_id("packed").saves, 1);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn attaching_copies_nothing_and_claims_the_version_once() {
+        let root = temporary("attach");
+        write_version(&root, "1.21.1", serde_json::json!({"id": "1.21.1"}));
+        std::fs::create_dir_all(root.join("saves/world")).expect("create saves");
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let profile = attach(&paths, &root, "1.21.1", true).expect("attach");
+        let external = profile.external.as_ref().expect("external");
+        assert_eq!(external.isolation, Isolation::Shared);
+        // 实例目录里不该长出一个 .minecraft：游戏文件在别人那边。
+        assert!(
+            !paths
+                .instance_root(profile.id.as_str())
+                .join(".minecraft")
+                .exists()
+        );
+        // 那边的存档一个都没动。
+        assert!(root.join("saves/world").is_dir());
+
+        // 添加过的版本再扫一次会被标出来，而且不能添加第二次。
+        let found = scan(&paths, &root).expect("rescan");
+        assert!(found[0].attached);
+        assert!(attach(&paths, &root, "1.21.1", true).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_directory_without_versions_is_refused_with_a_reason() {
+        let root = temporary("empty");
+        std::fs::create_dir_all(&root).expect("create root");
+        let paths = DataPaths::new(root.join("fern-data"));
+        let error = scan(&paths, &root).expect_err("not a game directory");
+        assert!(format!("{error}").contains("versions"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn version_ids_from_someone_elses_disk_still_pass_the_gate() {
+        // 目录名会被拼进路径。它来自别人的磁盘，和从网上拿到的字符串一样
+        // 不可信。
+        let root = temporary("unsafe");
+        std::fs::create_dir_all(root.join("versions")).expect("create versions");
+        let paths = DataPaths::new(root.join("fern-data"));
+        assert!(attach(&paths, &root, "../escape", true).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+}

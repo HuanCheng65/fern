@@ -6,6 +6,7 @@
 //! 只读——删存档、改服务器列表这种事交给文件管理器和游戏自己。
 
 pub(crate) mod catalog;
+pub(crate) mod external;
 pub(crate) mod mods;
 pub(crate) mod saves;
 pub(crate) mod servers;
@@ -13,6 +14,31 @@ pub(crate) mod servers;
 use std::{fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::DataPaths;
+
+/// 这个实例实际用的那套目录。
+///
+/// **每条会碰文件的链路都要从这里开始。** 私有实例拿到的就是那份全局布局；
+/// 外部实例拿到的是一份指向它自己那个 `.minecraft` 的副本，于是下游那三十
+/// 来个 `paths.versions` / `paths.game_directory(...)` 一个字都不用改。
+///
+/// 判断只发生一次，就在入口处——散在下游各处判断「这个实例是不是外部的」，
+/// 迟早会漏掉一处，而漏掉的那一处会把文件写进错误的目录。
+pub fn paths_for(paths: &DataPaths, profile: &InstanceProfile) -> DataPaths {
+    paths.scoped(
+        profile.external.as_ref(),
+        &crate::launch::version::effective_id(profile),
+    )
+}
+
+/// 只有 id 的调用方用这一个。读不到描述就退回全局布局。
+pub fn paths_by_id(paths: &DataPaths, instance_id: &str) -> DataPaths {
+    match crate::read_instance(paths, instance_id) {
+        Ok(profile) => paths_for(paths, &profile),
+        Err(_) => paths.clone(),
+    }
+}
 
 pub const INSTANCE_SCHEMA_VERSION: u32 = 1;
 
@@ -161,6 +187,13 @@ pub struct InstanceProfile {
     /// 哪怕这期间你用大号玩过别的。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
+    /// 这个实例的游戏文件不在 Fern 的目录里。
+    ///
+    /// 有值就意味着：**那些文件不归我们所有**。删掉这个实例只会删掉这一份
+    /// 描述，一个游戏文件都不动；复制它也没有意义——两个实例指着同一个游戏
+    /// 目录，等于两份存档互相覆盖。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<crate::data::ExternalGame>,
     /// 上次真的把游戏跑起来的时刻，Unix 秒。从没玩过就是 None。
     ///
     /// 曲库默认按它排序——「上次玩的那个」几乎总是「这次要玩的那个」。存
@@ -189,6 +222,7 @@ impl InstanceProfile {
                 growth: 0,
             },
             settings: InstanceSettings::default(),
+            external: None,
             last_played: None,
         }
     }

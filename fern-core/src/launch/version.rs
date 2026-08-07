@@ -121,6 +121,7 @@ mod tests {
             },
             settings: InstanceSettings::default(),
             account_id: None,
+            external: None,
             last_played: None,
         }
     }

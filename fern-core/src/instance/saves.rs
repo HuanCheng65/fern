@@ -58,7 +58,9 @@ fn tree_bytes(path: &Path) -> u64 {
 /// 几万个区块文件都 stat 一遍——那是详情页里「这个存档占多大」才需要付的
 /// 代价。二十个实例各走一遍的话，一次搜索要等好几秒。
 pub fn names(paths: &DataPaths, instance_id: &str) -> Vec<String> {
-    let root = paths.game_directory(instance_id).join("saves");
+    let root = crate::instance::paths_by_id(paths, instance_id)
+        .game_directory(instance_id)
+        .join("saves");
     let Ok(entries) = fs::read_dir(&root) else {
         return Vec::new();
     };
@@ -73,7 +75,9 @@ pub fn names(paths: &DataPaths, instance_id: &str) -> Vec<String> {
 ///
 /// `saves` 目录不存在是正常的——还没进过游戏的实例没有存档，这不是错误。
 pub fn list(paths: &DataPaths, instance_id: &str) -> Result<Vec<SaveEntry>> {
-    let root = paths.game_directory(instance_id).join("saves");
+    let root = crate::instance::paths_by_id(paths, instance_id)
+        .game_directory(instance_id)
+        .join("saves");
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),

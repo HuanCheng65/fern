@@ -180,9 +180,24 @@ fn app_name() -> &'static str {
 }
 
 #[tauri::command]
-fn data_paths() -> Result<fern_core::DataPaths, String> {
+fn data_paths() -> Result<DataLocation, String> {
     // 纯算路径，不碰磁盘，留在主线程上。
-    paths()
+    let paths = paths()?;
+    Ok(DataLocation {
+        portable: paths.is_portable(),
+        root: paths.root,
+        logs: paths.logs,
+    })
+}
+
+/// 设置里「数据」那一节要说的话。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DataLocation {
+    root: std::path::PathBuf,
+    logs: std::path::PathBuf,
+    /// 数据根跟着可执行文件走。旁边有 `.minecraft` 或便携标记时就是这样。
+    portable: bool,
 }
 
 /// 把一段同步的活挪出主线程。
@@ -210,7 +225,9 @@ where
 
 /// 拿到数据目录，顺带把错误变成界面能显示的字符串。
 fn paths() -> Result<fern_core::DataPaths, String> {
-    fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())
+    // 可执行文件旁边有 `.minecraft` 或便携标记时跟着它走，否则用平台的用户
+    // 数据目录。整个应用只在这一个函数里回答「数据根在哪」。
+    fern_core::DataPaths::resolve().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -313,7 +330,11 @@ async fn detect_java() -> Option<fern_core::JavaRuntime> {
 async fn open_instance_directory(instance_id: String, sub: Option<String>) -> Result<(), String> {
     off_thread(move || {
         let id = fern_core::InstanceId::parse(instance_id).map_err(|error| error.to_string())?;
-        let mut directory = paths()?.game_directory(id.as_str());
+        let paths = paths()?;
+        // 外部实例的游戏目录在别人的目录树下，按 id 推导会打开一个空目录。
+        let profile = fern_core::read_instance(&paths, id.as_str())
+            .map_err(|error| format!("{error:#}"))?;
+        let mut directory = fern_core::instance_paths(&paths, &profile).game_directory(id.as_str());
         if let Some(sub) = sub.filter(|sub| !sub.is_empty()) {
             // 子目录名来自界面，不能原样拼。
             if sub.contains(['/', '\\']) || sub.contains("..") {
@@ -562,6 +583,42 @@ async fn install_from_modrinth(
         .map_err(|error| format!("{error:#}"));
     job.finish(&result);
     result
+}
+
+/// 可执行文件旁边有没有一个现成的 `.minecraft`。首次启动时问一句用的。
+#[tauri::command]
+fn nearby_game_directory() -> Option<std::path::PathBuf> {
+    // 只看一层目录是否存在，留在主线程上。
+    fern_core::nearby_game_directory()
+}
+
+/// 看一眼一个外部 `.minecraft` 里有哪些版本。什么都不改。
+#[tauri::command]
+async fn scan_game_directory(path: String) -> Result<Vec<fern_core::ExternalVersion>, String> {
+    off_thread(move || {
+        fern_core::scan_external_directory(&paths()?, std::path::Path::new(&path))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 把其中一个版本添加为实例。不移动、不复制任何游戏文件。
+#[tauri::command]
+async fn attach_game_version(
+    path: String,
+    version_id: String,
+    shared_libraries: bool,
+) -> Result<fern_core::InstanceProfile, String> {
+    off_thread(move || {
+        fern_core::attach_external_version(
+            &paths()?,
+            std::path::Path::new(&path),
+            &version_id,
+            shared_libraries,
+        )
+        .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 从 Modrinth 装一个整合包。它建的是一个**新实例**，不是装进已有的实例。
@@ -947,6 +1004,7 @@ async fn remove_java_runtime(home: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(PearlSessions::default())
         .setup(|app| {
             #[cfg(not(target_os = "macos"))]
@@ -992,6 +1050,9 @@ pub fn run() {
             search_resources,
             project_detail,
             open_external,
+            nearby_game_directory,
+            scan_game_directory,
+            attach_game_version,
             install_modpack,
             inspect_modpack,
             import_modpack,

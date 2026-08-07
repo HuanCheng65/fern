@@ -36,6 +36,11 @@ r=set(re.findall(r'^\s{12}(\w+),?\$', s, re.M))
 print('没注册:', sorted(c-r), '| 没定义:', sorted(r-c))"
 ```
 
+**Tauri 插件要在四个地方出现：** `src-tauri/Cargo.toml` 的依赖、`run()` 里的
+`.plugin(...)`、`capabilities/default.json` 的权限项、以及前端的 npm 包。少了
+第三个不会有编译错误，只会在运行时报「not allowed」。目前只用了
+`tauri-plugin-dialog`，而且只授予 `dialog:allow-open`。
+
 **`[target.'cfg(...)'.dependencies]` 段的位置。** 它会把**它后面所有**的依赖行
 一起圈进去。往 `[dependencies]` 中间插一个这种段，后面的依赖就全变成平台专属
 的——本平台照常编译，另一个平台上「unresolved import」刷屏。这事真发生过。

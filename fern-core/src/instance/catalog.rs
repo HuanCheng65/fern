@@ -163,7 +163,7 @@ pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<Instance
     let declared = read_prepared_metadata(paths, &profile.game_version)
         .and_then(|metadata| metadata.java_version.map(|version| version.major_version));
     let requirement = crate::java_requirement(&profile.game_version, profile.loader, declared);
-    let game_directory = paths.game_directory(instance_id);
+    let game_directory = crate::instance::paths_for(paths, &profile).game_directory(instance_id);
     let mods = crate::mods_profile(&game_directory);
     let physical = crate::physical_memory_bytes();
     let defaults = crate::current_settings().game;
@@ -256,6 +256,8 @@ pub fn delete_instance(paths: &DataPaths, instance_id: &str) -> Result<()> {
         return Err(anyhow!("{} 不在实例目录内", target.display()));
     }
 
+    // 删的是实例目录。外部实例的实例目录里只有一份 instance.json，游戏文件
+    // 在别人的目录树下——**一个都不碰**。那些文件不归我们所有。
     fs::remove_dir_all(&target).with_context(|| format!("删除 {}", target.display()))?;
     // 日志在另一棵树下，一起清掉，否则重名的新实例会捡到旧日志。
     let logs = paths.instance_log_directory(id.as_str());
@@ -298,6 +300,15 @@ pub fn duplicate_instance(
     name: &str,
 ) -> Result<InstanceProfile> {
     let source = read_instance(paths, instance_id)?;
+    // 外部实例复制不了：两个实例指着同一个游戏目录，等于两份存档互相覆盖。
+    // 而把别人的目录整个复制一份到我们这里，是一个几十 G 的、用户没要求过的
+    // 动作。说不行比默默做错好。
+    if source.external.is_some() {
+        return Err(anyhow!(
+            "{} 的游戏文件在 Fern 之外，复制它会让两个实例共用同一份存档",
+            source.name
+        ));
+    }
     let mut copy = create_instance_with_loader(
         paths,
         name,
@@ -441,7 +452,7 @@ const ID_LENGTH: usize = 10;
 ///
 /// 那就干脆不可读。找哪个文件夹是哪个实例，走详情页的「游戏目录」，概览里也
 /// 把 id 摆着可以复制。
-fn allocate_id(paths: &DataPaths) -> Result<String> {
+pub(crate) fn allocate_id(paths: &DataPaths) -> Result<String> {
     for _ in 0..64 {
         let candidate = token()?;
         if !paths.instance_root(&candidate).exists() {

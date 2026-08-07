@@ -132,6 +132,13 @@ export const SETTINGS_ROWS: SettingsRow[] = [
 
   { id: 'data/root', label: '数据目录', keywords: 'data directory 路径 目录', stack: true },
   { id: 'data/logs', label: '日志目录', keywords: 'log directory 日志', stack: true },
+  {
+    id: 'data/existing',
+    label: '现有游戏目录',
+    note: '把已有的 .minecraft 中的版本添加为实例。游戏文件保留在原位置。',
+    keywords: 'minecraft import existing directory 导入 现有 目录 便携',
+    stack: true,
+  },
 
   { id: 'about/version', label: '版本', keywords: 'version about 关于' },
 ]

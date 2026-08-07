@@ -14,6 +14,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { fly } from 'svelte/transition'
   import { ArrowLeft, ArrowRight, Check, Plus } from 'lucide-svelte'
+  import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import Mark from '../components/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource, type DownloadSource } from '../lib/prefs.svelte'
@@ -27,7 +28,7 @@
 
   let { ondone }: Props = $props()
 
-  type StepId = 'welcome' | 'account' | 'source' | 'java' | 'done'
+  type StepId = 'welcome' | 'account' | 'source' | 'java' | 'existing' | 'done'
 
   let index = $state(0)
   let direction = $state(1)
@@ -41,6 +42,15 @@
   const recommended = suggestedSource()
   const sourceName = { official: '官方源', bmclapi: 'BMCLAPI' } as const
 
+  /**
+   * 可执行文件旁边那个 `.minecraft`。
+   *
+   * 把启动器和游戏放在一起是最常见的用法，那种情况下用户期待它自己发现，
+   * 而不是自己去设置里找一个路径。找不到就没有这一屏——和 Java 那一屏一样，
+   * 是条件分支，不是固定步骤。
+   */
+  let nearby = $state('')
+
   /** unknown：还没查过。missing：查过了，系统里没有可用的 Java。 */
   let java = $state<'unknown' | 'ok' | 'missing'>('unknown')
   let javaChecking = $state(false)
@@ -51,6 +61,7 @@
     'account',
     'source',
     ...(java === 'missing' ? (['java'] as StepId[]) : []),
+    ...(nearby ? (['existing'] as StepId[]) : []),
     'done',
   ])
   const step = $derived(steps[Math.min(index, steps.length - 1)]!)
@@ -110,7 +121,17 @@
 
   function submitSource() {
     prefs.setDownloadSource(source)
-    void checkJava().then(() => go(1))
+    void Promise.all([checkJava(), findNearby()]).then(() => go(1))
+  }
+
+  /** 旁边有没有一个现成的游戏目录。查不到就当没有，不多一屏。 */
+  async function findNearby() {
+    if (!inTauri()) return
+    try {
+      nearby = (await invoke<string | null>('nearby_game_directory')) ?? ''
+    } catch {
+      nearby = ''
+    }
   }
 
   function finish(create: boolean) {
@@ -241,6 +262,18 @@
           </button>
           <button class="btn btn--primary" onclick={() => go(1)}>稍后处理<ArrowRight size={15} /></button>
         </div>
+      {:else if step === 'existing'}
+        <h1 class="title">发现了一个游戏目录。</h1>
+        <p class="lede">
+          Fern 旁边有一个 .minecraft 目录。可以直接把其中的版本添加为实例，游戏文件保留在原位置。
+        </p>
+        <div class="found">
+          <AdoptDirectory initial={nearby} />
+        </div>
+        <div class="actions">
+          <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
+          <button class="btn btn--primary" onclick={() => go(1)}>继续<ArrowRight size={15} /></button>
+        </div>
       {:else}
         <h1 class="title">准备好了。</h1>
         <p class="lede">去创建你的第一个实例吧。</p>
@@ -294,6 +327,14 @@
     font-size: var(--t-h2);
     font-weight: 650;
     letter-spacing: -0.015em;
+  }
+
+  /* 这一屏比别的屏内容多，给它一个自己的滚动区，不撑破居中的版心。 */
+  .found {
+    width: 100%;
+    max-height: 46vh;
+    margin: var(--s4) 0;
+    overflow-y: auto;
   }
 
   .hero {

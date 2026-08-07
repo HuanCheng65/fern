@@ -68,8 +68,28 @@ pub async fn prepare_instance(
 ) -> Result<PrepareResult> {
     paths.ensure_exists()?;
     let mut profile = crate::read_instance(paths, instance_id)?;
+    // 外部实例的文件补到它自己的目录里去。这一句要在最前面：它之后的每一个
+    // `paths` 都是这个实例的那一套，而不是全局那一套。
+    let scoped = crate::instance::paths_for(paths, &profile);
+    let paths = &scoped;
+    // 外部实例的加载器是别的启动器装好的，那份版本描述已经在磁盘上。再装一遍
+    // 会按我们探到的版本号去上游取**另一份**，往用户的目录里塞一个他没要的
+    // 版本；而探测本来就可能探不出版本号（老 Forge 的库坐标形状不一样）。
+    let loader_ready = profile.external.is_some()
+        && profile
+            .loader_profile
+            .as_ref()
+            .map(|loader| loader.version_id.clone())
+            .filter(|id| !id.is_empty())
+            .is_some_and(|id| {
+                paths
+                    .versions
+                    .join(&id)
+                    .join(format!("{id}.json"))
+                    .is_file()
+            });
     // 原版没有加载器要装，那一步就不该出现在分母里。
-    let needs_loader = profile.loader != crate::LoaderKind::Vanilla;
+    let needs_loader = profile.loader != crate::LoaderKind::Vanilla && !loader_ready;
     job.expect(if needs_loader { 4 } else { 3 });
 
     let events = &job.downloads();
