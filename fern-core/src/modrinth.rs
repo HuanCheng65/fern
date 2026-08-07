@@ -32,11 +32,10 @@ const USER_AGENT: &str = concat!(
 /// 上游数据里出现环让我们一直转下去。
 const MAX_DEPTH: usize = 6;
 
-/// 补给站能装的东西。
+/// 补给站能找的东西。
 ///
-/// 只列这三种，因为只有这三种是「下一个文件放进一个目录」就完事的。整合包要
-/// 建实例、数据包要选存档、插件是服务端的事——把它们摆在类型筛选里，等于给
-/// 一个点了会失败的按钮。
+/// 数据包要选存档、插件是服务端的事，所以不在这里——把它们摆进类型筛选，
+/// 等于给一个点了会失败的按钮。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceKind {
@@ -44,6 +43,8 @@ pub enum ResourceKind {
     Mod,
     ResourcePack,
     Shader,
+    /// 整合包是个例外：它不是「装进某个实例」，而是**建一个新实例**。
+    Modpack,
 }
 
 impl ResourceKind {
@@ -53,28 +54,30 @@ impl ResourceKind {
             Self::Mod => "mod",
             Self::ResourcePack => "resourcepack",
             Self::Shader => "shader",
+            Self::Modpack => "modpack",
         }
     }
 
-    /// 文件落到游戏目录下的哪里。
-    pub fn directory(self) -> &'static str {
+    /// 文件落到游戏目录下的哪里。整合包没有这个答案——它自带一整个目录树。
+    pub fn directory(self) -> Option<&'static str> {
         match self {
-            Self::Mod => "mods",
-            Self::ResourcePack => "resourcepacks",
-            Self::Shader => "shaderpacks",
+            Self::Mod => Some("mods"),
+            Self::ResourcePack => Some("resourcepacks"),
+            Self::Shader => Some("shaderpacks"),
+            Self::Modpack => None,
         }
     }
 
-    /// 只有模组有依赖图。资源包和光影是自足的文件，去解析它们的 dependencies
-    /// 只会把一堆无关的东西拖下来。
+    /// 只有模组有依赖图。资源包和光影是自足的文件，整合包的依赖写在它自己的
+    /// index 里，去解析这里的 dependencies 只会把一堆无关的东西拖下来。
     fn has_dependencies(self) -> bool {
         matches!(self, Self::Mod)
     }
 
-    /// 加载器标签只对模组成立。资源包在 Modrinth 上的 loader 是 `minecraft`，
-    /// 光影是 `iris`/`optifine`——拿 fabric 去筛它们会得到空列表。
+    /// 加载器标签只对模组和整合包成立。资源包在 Modrinth 上的 loader 是
+    /// `minecraft`，光影是 `iris`/`optifine`——拿 fabric 去筛会得到空列表。
     fn honours_loader(self) -> bool {
-        matches!(self, Self::Mod)
+        matches!(self, Self::Mod | Self::Modpack)
     }
 }
 
@@ -579,6 +582,28 @@ fn describe(raw: RawVersion) -> ProjectVersion {
     }
 }
 
+/// 把一个版本的主文件下到指定位置，返回落盘的路径。
+///
+/// 整合包要先把 `.mrpack` 拿到手才能读里面的 index，所以它走这一条而不是
+/// `install`——那一条的前提是「文件放进某个实例的某个目录」。
+pub async fn fetch_primary_file(
+    version_id: &str,
+    directory: &std::path::Path,
+    events: &UnboundedSender<DownloadEvent>,
+) -> Result<std::path::PathBuf> {
+    let version: RawVersion = get(&format!("{API}/version/{version_id}")).await?;
+    let file = version
+        .primary_file()
+        .ok_or_else(|| anyhow!("{} 这个版本没有可下载的文件", version.name))?;
+    tokio::fs::create_dir_all(directory).await?;
+    let destination = fern_download::safe_join(directory, std::path::Path::new(&file.filename))?;
+    let task = DownloadTask::new(destination.clone(), &file.url, &file.hashes.sha1, file.size)?;
+    DownloadClient::new(crate::settings::source_order(), 4)
+        .download_all(vec![task], events)
+        .await?;
+    Ok(destination)
+}
+
 /// 装一个版本，连同它的必需依赖。
 ///
 /// 依赖多半只给 `project_id`，得自己去挑一个兼容版本；少数会指定
@@ -598,7 +623,10 @@ pub async fn install(
     let game_version = profile.game_version.as_str();
     let loader = profile.loader;
 
-    let directory = paths.game_directory(instance_id).join(kind.directory());
+    let subdirectory = kind
+        .directory()
+        .ok_or_else(|| anyhow!("整合包要用来新建实例，不能装进已有的实例"))?;
+    let directory = paths.game_directory(instance_id).join(subdirectory);
     tokio::fs::create_dir_all(&directory).await?;
 
     let mut seen_projects = HashSet::new();
@@ -779,9 +807,14 @@ mod tests {
 
     #[test]
     fn resource_kinds_land_in_the_directory_the_game_reads() {
-        assert_eq!(ResourceKind::Mod.directory(), "mods");
-        assert_eq!(ResourceKind::ResourcePack.directory(), "resourcepacks");
-        assert_eq!(ResourceKind::Shader.directory(), "shaderpacks");
+        assert_eq!(ResourceKind::Mod.directory(), Some("mods"));
+        assert_eq!(
+            ResourceKind::ResourcePack.directory(),
+            Some("resourcepacks")
+        );
+        assert_eq!(ResourceKind::Shader.directory(), Some("shaderpacks"));
+        // 整合包没有「放进哪个目录」这个答案，它自带一整棵树。
+        assert_eq!(ResourceKind::Modpack.directory(), None);
         // 加载器筛选只对模组成立：资源包的 loader 是 minecraft，光影是 iris。
         assert!(ResourceKind::Mod.honours_loader());
         assert!(!ResourceKind::ResourcePack.honours_loader());

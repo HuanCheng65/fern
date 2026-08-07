@@ -15,7 +15,9 @@
    * 命令面板一致——同一个交互模型在启动器里只学一次。
    */
   import { invoke } from '@tauri-apps/api/core'
-  import { Check, Plus } from 'lucide-svelte'
+  import { getCurrentWebview } from '@tauri-apps/api/webview'
+  import { onMount } from 'svelte'
+  import { Check, Package, Plus } from 'lucide-svelte'
   import Choice from '../components/Choice.svelte'
   import Loading from '../components/Loading.svelte'
   import { instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
@@ -42,6 +44,19 @@
   let choosingLoaderVersion = $state(false)
   let busy = $state(false)
   let error = $state('')
+
+  /** 拖进来的整合包。看过一眼之后才装——先说清里面是什么。 */
+  interface PackSummary {
+    name: string
+    version: string
+    summary: string
+    gameVersion: string
+    loader: string
+    loaderVersion: string
+    files: number
+  }
+  let pack = $state<{ path: string; summary: PackSummary } | null>(null)
+  let dropping = $state(false)
 
   const shown = $derived(
     instances.versions
@@ -113,6 +128,63 @@
     }
   }
 
+  /**
+   * 整合包走的是另一条路：它自带游戏版本和加载器，装它就是建一个实例，
+   * 所以这一页上面那些选择在它面前全部作废——直接换成一张说明卡。
+   */
+  async function inspect(paths: string[]) {
+    const file = paths.find((path) => path.toLowerCase().endsWith('.mrpack'))
+    if (!file) {
+      error = '只能导入 .mrpack 整合包'
+      return
+    }
+    try {
+      pack = { path: file, summary: await invoke<PackSummary>('inspect_modpack', { path: file }) }
+      error = ''
+    } catch (cause) {
+      error = String(cause)
+    }
+  }
+
+  async function importPack() {
+    if (!pack) return
+    busy = true
+    error = ''
+    try {
+      const created = await invoke<{ id: string }>('import_modpack', {
+        path: pack.path,
+        name: name.trim() || null,
+      })
+      await instances.load()
+      instances.select(created.id)
+      nav.open(created.id)
+    } catch (cause) {
+      error = String(cause)
+    } finally {
+      busy = false
+    }
+  }
+
+  // 整合包一读出来就把名字换成它的，除非用户已经自己写过。
+  $effect(() => {
+    if (pack && !named) name = pack.summary.name
+  })
+
+  onMount(() => {
+    if (!inTauri()) return
+    let stop: (() => void) | undefined
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type === 'over') dropping = true
+        else if (event.payload.type === 'drop') {
+          dropping = false
+          void inspect(event.payload.paths)
+        } else dropping = false
+      })
+      .then((unlisten) => (stop = unlisten))
+    return () => stop?.()
+  })
+
   void instances.loadVersions()
   if (inTauri()) {
     void instances.loadLoaders().then((list) => {
@@ -121,12 +193,35 @@
   }
 </script>
 
-<section class="create">
+<section class="create" class:dropping>
   <header>
     <h1 class="t-h1">新建实例</h1>
-    <p class="t-quiet">选择版本与加载器。文件在第一次启动时补全。</p>
+    <p class="t-quiet">
+      {pack ? '整合包自带版本与加载器。' : '选择版本与加载器，或把 .mrpack 拖进窗口。'}
+    </p>
   </header>
 
+  {#if pack}
+    <div class="pack">
+      <span class="badge"><Package size={16} strokeWidth={1.8} /></span>
+      <div class="pack-text">
+        <strong>{pack.summary.name}</strong>
+        {#if pack.summary.version}<small class="t-mono">{pack.summary.version}</small>{/if}
+        {#if pack.summary.summary}<p class="t-quiet">{pack.summary.summary}</p>{/if}
+        <p class="t-mono t-quiet">
+          Minecraft {pack.summary.gameVersion}
+          {#if pack.summary.loaderVersion}· {pack.summary.loader} {pack.summary.loaderVersion}{/if}
+          · {pack.summary.files} 个文件
+        </p>
+      </div>
+      <button class="btn btn--link" onclick={() => (pack = null)}>换一个</button>
+    </div>
+
+    <div class="field pack-name">
+      <label for="pack-name">名称</label>
+      <input id="pack-name" class="input" bind:value={name} maxlength="64" oninput={() => (named = true)} />
+    </div>
+  {:else}
   <div class="columns">
     <div class="side">
       <div class="field">
@@ -239,14 +334,21 @@
       </div>
     </div>
   </div>
+  {/if}
 
   {#if error}<div class="alert">{error}</div>{/if}
 
   <footer>
     <button class="btn" onclick={() => nav.back()}>取消</button>
-    <button class="btn btn--primary" disabled={busy} onclick={() => void submit()}>
-      <Plus size={15} />{busy ? '创建中' : '创建实例'}
-    </button>
+    {#if pack}
+      <button class="btn btn--primary" disabled={busy} onclick={() => void importPack()}>
+        <Plus size={15} />{busy ? '导入中' : '导入整合包'}
+      </button>
+    {:else}
+      <button class="btn btn--primary" disabled={busy} onclick={() => void submit()}>
+        <Plus size={15} />{busy ? '创建中' : '创建实例'}
+      </button>
+    {/if}
   </footer>
 </section>
 
@@ -256,6 +358,61 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    border-radius: var(--r2);
+    transition: background var(--t-fast) var(--ease);
+  }
+
+  /* 拖到窗口上时整块亮一下，说明这里接得住。 */
+  .create.dropping {
+    background: var(--accent-soft);
+  }
+
+  .pack {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s3);
+    padding: var(--s4);
+    border-radius: var(--r2);
+    background: var(--tint-1);
+  }
+
+  .badge {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    flex: none;
+    border-radius: var(--r1);
+    background: var(--tint-2);
+    color: var(--accent);
+  }
+
+  .pack-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .pack-text strong {
+    color: var(--ink);
+    font-size: var(--t-body);
+    font-weight: 500;
+  }
+
+  .pack-text small {
+    margin-left: var(--s2);
+    color: var(--ink-4);
+    font-size: var(--t-micro);
+  }
+
+  .pack-text p {
+    margin: var(--s2) 0 0;
+    font-size: var(--t-small);
+    overflow-wrap: anywhere;
+  }
+
+  .pack-name {
+    max-width: 360px;
+    margin-top: var(--s5);
   }
 
   header {

@@ -123,7 +123,7 @@
       />
 
       <!-- 资源包和光影没有加载器这个概念，摆一组选了没用的选项是噪音。 -->
-      {#if supply.kind === 'mod'}
+      {#if supply.kind === 'mod' || supply.kind === 'modpack'}
         <FilterGroup
           label="加载器"
           value={supply.loader}

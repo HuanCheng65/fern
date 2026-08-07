@@ -14,7 +14,7 @@
    * 不值得为一段介绍开这个口。正文交给「在 Modrinth 打开」。
    */
   import { invoke } from '@tauri-apps/api/core'
-  import { ArrowUpRight, Check, Download } from 'lucide-svelte'
+  import { ArrowUpRight, Check, Download, Plus } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
   import Loading from '../components/Loading.svelte'
   import Detail from '../layouts/Detail.svelte'
@@ -59,8 +59,15 @@
       ? 'resource_pack'
       : detail?.projectType === 'shader'
         ? 'shader'
-        : 'mod',
+        : detail?.projectType === 'modpack'
+          ? 'modpack'
+          : 'mod',
   )
+  /**
+   * 整合包是另一条路径：它自带游戏版本和加载器，装它就是**建一个新实例**。
+   * 往一个已有实例上盖只会得到一个谁也说不清是什么的混合体。
+   */
+  const isPack = $derived(kind === 'modpack')
 
   const judged = $derived(
     versions.map((version) => ({ version, fit: compatibility(version, target, kind) })),
@@ -95,10 +102,21 @@
   }
 
   async function install(version: ProjectVersion) {
-    if (!target) return
     installing = version.id
     error = ''
     try {
+      if (isPack) {
+        const created = await invoke<{ id: string; name: string }>('install_modpack', {
+          versionId: version.id,
+          name: detail?.title ?? null,
+        })
+        await instances.load()
+        instances.select(created.id)
+        // 建完直接去看它，而不是留在这一页让人自己找。
+        nav.enter('instances', created.id)
+        return
+      }
+      if (!target) return
       installed = await invoke<string[]>('install_from_modrinth', {
         instanceId: target.id,
         versionId: version.id,
@@ -150,16 +168,20 @@
 
     {#if tab === 'versions'}
       <div class="v-head">
-        <span class="t-quiet">{fitting.length} 个版本可以装进</span>
-        <!-- 装到哪，在这一页也能改。 -->
-        {#if instances.list.length > 0}
-          <select class="select" bind:value={supply.targetId}>
-            {#each instances.recent as item (item.id)}
-              <option value={item.id}>{item.name} · {item.gameVersion} · {item.loader}</option>
-            {/each}
-          </select>
+        {#if isPack}
+          <span class="t-quiet">选一个版本，它会建成一个新实例</span>
         {:else}
-          <span class="t-quiet">还没有实例，创建一个才能安装</span>
+          <span class="t-quiet">{fitting.length} 个版本可以装进</span>
+          <!-- 装到哪，在这一页也能改。 -->
+          {#if instances.list.length > 0}
+            <select class="select" bind:value={supply.targetId}>
+              {#each instances.recent as item (item.id)}
+                <option value={item.id}>{item.name} · {item.gameVersion} · {item.loader}</option>
+              {/each}
+            </select>
+          {:else}
+            <span class="t-quiet">还没有实例，创建一个才能安装</span>
+          {/if}
         {/if}
       </div>
 
@@ -193,12 +215,14 @@
               </span>
               <button
                 class="btn btn--ghost"
-                disabled={!target || !fit.ok || installing !== ''}
-                title={fit.ok ? '安装' : fit.note}
+                disabled={(!isPack && !target) || !fit.ok || installing !== ''}
+                title={fit.ok ? (isPack ? '建成新实例' : '安装') : fit.note}
                 onclick={() => void install(version)}
               >
                 {#if installing === version.id}
-                  安装中
+                  {isPack ? '创建中' : '安装中'}
+                {:else if isPack}
+                  <Plus size={14} strokeWidth={2} />创建实例
                 {:else}
                   <Download size={14} strokeWidth={1.9} />安装
                 {/if}
@@ -207,7 +231,7 @@
           {/each}
         </ul>
 
-        {#if fitting.length === 0 && !showAll}
+        {#if fitting.length === 0 && !showAll && !isPack}
           <p class="t-quiet">没有适用于这个实例的版本。</p>
         {/if}
         {#if judged.length > shown.length || showAll}

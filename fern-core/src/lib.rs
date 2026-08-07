@@ -17,6 +17,7 @@ mod java;
 mod launch;
 mod loader;
 mod microsoft;
+mod modpack;
 mod modrinth;
 mod mods;
 mod prepare;
@@ -67,6 +68,10 @@ pub use loader::{
 pub use microsoft::{
     DeviceCodeChallenge, MicrosoftSession, begin_login as begin_microsoft_login,
     ensure_fresh as refresh_microsoft_session, finish_login as finish_microsoft_login,
+};
+pub use modpack::{
+    PackSummary, inspect as inspect_modpack, install as install_modpack,
+    install_from_modrinth as install_modpack_from_modrinth,
 };
 pub use modrinth::{
     GalleryImage, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind, SearchHit, SearchQuery,

@@ -264,6 +264,56 @@ async fn install_from_modrinth(
         .map_err(|error| format!("{error:#}"))
 }
 
+/// 从 Modrinth 装一个整合包。它建的是一个**新实例**，不是装进已有的实例。
+#[tauri::command]
+async fn install_modpack(
+    app: tauri::AppHandle,
+    version_id: String,
+    name: Option<String>,
+) -> Result<fern_core::InstanceProfile, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let events = launcher_events(&app);
+    let downloads = fern_core::download_bridge(&events);
+    let result = fern_core::install_modpack_from_modrinth(
+        &paths,
+        &version_id,
+        name.as_deref().filter(|value| !value.is_empty()),
+        &downloads,
+    )
+    .await
+    .map_err(|error| format!("{error:#}"));
+    if let Err(error) = &result {
+        let _ = paths.append_log(&format!("[modpack] version={version_id} error={error}"));
+    }
+    result
+}
+
+/// 先看一眼本地这个 .mrpack 里是什么，不动磁盘。
+#[tauri::command]
+fn inspect_modpack(path: String) -> Result<fern_core::PackSummary, String> {
+    fern_core::inspect_modpack(std::path::Path::new(&path)).map_err(|error| format!("{error:#}"))
+}
+
+/// 导入一个本地的 .mrpack。
+#[tauri::command]
+async fn import_modpack(
+    app: tauri::AppHandle,
+    path: String,
+    name: Option<String>,
+) -> Result<fern_core::InstanceProfile, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let events = launcher_events(&app);
+    let downloads = fern_core::download_bridge(&events);
+    fern_core::install_modpack(
+        &paths,
+        std::path::Path::new(&path),
+        name.as_deref().filter(|value| !value.is_empty()),
+        &downloads,
+    )
+    .await
+    .map_err(|error| format!("{error:#}"))
+}
+
 /// 用系统浏览器打开一个链接。
 ///
 /// 详情页上的链接是 Modrinth 给的字符串，会被原样递给系统的打开程序，所以
@@ -491,6 +541,9 @@ pub fn run() {
             search_resources,
             project_detail,
             open_external,
+            install_modpack,
+            inspect_modpack,
+            import_modpack,
             project_versions,
             install_from_modrinth,
             list_mods,

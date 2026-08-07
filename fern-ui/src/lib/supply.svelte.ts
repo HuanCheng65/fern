@@ -14,11 +14,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { inTauri, instances } from './instances.svelte'
 
-/** 只有这三种是「下一个文件放进一个目录」就完事的，所以只做这三种。 */
-export type ResourceKind = 'mod' | 'resource_pack' | 'shader'
+/** 数据包要选存档、插件是服务端的事，所以不做——摆上去就是点了会失败的按钮。 */
+export type ResourceKind = 'mod' | 'resource_pack' | 'shader' | 'modpack'
 
 export const KINDS: { id: ResourceKind; label: string }[] = [
   { id: 'mod', label: '模组' },
+  { id: 'modpack', label: '整合包' },
   { id: 'resource_pack', label: '资源包' },
   { id: 'shader', label: '光影' },
 ]
@@ -105,6 +106,8 @@ export function compatibility(
   target: { gameVersion: string; loader: string } | undefined,
   kind: ResourceKind,
 ): { ok: boolean; note: string } {
+  // 整合包自带版本和加载器，它建的是新实例——没有「装不装得上」这个问题。
+  if (kind === 'modpack') return { ok: true, note: '' }
   if (!target) return { ok: true, note: '' }
   if (!version.gameVersions.includes(target.gameVersion)) {
     return { ok: false, note: `不支持 ${target.gameVersion}` }
