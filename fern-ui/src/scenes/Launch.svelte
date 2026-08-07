@@ -34,7 +34,9 @@
    */
   const job = $derived(current ? jobs.forSubject(current.id) : undefined)
   const done = $derived(job ? fraction(job) : undefined)
-  const working = $derived(launch.busy || job !== undefined)
+  /** 这个实例现在跑到哪一段了。undefined 是没在跑。 */
+  const phase = $derived(current ? launch.phaseOf(current.id) : undefined)
+  const working = $derived(phase === 'preparing' || job !== undefined)
 </script>
 
 <Stage>
@@ -53,7 +55,7 @@
           class="btn btn--primary go"
           class:busy={working}
           onclick={() => void launch.launch(current.id)}
-          disabled={working || launch.running}
+          disabled={phase !== undefined || job !== undefined}
         >
           <span
             class="fill"
@@ -61,8 +63,10 @@
             style:width={done === undefined ? '100%' : `${done * 100}%`}
           ></span>
           <span class="go-text">
-            {#if launch.running}
+            {#if phase === 'running'}
               游戏运行中
+            {:else if phase === 'starting'}
+              正在启动
             {:else if job}
               {job.stage || job.title}
             {:else if working}
@@ -72,6 +76,16 @@
             {/if}
           </span>
         </button>
+
+        <!--
+          结束只在游戏真的起来之后出现，而且说的是「强制」：这是 kill，没存
+          的进度会丢。它存在的理由是游戏已经不响应了。
+        -->
+        {#if phase === 'running' || phase === 'starting'}
+          <button class="btn btn--ghost" onclick={() => void launch.stop(current.id)}>
+            强制结束
+          </button>
+        {/if}
 
         <!-- 用谁的身份，就站在启动键旁边——那是它唯一真正重要的时刻。 -->
         <AccountChip instanceId={current.id} />

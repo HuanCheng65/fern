@@ -480,6 +480,22 @@ struct Places {
     servers: Vec<PlaceEntry>,
 }
 
+/// 现在有哪些游戏在跑。
+///
+/// 界面每次回到前台都要问一次：进程可能在启动器不知情的时候没了（用户自己
+/// 关的、崩了、被系统收走），只靠事件会留下一个永远「运行中」的按钮。
+#[tauri::command]
+fn running_games() -> Vec<fern_core::RunningGame> {
+    // 读一张内存里的表，不碰磁盘，留在主线程上。
+    fern_core::running_games()
+}
+
+/// 强行结束一个游戏。没存的进度会丢，这句话要由界面说出来。
+#[tauri::command]
+fn stop_game(instance_id: String) -> Result<(), String> {
+    fern_core::stop_game(&instance_id).map_err(|error| format!("{error:#}"))
+}
+
 /// 启动。
 ///
 /// `world` / `server` 是「直接进去」：前者是存档目录名，后者是服务器地址。
@@ -1007,6 +1023,19 @@ async fn remove_java_runtime(home: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 必须是第一个插件（官方文档的要求），否则第二个进程会先把窗口建出来
+        // 再退出，屏幕上闪一下。
+        //
+        // 两个 Fern 同时跑会各写各的 settings.json、accounts.json 和实例描述，
+        // 后写的那一份赢，另一边的改动无声消失。所以第二次双击不是「再开一个」，
+        // 而是把已经开着的那个叫到前面来。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(PearlSessions::default())
         .setup(|app| {
@@ -1077,6 +1106,8 @@ pub fn run() {
             open_logs_directory,
             prepare_instance,
             launch_instance,
+            running_games,
+            stop_game,
             list_places,
             pearl_host,
             pearl_join,

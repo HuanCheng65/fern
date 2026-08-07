@@ -16,6 +16,7 @@ pub(crate) mod loader;
 pub(crate) mod memory;
 pub(crate) mod prepare;
 pub(crate) mod rules;
+pub(crate) mod running;
 pub(crate) mod version;
 
 use std::{
@@ -187,6 +188,20 @@ pub async fn launch_instance(
     // `paths` 都是这个实例的那一套。
     let scoped = crate::instance::paths_for(paths, &profile);
     let paths = &scoped;
+    // 同一份游戏目录跑两个进程，两边写同一批存档，而且没有任何报错。挡在最
+    // 前面：后面那几步可能要几分钟，让人等完再说「不能启动」是最差的顺序。
+    if let Some(occupant) = running::occupant(&paths.game_directory(instance_id)) {
+        return Err(if occupant == instance_id {
+            anyhow!("这个实例已经在运行")
+        } else {
+            anyhow!(
+                "{} 正在使用同一个游戏目录，先结束它",
+                crate::read_instance(paths, &occupant)
+                    .map(|profile| profile.name)
+                    .unwrap_or(occupant)
+            )
+        });
+    }
     let metadata = version::resolve(paths, &version_id)
         .with_context(|| format!("读取 {version_id} 的版本描述"))?;
     // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。
@@ -500,6 +515,20 @@ pub async fn launch_instance(
     );
 
     let process_id = child.id();
+    // 交给注册表之后，这个进程就是可寻址的了：能查、能停。`Child` 包在锁里
+    // 是因为等待和 kill 都要碰它，而等待不能一直握着（见 running 模块）。
+    let child = Arc::new(Mutex::new(child));
+    running::register(
+        instance_id,
+        &plan.working_directory,
+        process_id,
+        started_at
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs())
+            .unwrap_or_default(),
+        child.clone(),
+    );
+
     let wait_log = launch_log.clone();
     let wait_events = events.clone();
     let wait_instance = instance_id.to_owned();
@@ -516,19 +545,18 @@ pub async fn launch_instance(
     };
     std::thread::spawn(move || {
         let running = wait_running;
-        let exit_code = match child.wait() {
-            Ok(status) => {
-                let code = status
-                    .code()
-                    .map_or_else(|| "signal".to_owned(), |code| code.to_string());
-                let _ = append_launch_log(&wait_log, &format!("exited code={code}"));
-                status.code()
+        let exit_code = match running::wait(&child) {
+            Ok(code) => {
+                let text = code.map_or_else(|| "signal".to_owned(), |code| code.to_string());
+                let _ = append_launch_log(&wait_log, &format!("exited code={text}"));
+                code
             }
             Err(error) => {
                 let _ = append_launch_log(&wait_log, &format!("wait error={error}"));
                 None
             }
         };
+        running::unregister(&wait_instance);
 
         alive.store(false, Ordering::SeqCst);
         // 抢在十五秒兜底之前把标记占掉：进程已经没了，再报一次「跑起来了」
@@ -814,6 +842,7 @@ fn announce_running(
     if running.swap(true, Ordering::SeqCst) {
         return;
     }
+    running::mark_ready(instance_id);
     let _ = events.send(LauncherEvent::LaunchStage {
         instance_id: instance_id.to_owned(),
         stage: LaunchStage::Running,

@@ -96,6 +96,7 @@ pub use launch::memory::{
 };
 pub use launch::prepare::{PrepareResult, prepare_instance};
 pub use launch::rules::QuickPlay;
+pub use launch::running::{RunningGame, list as running_games, stop as stop_game};
 pub use launch::version::{effective_id as effective_version_id, resolve as resolve_version};
 pub use launch::{
     Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,

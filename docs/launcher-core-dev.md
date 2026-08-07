@@ -360,6 +360,9 @@ resolution_width  resolution_height（feature 控制）
 - spawn 后 **stdout/stderr 必须持续读取**——不读会因管道缓冲满而卡死游戏进程。
 - 日志流解析 log4j XML 事件格式（`<log4j:Event>`），提取 level/logger/message 供日志查看器着色过滤。
 - **启动成功判定**：日志出现窗口初始化标志（如 `Setting user:` 之后的 LWJGL/GL 初始化行），或简化为进程存活 15 秒。成功后启动器可按设置最小化。
+- **进程要能寻址**（`launch::running`）：一张 `instance_id → (pid, Child, 起始时刻, 窗口出来没有)` 的表。停止就是对着表里的 `Child` 调 kill——标准库只给得出 SIGKILL，所以界面上要说「强制结束」并说明没存的进度会丢。等待用 `try_wait` 轮询而不是 `wait`：`wait` 独占 `&mut Child`，握着它就没法再 kill 同一个进程。
+- **同一份游戏目录不能跑两个进程**，判据是目录而不是实例 id：两个外部实例可以指着同一个 `.minecraft`，那时候两份进程写同一批存档，而且是静默的。不同实例照常可以同时跑。
+- **界面上的状态有三段**：`preparing`（点击起，可能几分钟）→ `starting`（有 pid 了，窗口还没出来，可能十几秒）→ `running`。少了中间任何一段，按钮都会在那段时间里落回「启动」，看起来像刚才那一下没生效。回到前台时对一次 `running_games`：事件可能没收到，而一个永远「运行中」的按钮比不显示更糟。
 - **异常退出**：
   1. 抓退出码 + stderr 尾部；
   2. 读 `crash-reports/` 最新文件；

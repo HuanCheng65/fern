@@ -6,11 +6,9 @@
  * 而因为它的 `busy` 没被立起来，那份进度谁也没显示。「点一下没反应，过一会
  * 自己好了」就是这么来的。
  *
- * 现在它只管一件事：**游戏跑没跑**。那是一个状态，不是一件耗时的事——它没有
- * 进度，也不会「完成」。补全和下载是作业，进度归 [`jobs`](./jobs.svelte.ts)。
- *
- * `busy` 剩下的意思很窄：我点的这一下还没回来。它不是进度，只是防止同一颗
- * 按钮被连点两次——真正的进度由后端宣告的作业说。
+ * 现在它只管一件事：**哪些游戏在跑，各自跑到哪一段**。那是状态，不是耗时的
+ * 事——它没有进度，也不会「完成」。补全和下载是作业，进度归
+ * [`jobs`](./jobs.svelte.ts)。
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -81,38 +79,103 @@ const LOG_LIMIT = 800
 const nameOf = (instanceId: string) =>
   instances.list.find((item) => item.id === instanceId)?.name ?? '实例'
 
+/** 一个实例现在处在哪一段。没有条目就是没在跑。 */
+export type GamePhase = 'preparing' | 'starting' | 'running'
+
+export interface GameState {
+  phase: GamePhase
+  processId?: number
+  /** Unix 秒，进程起来的时刻。 */
+  startedAt?: number
+}
+
 class LaunchStore {
-  /** 我点的这一下还没回来。不是进度——进度是作业的事。 */
-  busy = $state(false)
-  /** 游戏窗口已经开出来了。 */
-  running = $state(false)
+  /**
+   * 跑着的（以及正在起来的）游戏，按实例 id。
+   *
+   * 曾经这里是两个全局布尔：`busy`（我点的这一下还没回来）和 `running`（窗口
+   * 开出来了）。两个问题——
+   *
+   * **中间那一段是空的。** invoke 一返回 `busy` 就落回 false，而 `running` 要
+   * 等日志里的窗口标志，等不到还有十五秒兜底。那十几秒里按钮显示的是「启动」，
+   * 看起来就是刚才那一下没生效。所以现在的第一段 `preparing` 从**点击那一刻**
+   * 就立起来，一直接到 `starting`（进程有了 pid）再到 `running`（窗口出来了），
+   * 中间没有缝。
+   *
+   * **一个布尔说不出是谁在跑。** 于是全局只能跑一个游戏。真正不能重复的是
+   * 同一份游戏目录（后端按目录挡，见 `launch::running`），不是「任何一个」。
+   */
+  games = $state<Record<string, GameState>>({})
   error = $state('')
   /** 崩了才有值。正常退出不该在界面上留下任何痕迹。 */
   crash = $state<CrashReport | null>(null)
-  log = $state<GameLogLine[]>([])
   /**
-   * 这一轮忙的是哪个实例。
+   * 这一轮看的是哪个实例的日志。
    *
    * 实例详情页的日志 tab 要靠它判断这段日志是不是自己的——把 A 实例的崩溃栈
    * 显示在 B 的页面里，比不显示更糟。
    */
   instanceId = $state('')
-  /** 正在跑的是哪个实例，用来在岛上叫出它的名字。 */
-  runningName = $state('')
-  /**
-   * 最近一次读到的堆压力。游戏没在跑、或者读不到 GC 日志时是 null。
-   *
-   * 它只喂岛上那条细线。**没有值就没有线**——一条编出来的线比没有线更糟。
-   */
-  memory = $state<MemoryPressure | null>(null)
+  #logs = $state<Record<string, GameLogLine[]>>({})
+  #memory = $state<Record<string, MemoryPressure>>({})
+
+  /** 正在看的那个实例的日志。 */
+  log = $derived(this.#logs[this.instanceId] ?? [])
+  /** 有没有游戏在跑。面板和岛用它，具体到某一个实例要用 `phaseOf`。 */
+  anyRunning = $derived(Object.values(this.games).some((game) => game.phase !== 'preparing'))
+  running = $derived(Object.keys(this.games).length > 0)
 
   #unlisten: UnlistenFn | undefined
+
+  phaseOf(instanceId: string): GamePhase | undefined {
+    return this.games[instanceId]?.phase
+  }
+
+  /** 这个实例现在不该再被点启动。 */
+  occupied(instanceId: string) {
+    return this.games[instanceId] !== undefined
+  }
+
+  memoryOf(instanceId: string) {
+    return this.#memory[instanceId]
+  }
 
   async connect() {
     if (!inTauri() || this.#unlisten) return
     this.#unlisten = await listen<LauncherEvent>('launcher-event', ({ payload }) =>
       this.#onEvent(payload),
     )
+    await this.sync()
+  }
+
+  /**
+   * 对一次后端那张表。
+   *
+   * 事件可能在界面还没挂上监听时就发过了，进程也可能在启动器不知情的时候没了。
+   * 只靠事件，界面上迟早留下一个永远「运行中」的按钮。
+   */
+  async sync() {
+    if (!inTauri()) return
+    try {
+      const live = await invoke<
+        { instanceId: string; processId: number; startedAt: number; ready: boolean }[]
+      >('running_games')
+      const next: Record<string, GameState> = {}
+      for (const game of live) {
+        next[game.instanceId] = {
+          phase: game.ready ? 'running' : 'starting',
+          processId: game.processId,
+          startedAt: game.startedAt,
+        }
+      }
+      // 正在准备的那些还没有进程，后端不知道它们，别被这一次对表抹掉。
+      for (const [id, game] of Object.entries(this.games)) {
+        if (game.phase === 'preparing' && !next[id]) next[id] = game
+      }
+      this.games = next
+    } catch {
+      // 查不到就维持现状：一次查询失败不该让界面上的状态全部消失。
+    }
   }
 
   disconnect() {
@@ -122,29 +185,36 @@ class LaunchStore {
 
   #onEvent(event: LauncherEvent) {
     switch (event.type) {
-      case 'launch_stage':
-        this.#onStage((event.payload as { stage: LaunchStage }).stage)
+      case 'launch_stage': {
+        const payload = event.payload as { instanceId: string; stage: LaunchStage }
+        this.#onStage(payload.instanceId, payload.stage)
         break
-      case 'game_log':
-        this.#onLog(event.payload as GameLogLine)
+      }
+      case 'game_log': {
+        const line = event.payload as GameLogLine & { instanceId: string }
+        this.#onLog(line.instanceId, line)
         break
-      case 'game_exited':
-        this.running = false
-        this.runningName = ''
-        this.memory = null
+      }
+      case 'game_exited': {
+        const { instanceId } = event.payload as { instanceId: string }
+        delete this.games[instanceId]
+        delete this.#memory[instanceId]
         break
-      case 'game_memory':
-        this.memory = event.payload as MemoryPressure
+      }
+      case 'game_memory': {
+        const pressure = event.payload as MemoryPressure
+        this.#memory[pressure.instanceId] = pressure
         break
+      }
       case 'game_crashed':
         this.crash = event.payload as CrashReport
         break
     }
   }
 
-  #onStage(stage: LaunchStage) {
+  #onStage(instanceId: string, stage: LaunchStage) {
     if (stage !== 'running') return
-    this.running = true
+    this.#advance(instanceId, 'running')
     // 这一刻才最小化，不是点启动那一刻：补全可能要几分钟，中途把启动器收走，
     // 用户就看不到进度了。
     if (prefs.minimizeOnLaunch && inTauri()) {
@@ -152,20 +222,29 @@ class LaunchStore {
     }
   }
 
-  #onLog(line: GameLogLine) {
-    this.log.push({ level: line.level, message: line.message })
-    if (this.log.length > LOG_LIMIT) {
-      this.log = this.log.slice(-LOG_LIMIT)
+  /** 只往前走。事件到达的顺序不保证，倒退回去会让按钮闪一下。 */
+  #advance(instanceId: string, phase: GamePhase, extra: Partial<GameState> = {}) {
+    const order: GamePhase[] = ['preparing', 'starting', 'running']
+    const current = this.games[instanceId]
+    if (current && order.indexOf(current.phase) > order.indexOf(phase)) {
+      this.games[instanceId] = { ...current, ...extra }
+      return
     }
+    this.games[instanceId] = { ...current, ...extra, phase }
+  }
+
+  #onLog(instanceId: string, line: GameLogLine) {
+    const lines = this.#logs[instanceId] ?? []
+    lines.push({ level: line.level, message: line.message })
+    this.#logs[instanceId] = lines.length > LOG_LIMIT ? lines.slice(-LOG_LIMIT) : lines
   }
 
   #begin(instanceId: string) {
     this.instanceId = instanceId
-    this.busy = true
     this.error = ''
     this.crash = null
-    this.log = []
-    this.memory = null
+    this.#logs[instanceId] = []
+    delete this.#memory[instanceId]
   }
 
   /**
@@ -176,19 +255,21 @@ class LaunchStore {
    * 把这两半接上，搜一个世界名回车就直接落在那个世界里。
    */
   async launch(instanceId: string, into?: { world?: string; server?: string }) {
-    if (this.busy || this.running) return
+    if (this.occupied(instanceId)) return
     this.#begin(instanceId)
+    // 从点击这一刻就占住，中间不留缝。
+    this.games[instanceId] = { phase: 'preparing' }
     const name = nameOf(instanceId)
     try {
       if (!inTauri()) {
         await jobs.rehearse(`启动 ${name}`, [instanceId])
         this.error = '浏览器预览，无法真正启动'
+        delete this.games[instanceId]
         return
       }
-      this.runningName = name
       // 标题和 subjects 由这一侧给：作业挂在谁身上是界面的知识，后端只负责
       // 宣告它的存在和进展，不负责编一个显示用的名字。
-      await invoke<{ processId: number }>('launch_instance', {
+      const started = await invoke<{ processId: number }>('launch_instance', {
         instanceId,
         world: into?.world ?? null,
         server: into?.server ?? null,
@@ -197,11 +278,25 @@ class LaunchStore {
       })
       // 到这里只是进程起来了。真正的「跑起来了」由 launch_stage 事件说，
       // 那才是窗口已经开出来的时刻。
+      this.#advance(instanceId, 'starting', { processId: started.processId })
     } catch (error) {
-      this.runningName = ''
+      delete this.games[instanceId]
       this.error = String(error)
-    } finally {
-      this.busy = false
+    }
+  }
+
+  /**
+   * 强行结束。
+   *
+   * 是 kill 不是「保存并退出」——没有哪个启动器做得到后者。所以按钮上要说清
+   * 没存的进度会丢，而这个按钮存在的理由本来就是游戏已经不响应了。
+   */
+  async stop(instanceId: string) {
+    if (!inTauri()) return
+    try {
+      await invoke('stop_game', { instanceId })
+    } catch (error) {
+      this.error = String(error)
     }
   }
 
@@ -216,7 +311,7 @@ class LaunchStore {
    * 做的是同一件事，但对用户来说不是同一个时刻。
    */
   async repair(instanceId: string, title = `校验 ${nameOf(instanceId)}`) {
-    if (this.busy) return
+    if (this.occupied(instanceId)) return
     this.#begin(instanceId)
     try {
       if (!inTauri()) {
@@ -230,8 +325,6 @@ class LaunchStore {
       })
     } catch (error) {
       this.error = String(error)
-    } finally {
-      this.busy = false
     }
   }
 
@@ -253,31 +346,42 @@ export const launch = new LaunchStore()
  * 还活着，不带任何百分比。
  */
 contributes((): Presence[] => {
-  if (!launch.running) return []
-  const memory = launch.memory
-  // 堆压力是这一句里唯一一个会动的数，而它几秒才变一次——所以它进 detail，
-  // 不进那条会被反复念出来的 label。
-  const pressure = memory
-    ? `${gigabytes(memory.usedMb)} / ${gigabytes(memory.xmxMb)}`
-    : ''
-  return [
-    {
-      id: 'game',
-      priority: PRIORITY.live,
-      tone: 'live',
-      label: launch.runningName || '运行中',
-      // 细线画的是水位占堆的比例，不是进度——游戏不会「完成」。
-      fill: memory && memory.xmxMb > 0 ? memory.usedMb / memory.xmxMb : undefined,
-      rows: [
-        {
-          id: 'game',
-          label: launch.runningName || '游戏运行中',
-          detail: pressure ? `内存 ${pressure}` : '运行中',
-        },
-      ],
-      actions: [{ label: '查看日志', run: () => nav.show('log') }],
-    },
-  ]
+  return Object.entries(launch.games)
+    .filter(([, game]) => game.phase !== 'preparing')
+    .map(([instanceId, game]) => {
+      const name = nameOf(instanceId)
+      const memory = launch.memoryOf(instanceId)
+      // 堆压力是这一句里唯一一个会动的数，而它几秒才变一次——所以它进 detail，
+      // 不进那条会被反复念出来的 label。
+      const pressure = memory ? `${gigabytes(memory.usedMb)} / ${gigabytes(memory.xmxMb)}` : ''
+      const starting = game.phase === 'starting'
+      return {
+        // 一个实例一条：同时跑两个的时候，两条各说各的。
+        id: `game:${instanceId}`,
+        priority: PRIORITY.live,
+        tone: 'live',
+        label: name,
+        // 细线画的是水位占堆的比例，不是进度——游戏不会「完成」。
+        fill: memory && memory.xmxMb > 0 ? memory.usedMb / memory.xmxMb : undefined,
+        rows: [
+          {
+            id: `game:${instanceId}`,
+            label: name,
+            detail: starting ? '正在启动' : pressure ? `内存 ${pressure}` : '运行中',
+          },
+        ],
+        actions: [
+          {
+            label: '查看日志',
+            run: () => {
+              launch.instanceId = instanceId
+              nav.show('log')
+            },
+          },
+          { label: '强制结束', run: () => void launch.stop(instanceId) },
+        ],
+      } satisfies Presence
+    })
 })
 
 /** MB 变成一句话。和实例设置那一屏用的是同一条规则。 */
@@ -310,9 +414,9 @@ commands(() => {
     }
   }
   return [
-    // 游戏已经在跑的时候不列出启动：再点一下会起第二个进程，两份游戏抢同一个
-    // 存档目录。
-    ...(launch.running
+    // 这个实例已经在跑的时候不列出启动：再点一下会起第二个进程，两份游戏抢
+    // 同一个存档目录。别的实例照常可以启动。
+    ...(instances.current && launch.occupied(instances.current.id)
       ? []
       : [
           {

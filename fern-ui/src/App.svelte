@@ -121,11 +121,18 @@
     void launch.connect()
     // 写盘是防抖的：改完设置立刻切走或关窗，别把最后那一下丢了。
     const saveNow = () => void flush()
+    // 回到前台时对一次「谁在跑」：游戏可能在启动器被收起来的这段时间里退出了，
+    // 而那条事件如果没收到，界面上会留下一个永远运行中的按钮。
+    const resync = () => {
+      if (!document.hidden) void launch.sync()
+    }
     window.addEventListener('keydown', onKeydown)
     window.addEventListener('blur', saveNow)
     window.addEventListener('pagehide', saveNow)
+    document.addEventListener('visibilitychange', resync)
     return () => {
       disconnectNav()
+      document.removeEventListener('visibilitychange', resync)
       window.removeEventListener('keydown', onKeydown)
       window.removeEventListener('blur', saveNow)
       window.removeEventListener('pagehide', saveNow)

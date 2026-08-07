@@ -46,6 +46,8 @@
   const job = $derived(jobs.forSubject(instance.id))
   /** 这段日志是不是这个实例的。别的实例的崩溃栈显示在这里比不显示更糟。 */
   const ownLog = $derived(launch.instanceId === instance.id ? launch.log : [])
+  /** 这个实例现在跑到哪一段了。undefined 是没在跑。 */
+  const phase = $derived(launch.phaseOf(instance.id))
 
   const played = $derived(
     instance.lastPlayed === undefined
@@ -72,19 +74,27 @@
       <div class="acts">
         <button
           class="btn btn--primary"
-          disabled={launch.busy || launch.running || job !== undefined}
+          disabled={phase !== undefined || job !== undefined}
           onclick={() => void launch.launch(instance.id)}
         >
-          {#if launch.running}
+          {#if phase === 'running'}
             运行中
+          {:else if phase === 'starting'}
+            正在启动
           {:else if job}
             {job.stage || job.title}
-          {:else if launch.busy}
+          {:else if phase === 'preparing'}
             准备中
           {:else}
             <Play size={15} fill="currentColor" strokeWidth={0} />启动
           {/if}
         </button>
+
+        {#if phase === 'running' || phase === 'starting'}
+          <button class="btn btn--ghost" onclick={() => void launch.stop(instance.id)}>
+            强制结束
+          </button>
+        {/if}
 
         <!--
           「设为当前」和「打开详情」是两个动作。只想翻一眼模组列表的人，不该

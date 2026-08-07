@@ -36,10 +36,13 @@ r=set(re.findall(r'^\s{12}(\w+),?\$', s, re.M))
 print('没注册:', sorted(c-r), '| 没定义:', sorted(r-c))"
 ```
 
-**Tauri 插件要在四个地方出现：** `src-tauri/Cargo.toml` 的依赖、`run()` 里的
+**Tauri 插件最多要在四个地方出现：** `src-tauri/Cargo.toml` 的依赖、`run()` 里的
 `.plugin(...)`、`capabilities/default.json` 的权限项、以及前端的 npm 包。少了
-第三个不会有编译错误，只会在运行时报「not allowed」。目前只用了
-`tauri-plugin-dialog`，而且只授予 `dialog:allow-open`。
+第三个不会有编译错误，只会在运行时报「not allowed」。
+
+- `tauri-plugin-dialog`：四处都要，只授予 `dialog:allow-open`。
+- `tauri-plugin-single-instance`：只要前两处——它不暴露命令，也没有前端包。
+  但它**必须是第一个** `.plugin(...)`，否则第二个进程会先把窗口建出来再退出。
 
 **`[target.'cfg(...)'.dependencies]` 段的位置。** 它会把**它后面所有**的依赖行
 一起圈进去。往 `[dependencies]` 中间插一个这种段，后面的依赖就全变成平台专属
