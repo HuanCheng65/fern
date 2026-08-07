@@ -221,7 +221,8 @@ fn component_for(minimum: u16) -> &'static str {
         0..=8 => "jre-legacy",
         9..=16 => "java-runtime-alpha",
         17..=20 => "java-runtime-gamma",
-        _ => "java-runtime-delta",
+        21..=24 => "java-runtime-delta",
+        _ => "java-runtime-epsilon",
     }
 }
 
@@ -297,7 +298,8 @@ mod tests {
         assert_eq!(component_for(16), "java-runtime-alpha");
         assert_eq!(component_for(17), "java-runtime-gamma");
         assert_eq!(component_for(21), "java-runtime-delta");
-        assert_eq!(component_for(25), "java-runtime-delta");
+        assert_eq!(component_for(24), "java-runtime-delta");
+        assert_eq!(component_for(25), "java-runtime-epsilon");
     }
 
     #[test]
