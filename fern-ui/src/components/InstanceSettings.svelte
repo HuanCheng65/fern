@@ -14,7 +14,7 @@
   import { ChevronRight } from 'lucide-svelte'
   import Overlay from './Overlay.svelte'
   import Choice from './Choice.svelte'
-  import { inTauri } from '../lib/instances.svelte'
+  import { inTauri, instances } from '../lib/instances.svelte'
 
   interface JavaRuntime {
     path: string
@@ -47,6 +47,15 @@
   }
 
   let { instanceId, instanceName, onclose }: Props = $props()
+
+  let renamed = $state('')
+  let confirmingDelete = $state(false)
+  let managing = $state(false)
+
+  // 改名成功后父组件会传入新名字，这时候输入框该跟着走。
+  $effect(() => {
+    renamed = instanceName
+  })
 
   let runtime = $state<InstanceRuntime | null>(null)
   let runtimes = $state<JavaRuntime[]>([])
@@ -111,6 +120,35 @@
   function setJava(path: string | null) {
     settings.javaPath = path
     void persist()
+  }
+
+  async function rename() {
+    const name = renamed.trim()
+    if (!name || name === instanceName) return
+    try {
+      await instances.rename(instanceId, name)
+      error = ''
+    } catch (cause) {
+      error = String(cause)
+    }
+  }
+
+  async function duplicate() {
+    try {
+      await instances.duplicate(instanceId, `${instanceName} 副本`)
+      onclose()
+    } catch (cause) {
+      error = String(cause)
+    }
+  }
+
+  async function remove() {
+    try {
+      await instances.remove(instanceId)
+      onclose()
+    } catch (cause) {
+      error = String(cause)
+    }
   }
 
   void load()
@@ -234,6 +272,48 @@
           />
         {/if}
       </section>
+
+      <section>
+        <button class="btn btn--link advanced" onclick={() => (managing = !managing)}>
+          <ChevronRight size={13} strokeWidth={2} class={managing ? 'turned' : ''} />管理
+        </button>
+        {#if managing}
+          <div class="row-head adv">
+            <span class="label">名称</span>
+          </div>
+          <div class="rename">
+            <input class="input" bind:value={renamed} maxlength="64" />
+            <button
+              class="btn btn--ghost"
+              disabled={!renamed.trim() || renamed.trim() === instanceName}
+              onclick={() => void rename()}
+            >
+              重命名
+            </button>
+          </div>
+
+          <div class="row-foot manage">
+            <span class="t-quiet">复制不含存档与日志</span>
+            <button class="btn btn--ghost" onclick={() => void duplicate()}>复制实例</button>
+          </div>
+
+          <div class="row-foot manage">
+            <span class="t-quiet">
+              {confirmingDelete ? '存档、模组与配置将一并删除，不可撤销。' : '删除此实例'}
+            </span>
+            {#if confirmingDelete}
+              <span class="confirm">
+                <button class="btn btn--ghost" onclick={() => (confirmingDelete = false)}>
+                  取消
+                </button>
+                <button class="btn danger" onclick={() => void remove()}>确认删除</button>
+              </span>
+            {:else}
+              <button class="btn btn--ghost" onclick={() => (confirmingDelete = true)}>删除</button>
+            {/if}
+          </div>
+        {/if}
+      </section>
     </div>
   {/if}
 
@@ -336,6 +416,36 @@
 
   .row-head.adv + :global(.choice) {
     margin-top: var(--s2);
+  }
+
+  .rename {
+    display: flex;
+    gap: var(--s2);
+    margin-top: var(--s2);
+  }
+
+  .rename .input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .row-foot.manage {
+    margin-top: var(--s4);
+  }
+
+  .confirm {
+    display: flex;
+    gap: var(--s2);
+  }
+
+  /* 删除是唯一不可撤销的动作，给它唯一的红。 */
+  .btn.danger {
+    color: #fff;
+    background: #c42b1c;
+  }
+
+  .btn.danger:hover {
+    background: #d8402f;
   }
 
   .choices {

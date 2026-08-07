@@ -13,6 +13,8 @@ export interface Instance {
   name: string
   gameVersion: string
   loader: string
+  /** 封面的恒定种子。用它而不是名字——改个名字不该换一张脸。 */
+  cover: string
 }
 
 export interface VersionOption {
@@ -32,6 +34,7 @@ interface CoreInstance {
   name: string
   gameVersion: string
   loader: string
+  cover?: { identity: string }
 }
 
 export const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -46,6 +49,14 @@ const LOADER_NAMES: Record<string, string> = {
 }
 
 export const loaderName = (loader: string) => LOADER_NAMES[loader] ?? loader
+
+const toInstance = (profile: CoreInstance): Instance => ({
+  id: profile.id,
+  name: profile.name,
+  gameVersion: profile.gameVersion,
+  loader: loaderName(profile.loader),
+  cover: profile.cover?.identity || profile.id,
+})
 
 const SELECTED_KEY = 'fern.instance.selected'
 /** 浏览器里跑 `pnpm dev` 时的兜底存储，让界面在没有 Tauri 的情况下也能走通。 */
@@ -79,12 +90,7 @@ class InstanceStore {
       const profiles = inTauri()
         ? await invoke<CoreInstance[]>('list_instances')
         : (JSON.parse(localStorage.getItem(PREVIEW_KEY) ?? '[]') as CoreInstance[])
-      this.list = profiles.map((p) => ({
-        id: p.id,
-        name: p.name,
-        gameVersion: p.gameVersion,
-        loader: loaderName(p.loader),
-      }))
+      this.list = profiles.map(toInstance)
       if (!this.list.some((item) => item.id === this.selectedId)) {
         this.selectedId = this.list[0]?.id ?? ''
       }
@@ -123,16 +129,28 @@ class InstanceStore {
     return this.loaders
   }
 
+  /** 改名、复制、删除之后都要重新读一遍，列表和封面才对得上。 */
+  async rename(id: string, name: string) {
+    await invoke('rename_instance', { instanceId: id, name })
+    await this.load()
+  }
+
+  async duplicate(id: string, name: string) {
+    const created = await invoke<CoreInstance>('duplicate_instance', { instanceId: id, name })
+    await this.load()
+    this.select(created.id)
+  }
+
+  async remove(id: string) {
+    await invoke('delete_instance', { instanceId: id })
+    await this.load()
+  }
+
   async create(name: string, gameVersion: string, loader = 'vanilla'): Promise<Instance> {
     const created: CoreInstance = inTauri()
       ? await invoke<CoreInstance>('create_instance', { name, gameVersion, loader })
       : { id: `preview-${Date.now()}`, name, gameVersion, loader }
-    const instance: Instance = {
-      id: created.id,
-      name: created.name,
-      gameVersion: created.gameVersion,
-      loader: loaderName(created.loader),
-    }
+    const instance = toInstance(created)
     this.list = [...this.list, instance]
     if (!inTauri()) {
       localStorage.setItem(PREVIEW_KEY, JSON.stringify(this.list.map((i) => ({ ...i, loader: 'vanilla' }))))

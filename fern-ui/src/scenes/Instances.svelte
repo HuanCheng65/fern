@@ -10,6 +10,7 @@
    */
   import { FolderOpen, Play, Plus, RefreshCw, SlidersHorizontal } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
+  import ModList from '../components/ModList.svelte'
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { prefs } from '../lib/prefs.svelte'
@@ -49,7 +50,7 @@
             class:on={current?.id === item.id}
             onclick={() => instances.select(item.id)}
           >
-            <span class="thumb"><Cover seed={item.name} quality={0.45} /></span>
+            <span class="thumb"><Cover seed={item.cover} quality={0.45} /></span>
             <span class="row-text">
               <strong>{item.name}</strong>
               <small class="t-mono">{item.gameVersion} · {item.loader}</small>
@@ -61,7 +62,7 @@
 
     {#if current}
       <div class="detail scroll">
-        <div class="banner"><Cover seed={current.name} quality={0.7} /></div>
+        <div class="banner"><Cover seed={current.cover} quality={0.7} /></div>
 
         <h1 class="t-h1 title">{current.name}</h1>
 
@@ -99,6 +100,11 @@
           <p class="status t-mono">{launch.label}{launch.detail ? ` · ${launch.detail}` : ''}</p>
         {/if}
         {#if launch.error}<div class="alert">{launch.error}</div>{/if}
+
+        <!-- 实例内的复杂度收在实例里，不摊到全局导航上（见 UI_DESIGN 四）。 -->
+        {#key current.id}
+          <ModList instanceId={current.id} />
+        {/key}
       </div>
     {/if}
   </section>

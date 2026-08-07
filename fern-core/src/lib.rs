@@ -17,6 +17,7 @@ mod java;
 mod launch;
 mod loader;
 mod microsoft;
+mod mods;
 mod prepare;
 mod registry;
 mod rules;
@@ -31,8 +32,9 @@ pub use auth::{
     prefetched as prefetched_metadata,
 };
 pub use catalog::{
-    InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, instance_runtime,
-    list_instances, list_versions, update_instance_settings, write_instance_profile,
+    InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, delete_instance,
+    duplicate_instance, instance_runtime, list_instances, list_versions, rename_instance,
+    update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
 pub use credentials::{
@@ -63,6 +65,10 @@ pub use loader::{
 pub use microsoft::{
     DeviceCodeChallenge, MicrosoftSession, begin_login as begin_microsoft_login,
     ensure_fresh as refresh_microsoft_session, finish_login as finish_microsoft_login,
+};
+pub use mods::{
+    ModFile, install as install_mod, list as list_mods, remove as remove_mod,
+    set_enabled as set_mod_enabled,
 };
 pub use prepare::{PrepareResult, prepare_instance};
 pub use runtime::{ensure_java, remove as remove_runtime};

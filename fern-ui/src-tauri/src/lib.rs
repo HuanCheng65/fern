@@ -103,11 +103,19 @@ fn detect_java() -> Option<fern_core::JavaRuntime> {
     fern_core::detect_java()
 }
 
+/// 打开实例的游戏目录，或者它下面的某个子目录（`mods`、`saves`……）。
 #[tauri::command]
-fn open_instance_directory(instance_id: String) -> Result<(), String> {
+fn open_instance_directory(instance_id: String, sub: Option<String>) -> Result<(), String> {
     let id = fern_core::InstanceId::parse(instance_id).map_err(|error| error.to_string())?;
     let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    let directory = paths.game_directory(id.as_str());
+    let mut directory = paths.game_directory(id.as_str());
+    if let Some(sub) = sub.filter(|sub| !sub.is_empty()) {
+        // 子目录名来自界面，不能原样拼。
+        if sub.contains(['/', '\\']) || sub.contains("..") {
+            return Err(format!("非法的子目录：{sub}"));
+        }
+        directory.push(sub);
+    }
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
 
     #[cfg(target_os = "windows")]
@@ -211,6 +219,73 @@ async fn launch_instance(
         let _ = paths.append_log(&format!("[launch] instance={instance_id} error={error}"));
     }
     result
+}
+
+/// 这个实例装了哪些模组。
+#[tauri::command]
+fn list_mods(instance_id: String) -> Result<Vec<fern_core::ModFile>, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::list_mods(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+}
+
+/// 开或关一个模组。改的是扩展名，文件还在。
+#[tauri::command]
+fn set_mod_enabled(
+    instance_id: String,
+    file_name: String,
+    enabled: bool,
+) -> Result<String, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::set_mod_enabled(&paths, &instance_id, &file_name, enabled)
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn remove_mod(instance_id: String, file_name: String) -> Result<(), String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::remove_mod(&paths, &instance_id, &file_name).map_err(|error| format!("{error:#}"))
+}
+
+/// 把本地的 jar 装进实例。界面上是拖进来或者选文件。
+#[tauri::command]
+fn install_mods(
+    instance_id: String,
+    paths_to_install: Vec<String>,
+) -> Result<Vec<fern_core::ModFile>, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let mut installed = Vec::new();
+    for source in paths_to_install {
+        installed.push(
+            fern_core::install_mod(&paths, &instance_id, std::path::Path::new(&source))
+                .map_err(|error| format!("{error:#}"))?,
+        );
+    }
+    Ok(installed)
+}
+
+#[tauri::command]
+fn delete_instance(instance_id: String) -> Result<(), String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::delete_instance(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn rename_instance(
+    instance_id: String,
+    name: String,
+) -> Result<fern_core::InstanceProfile, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::rename_instance(&paths, &instance_id, &name).map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn duplicate_instance(
+    instance_id: String,
+    name: String,
+) -> Result<fern_core::InstanceProfile, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::duplicate_instance(&paths, &instance_id, &name)
+        .map_err(|error| format!("{error:#}"))
 }
 
 /// 这个实例在这台机器上会得到什么：自动算出来的内存、会选中的 Java。
@@ -337,6 +412,13 @@ pub fn run() {
             list_java_runtimes,
             remove_java_runtime,
             instance_runtime,
+            list_mods,
+            set_mod_enabled,
+            remove_mod,
+            install_mods,
+            delete_instance,
+            rename_instance,
+            duplicate_instance,
             update_instance_settings,
             get_settings,
             save_settings,

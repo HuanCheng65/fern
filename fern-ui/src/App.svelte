@@ -58,7 +58,7 @@
 
   const overlayOpen = $derived(paletteOpen || createOpen || instanceSettingsOpen || logOpen)
   /** 背景用当前实例的名字当种子——首页的背景就是这个实例自己的封面。 */
-  const seed = $derived(instances.current?.name ?? 'Fern')
+  const seed = $derived(instances.current?.cover ?? 'Fern')
 
   function goScene(id: SceneId) {
     const from = scenes.findIndex((item) => item.id === scene)

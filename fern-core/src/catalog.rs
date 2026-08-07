@@ -174,6 +174,107 @@ pub fn update_instance_settings(
     Ok(profile)
 }
 
+/// 删掉一个实例，连同它的存档、模组、日志。
+///
+/// 不可撤销，所以路径要算得准：`InstanceId` 挡住了 `..`，再 canonicalize 一次
+/// 确认它确实落在 instances 目录里面——软链接能让一个合法的名字指到别处去。
+pub fn delete_instance(paths: &DataPaths, instance_id: &str) -> Result<()> {
+    let id = InstanceId::parse(instance_id)?;
+    let root = paths.instance_root(id.as_str());
+    if !root.is_dir() {
+        return Err(anyhow!("实例 {instance_id} 不存在"));
+    }
+
+    let instances = fs::canonicalize(&paths.instances).context("读取实例目录")?;
+    let target = fs::canonicalize(&root).context("读取实例目录")?;
+    if target == instances || !target.starts_with(&instances) {
+        return Err(anyhow!("{} 不在实例目录内", target.display()));
+    }
+
+    fs::remove_dir_all(&target).with_context(|| format!("删除 {}", target.display()))?;
+    // 日志在另一棵树下，一起清掉，否则重名的新实例会捡到旧日志。
+    let logs = paths.instance_log_directory(id.as_str());
+    if logs.is_dir() {
+        let _ = fs::remove_dir_all(logs);
+    }
+    Ok(())
+}
+
+/// 改显示名。
+///
+/// 目录名（也就是实例 id）不动：它是封面的种子，也被日志目录引用着。
+/// 「封面就是实例的脸」——改个名字不该换一张脸。
+pub fn rename_instance(
+    paths: &DataPaths,
+    instance_id: &str,
+    name: &str,
+) -> Result<InstanceProfile> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 64 {
+        return Err(anyhow!("实例名称需为 1-64 个字符"));
+    }
+    let mut profile = load_profile(paths, instance_id)?;
+    profile.name = name.to_owned();
+    write_instance_profile(paths, &profile)?;
+    Ok(profile)
+}
+
+/// 复制一个实例。
+///
+/// 带上模组和配置，不带存档、日志、崩溃报告和截图。复制实例通常是为了「同一
+/// 套底子换一组模组」，把几个 G 的存档一起抄过去既慢又不是用户要的；真想要
+/// 存档的人会自己去拷。
+pub fn duplicate_instance(
+    paths: &DataPaths,
+    instance_id: &str,
+    name: &str,
+) -> Result<InstanceProfile> {
+    let source = load_profile(paths, instance_id)?;
+    let mut copy = create_instance_with_loader(
+        paths,
+        name,
+        &source.game_version,
+        source.loader,
+        source.loader_profile.as_ref().map(|l| l.version.as_str()),
+    )?;
+    copy.loader_profile = source.loader_profile.clone();
+    copy.settings = source.settings.clone();
+    write_instance_profile(paths, &copy)?;
+
+    let from = paths.game_directory(instance_id);
+    let to = paths.game_directory(copy.id.as_str());
+    for entry in fs::read_dir(&from).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(
+            name.as_ref(),
+            "saves" | "logs" | "crash-reports" | "screenshots" | "natives"
+        ) {
+            continue;
+        }
+        copy_tree(&entry.path(), &to.join(name.as_ref()))?;
+    }
+    Ok(copy)
+}
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(from)?;
+    if metadata.is_dir() {
+        fs::create_dir_all(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(from, to)?;
+    }
+    // 软链接不跟：跟过去就成了两个实例共享同一份文件，改一个动两个。
+    Ok(())
+}
+
 /// 把实例文件整份写回去。先写临时文件再改名——写到一半断电不该让实例
 /// 彻底打不开。
 pub fn write_instance_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<()> {
@@ -339,6 +440,90 @@ mod tests {
         assert_eq!(runtime.mods_count, 0);
 
         fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn deleting_takes_the_game_directory_and_the_logs() {
+        let root = std::env::temp_dir().join(format!("fern-delete-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+        let profile = create_instance(&paths, "Moss", "1.21.1").expect("create");
+        let id = profile.id.as_str().to_owned();
+
+        // 造一份存档和一份日志，确认两棵树都被清掉。
+        let saves = paths.game_directory(&id).join("saves/world");
+        fs::create_dir_all(&saves).expect("create save");
+        fs::create_dir_all(paths.instance_log_directory(&id)).expect("create logs");
+        fs::write(paths.instance_log_directory(&id).join("launch.log"), "x").expect("write log");
+
+        delete_instance(&paths, &id).expect("delete");
+        assert!(!paths.instance_root(&id).exists());
+        // 日志留着的话，重名的新实例会捡到旧日志。
+        assert!(!paths.instance_log_directory(&id).exists());
+        assert!(list_instances(&paths).expect("list").is_empty());
+
+        // 删两次不该 panic，只是说它不在了。
+        assert!(delete_instance(&paths, &id).is_err());
+        // 目录名里的花招要在 InstanceId 那一关就被挡住。
+        assert!(delete_instance(&paths, "../..").is_err());
+
+        fs::remove_dir_all(root).expect("remove root");
+    }
+
+    #[test]
+    fn renaming_changes_the_label_but_not_the_identity() {
+        let root = std::env::temp_dir().join(format!("fern-rename-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+        let before = create_instance(&paths, "Moss", "1.21.1").expect("create");
+
+        let after = rename_instance(&paths, before.id.as_str(), "  余烬谷  ").expect("rename");
+        assert_eq!(after.name, "余烬谷");
+        // id 是封面的种子，也被日志目录引用着——改名不该换一张脸。
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.cover.identity, before.cover.identity);
+        assert!(paths.instance_root(before.id.as_str()).is_dir());
+
+        assert!(rename_instance(&paths, before.id.as_str(), "   ").is_err());
+        fs::remove_dir_all(root).expect("remove root");
+    }
+
+    #[test]
+    fn duplicating_carries_the_mods_but_not_the_saves() {
+        let root = std::env::temp_dir().join(format!("fern-dup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+        let source = create_instance_with_loader(
+            &paths,
+            "Moss",
+            "1.21.1",
+            crate::LoaderKind::Fabric,
+            Some("0.16.5"),
+        )
+        .expect("create");
+        let id = source.id.as_str().to_owned();
+
+        let game = paths.game_directory(&id);
+        fs::create_dir_all(game.join("mods")).expect("mods");
+        fs::write(game.join("mods/sodium.jar"), "jar").expect("mod");
+        fs::create_dir_all(game.join("config/sodium")).expect("config");
+        fs::write(game.join("config/sodium/options.json"), "{}").expect("config file");
+        fs::create_dir_all(game.join("saves/world")).expect("saves");
+        fs::write(game.join("saves/world/level.dat"), "big").expect("save");
+
+        let copy = duplicate_instance(&paths, &id, "Moss 副本").expect("duplicate");
+        assert_ne!(copy.id, source.id);
+        assert_eq!(copy.name, "Moss 副本");
+        assert_eq!(copy.loader, crate::LoaderKind::Fabric);
+
+        let copied = paths.game_directory(copy.id.as_str());
+        assert!(copied.join("mods/sodium.jar").is_file());
+        // 嵌套的配置目录也要跟过去。
+        assert!(copied.join("config/sodium/options.json").is_file());
+        // 存档不跟：几个 G 抄一遍既慢又不是用户要的。
+        assert!(!copied.join("saves").exists());
+
+        fs::remove_dir_all(root).expect("remove root");
     }
 
     #[test]
