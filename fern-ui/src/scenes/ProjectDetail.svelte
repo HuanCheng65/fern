@@ -15,7 +15,6 @@
    */
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowUpRight, Check, Download, Plus } from 'lucide-svelte'
-  import Cover from '../components/Cover.svelte'
   import Loading from '../components/Loading.svelte'
   import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
@@ -140,25 +139,26 @@
 {:else if !detail}
   <div class="alert pad">{error || '读不到这个项目。'}</div>
 {:else}
-  <Detail tabs={TABS} {tab} ontab={(id) => nav.setTab(id)}>
+  <Detail
+    tabs={TABS}
+    {tab}
+    ontab={(id) => nav.setTab(id)}
+    showBanner={detail.gallery.length > 0}
+  >
     {#snippet banner()}
       {#if detail?.gallery[0]}
         <img class="shot" src={detail.gallery[0].url} alt="" />
-      {:else}
-        <Cover seed={detail?.slug ?? slug} quality={0.6} />
       {/if}
       <div class="fade"></div>
     {/snippet}
 
     {#snippet head()}
       <div class="titles">
-        <span class="icon">
-          {#if detail?.iconUrl}
+        {#if detail?.iconUrl}
+          <span class="icon">
             <img src={detail.iconUrl} alt="" />
-          {:else}
-            <Cover seed={detail?.slug ?? slug} quality={0.5} />
-          {/if}
-        </span>
+          </span>
+        {/if}
         <div class="words">
           <h1 class="t-h1">{detail?.title}</h1>
           <p class="summary">{detail?.description}</p>

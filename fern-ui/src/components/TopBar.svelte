@@ -141,14 +141,6 @@
       </button>
     {/if}
 
-    <!--
-      ⌘K 不给搜索框样式的入口：那会立刻成为顶栏最重的元素。一个纯文字角标，
-      和状态块同级。
-    -->
-    <button class="hint t-mono" onclick={() => nav.toggle('palette')} title="命令面板">
-      {isMac ? '⌘K' : 'Ctrl K'}
-    </button>
-
     <button
       class="btn btn--icon"
       aria-label="设置"
@@ -379,19 +371,6 @@
     border-radius: 50%;
     background: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-
-  .hint {
-    padding: 0 var(--s2);
-    color: var(--ink);
-    font-size: var(--t-micro);
-    letter-spacing: 0.03em;
-    opacity: 0.3;
-    transition: opacity var(--t-fast) var(--ease);
-  }
-
-  .hint:hover {
-    opacity: 0.8;
   }
 
   .avatar {

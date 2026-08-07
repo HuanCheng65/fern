@@ -576,7 +576,7 @@
     position: absolute;
     inset: 0;
     z-index: 5;
-    padding: 0 var(--pad-x);
+    padding: calc(var(--top) + var(--s2)) var(--pad-x) 0;
     background: var(--panel);
     -webkit-backdrop-filter: blur(26px) saturate(1.3);
     backdrop-filter: blur(26px) saturate(1.3);

@@ -26,11 +26,12 @@
   let results = $state<HTMLElement>()
   let sentinel = $state<HTMLElement>()
 
-  /** 版本筛选只列最近这些正式版。八百个版本铺在左栏里没人找得到。 */
+  let versionQuery = $state('')
+
+  /** 版本筛选使用完整的 Mojang 版本清单，搜索框负责在长列表中定位版本号。 */
   const releases = $derived(
     instances.versions
-      .filter((item) => item.kind === 'release')
-      .slice(0, 14)
+      .filter((item) => item.id.toLowerCase().includes(versionQuery.trim().toLowerCase()))
       .map((item) => ({ id: item.id, label: item.id })),
   )
 
@@ -111,16 +112,30 @@
         }}
       />
 
-      <FilterGroup
-        label="游戏版本"
-        value={supply.gameVersion}
-        options={releases}
-        anyLabel="全部"
-        onchange={(value) => {
-          supply.gameVersion = value
-          supply.refresh()
-        }}
-      />
+      <div class="version-filter">
+        <div class="version-search">
+          <Search size={13} strokeWidth={1.8} />
+          <input
+            class="input"
+            bind:value={versionQuery}
+            spellcheck="false"
+            aria-label="搜索游戏版本"
+            placeholder="搜索版本号"
+          />
+        </div>
+        <div class="version-options">
+          <FilterGroup
+            label="游戏版本"
+            value={supply.gameVersion}
+            options={releases}
+            anyLabel="全部"
+            onchange={(value) => {
+              supply.gameVersion = value
+              supply.refresh()
+            }}
+          />
+        </div>
+      </div>
 
       <!-- 资源包和光影没有加载器这个概念，摆一组选了没用的选项是噪音。 -->
       {#if supply.kind === 'mod' || supply.kind === 'modpack'}
@@ -230,6 +245,43 @@
     justify-content: space-between;
     gap: var(--s3);
     padding-bottom: var(--s3);
+  }
+
+  .version-filter {
+    display: grid;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .version-search {
+    position: relative;
+  }
+
+  .version-search :global(svg) {
+    position: absolute;
+    top: 50%;
+    left: var(--s2);
+    color: var(--ink-4);
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  .version-search .input {
+    min-height: 30px;
+    padding: 0 var(--s2) 0 28px;
+    font-size: var(--t-small);
+  }
+
+  .version-options {
+    max-height: 300px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--tint-3) transparent;
+    padding-right: var(--s1);
+  }
+
+  .version-options :global(.group) {
+    gap: var(--s2);
   }
 
   .sort {

@@ -36,6 +36,8 @@
     ontab: (id: string) => void
     /** 封面那一条。没有就不画。 */
     banner?: Snippet
+    /** 详情有真实横幅图时才占据顶部媒体区域。 */
+    showBanner?: boolean
     /** 标题和常驻动作。 */
     head: Snippet
     /** 滚下去之后补在吸附条右侧的小标题。不给就只有 tabs。 */
@@ -43,7 +45,7 @@
     children: Snippet
   }
 
-  let { tabs, tab, ontab, banner, head, compactHead, children }: Props = $props()
+  let { tabs, tab, ontab, banner, showBanner = true, head, compactHead, children }: Props = $props()
 
   let scroller = $state<HTMLElement>()
   let heading = $state<HTMLElement>()
@@ -79,7 +81,7 @@
 <div class="detail scroll" data-page-scroll bind:this={scroller} onscroll={onScroll}>
   <div class="safe-top" aria-hidden="true"></div>
 
-  {#if banner}
+  {#if banner && showBanner}
     <div class="banner">{@render banner()}</div>
   {/if}
 
