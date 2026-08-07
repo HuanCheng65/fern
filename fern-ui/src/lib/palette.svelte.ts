@@ -178,7 +178,11 @@ function readHabits(): Record<string, Habit> {
   }
 }
 
-let habits = readHabits()
+/**
+ * `$state` 而不是普通变量：空态列的就是它，执行完一条之后重新打开必须能看见
+ * 变化，否则这份学习到用户眼里就是没生效。
+ */
+let habits = $state(readHabits())
 
 function weight(key: string): number {
   const habit = habits[key]
@@ -201,14 +205,22 @@ export type Row =
   | { kind: 'subject'; key: string; subject: Subject; points: number }
   | { kind: 'action'; key: string; action: Action; points: number }
 
-/** 下钻时输入框左边挂着的那一枚。 */
-export interface Scope {
-  /** 只看这一类对象。 */
-  type: SubjectType
-  label: string
-  /** 选中之后交给谁。空表示只是过滤，选中就执行对象自己的默认动作。 */
-  action?: Action
-}
+/**
+ * 下钻时输入框左边挂着的那一枚。两个方向各一种：
+ *
+ *   subjects  动词优先——「校验哪个实例？」，以及切换器进来时锁定的类型
+ *   actions   名词优先——「对这个实例能做什么？」
+ *
+ * 语法的两半都要有入口。只做前者的话，类型系统建了一半就停在那里：你能找到
+ * 动作再挑对象，却不能选中一个对象再问它能干什么，而后者才是人看着列表时更
+ * 自然的想法。
+ */
+export type Scope =
+  | { kind: 'subjects'; type: SubjectType; label: string; action?: Action }
+  | { kind: 'actions'; subject: Subject; label: string }
+
+/** 空态给几条。它是预测，不是目录——长了就又变成一份要扫的清单。 */
+const SUGGESTIONS = 7
 
 /** 远端结果慢到值得说一句的门槛。低于它就不必闪一下「搜索中」。 */
 const DEBOUNCE = 220
@@ -276,6 +288,20 @@ class PaletteStore {
     const query = this.query.trim()
     const scope = this.scope
 
+    if (scope?.kind === 'actions') {
+      const subject = scope.subject
+      return this.actions
+        .filter((action) => action.accepts === subject.type)
+        .map((action) => ({
+          kind: 'action' as const,
+          key: `action:${action.id}`,
+          action,
+          points: score(action.title, query) ?? -1,
+        }))
+        .filter((row) => row.points >= 0)
+        .sort((left, right) => right.points - left.points)
+    }
+
     if (scope) {
       return this.subjects
         .filter((subject) => subject.type === scope.type)
@@ -288,6 +314,10 @@ class PaletteStore {
         .filter((row) => row.points >= 0)
         .sort((left, right) => right.points - left.points)
     }
+
+    // 空态不是搜索，是「面板打开了，我还没想好」。这时候该给的是预测而不是
+    // 目录——把十二个位置和一排动作倒出来，只会把真正常用的实例挤到第二屏。
+    if (!query) return this.suggest()
 
     const rows: Row[] = []
     for (const subject of this.subjects) {
@@ -319,6 +349,48 @@ class PaletteStore {
     return rows
   })
 
+  /**
+   * 空态那几条：最近用过的排前面，不够就用实例补齐。
+   *
+   * 用实例补齐而不是补动作：这个面板的主角是东西，而一台新装的机器上还没有
+   * 任何习惯可学，那时列出实例至少是有用的。
+   */
+  private suggest(): Row[] {
+    const pool: Row[] = [
+      ...this.subjects
+        .filter((subject) => !subject.scoped)
+        .map((subject) => ({
+          kind: 'subject' as const,
+          key: `${subject.type}:${subject.id}`,
+          subject,
+          points: weight(`${subject.type}:${subject.id}`),
+        })),
+      ...this.actions.map((action) => ({
+        kind: 'action' as const,
+        key: `action:${action.id}`,
+        action,
+        points: weight(`action:${action.id}`),
+      })),
+    ]
+    const recent = pool
+      .filter((row) => row.points > 0)
+      .sort((left, right) => right.points - left.points)
+      .slice(0, SUGGESTIONS)
+    const seen = new Set(recent.map((row) => row.key))
+    const instances = pool.filter(
+      (row) => row.kind === 'subject' && row.subject.type === 'instance' && !seen.has(row.key),
+    )
+    return [...recent, ...instances].slice(0, SUGGESTIONS + 3)
+  }
+
+  /** 高亮的这一行能被做什么。名词优先那一半的入口。 */
+  askActions(row: Row): boolean {
+    if (row.kind !== 'subject') return false
+    if (!this.actions.some((action) => action.accepts === row.subject.type)) return false
+    this.open({ kind: 'actions', subject: row.subject, label: row.subject.title })
+    return true
+  }
+
   open(scope: Scope | null = null) {
     this.query = ''
     this.scope = scope
@@ -346,9 +418,16 @@ class PaletteStore {
    */
   run(row: Row): boolean {
     remember(row.key)
+    const scope = this.scope
+
+    // 「对这个对象做什么」——宾语已经定了，这里挑的是动词。
+    if (scope?.kind === 'actions' && row.kind === 'action') {
+      row.action.run(scope.subject)
+      return true
+    }
+
     if (row.kind === 'subject') {
-      const scope = this.scope
-      if (scope?.action) {
+      if (scope?.kind === 'subjects' && scope.action) {
         scope.action.run(row.subject)
       } else {
         row.subject.run()
@@ -366,7 +445,7 @@ class PaletteStore {
       action.run(subject)
       return true
     }
-    this.open({ type: action.accepts, label: action.title, action })
+    this.open({ kind: 'subjects', type: action.accepts, label: action.title, action })
     return false
   }
 

@@ -163,7 +163,7 @@
             <LaunchScene
               onswitch={() => {
                 // 切换器就是面板，只是带着一枚锁定实例的 chip 进来。
-                palette.open({ type: 'instance', label: '实例' })
+                palette.open({ kind: 'subjects', type: 'instance', label: '实例' })
                 nav.show('palette')
               }}
               oncreate={createInstance}

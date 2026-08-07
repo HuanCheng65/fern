@@ -56,6 +56,23 @@
       event.preventDefault()
       run(rows[palette.cursor])
     }
+    /*
+     * 「对它能做什么」。→ 和 ⌘K 是同一件事的两种手感：前者延续「往里走」的
+     * 空间隐喻，后者是这类工具的通用记法。
+     */
+    // → 只在光标已经在末尾时才改变含义，否则它还是移动光标的那个键——
+    // 一个输入框里的方向键首先属于输入框。
+    const atEnd =
+      event.currentTarget instanceof HTMLInputElement &&
+      event.currentTarget.selectionStart === event.currentTarget.value.length &&
+      event.currentTarget.selectionEnd === event.currentTarget.value.length
+    const wantsActions =
+      (event.key === 'ArrowRight' && atEnd) ||
+      (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey))
+    if (wantsActions && rows[palette.cursor] && palette.askActions(rows[palette.cursor])) {
+      event.preventDefault()
+      event.stopPropagation()
+    }
     // 由外向内退：先摘 chip，再关面板。Overlay 自己也听 Esc，所以只有
     // 「还有 chip 可摘」时才拦下来。
     if (event.key === 'Escape' && palette.scope) {
@@ -102,7 +119,11 @@
       {onkeydown}
       autofocus
       spellcheck="false"
-      placeholder={palette.scope ? `选择${TYPE_LABEL[palette.scope.type]}` : '搜索实例与动作'}
+      placeholder={!palette.scope
+        ? '搜索实例与动作'
+        : palette.scope.kind === 'subjects'
+          ? `选择${TYPE_LABEL[palette.scope.type]}`
+          : '选择一个操作'}
       aria-label="搜索实例与动作"
     />
     <kbd>esc</kbd>
@@ -134,6 +155,10 @@
             {/if}
           </span>
           {#if row.kind === 'action' && row.action.keys}<kbd>{row.action.keys}</kbd>{/if}
+          <!-- 这一行还能往里走。只在高亮时出现——每一行都挂一个提示是噪音。 -->
+          {#if row.kind === 'subject' && palette.cursor === index && !palette.scope}
+            <kbd class="deeper">→</kbd>
+          {/if}
         </button>
       {/each}
 
@@ -148,6 +173,7 @@
   <footer>
     <span><kbd>↑</kbd><kbd>↓</kbd>选择</span>
     <span><kbd><CornerDownLeft size={10} strokeWidth={2.4} /></kbd>执行</span>
+    <span><kbd>→</kbd>可用操作</span>
   </footer>
 </Overlay>
 
@@ -273,6 +299,10 @@
     color: var(--ink-3);
     font-family: var(--mono);
     font-size: var(--t-micro);
+  }
+
+  .deeper {
+    flex: none;
   }
 
   .pending {
