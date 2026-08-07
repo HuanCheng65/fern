@@ -143,7 +143,7 @@ pub struct InstanceRuntime {
 /// 不联网就能算出来的那部分。版本要求取自已经落盘的元数据，没补全过的实例
 /// 拿不到——那时候按版本号推，够用来填一个默认值。
 pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<InstanceRuntime> {
-    let profile = load_profile(paths, instance_id)?;
+    let profile = read_instance(paths, instance_id)?;
     let declared = read_prepared_metadata(paths, &profile.game_version)
         .and_then(|metadata| metadata.java_version.map(|version| version.major_version));
     let requirement = crate::java_requirement(&profile.game_version, profile.loader, declared);
@@ -167,7 +167,7 @@ pub fn update_instance_settings(
     instance_id: &str,
     settings: crate::InstanceSettings,
 ) -> Result<InstanceProfile> {
-    let mut profile = load_profile(paths, instance_id)?;
+    let mut profile = read_instance(paths, instance_id)?;
     profile.settings = settings;
     write_instance_profile(paths, &profile)?;
     Ok(profile)
@@ -212,7 +212,7 @@ pub fn rename_instance(
     if name.is_empty() || name.chars().count() > 64 {
         return Err(anyhow!("实例名称需为 1-64 个字符"));
     }
-    let mut profile = load_profile(paths, instance_id)?;
+    let mut profile = read_instance(paths, instance_id)?;
     profile.name = name.to_owned();
     write_instance_profile(paths, &profile)?;
     Ok(profile)
@@ -228,7 +228,7 @@ pub fn duplicate_instance(
     instance_id: &str,
     name: &str,
 ) -> Result<InstanceProfile> {
-    let source = load_profile(paths, instance_id)?;
+    let source = read_instance(paths, instance_id)?;
     let mut copy = create_instance_with_loader(
         paths,
         name,
@@ -290,7 +290,7 @@ pub fn write_instance_profile(paths: &DataPaths, profile: &InstanceProfile) -> R
 /// 在进程真的起来之后才盖章，不是在点下启动时——补全失败、Java 找不到、
 /// JVM 起不来的那些次都不算玩过，否则曲库的排序会被一串失败的尝试顶上去。
 pub fn touch_played(paths: &DataPaths, instance_id: &str) -> Result<()> {
-    let mut profile = load_profile(paths, instance_id)?;
+    let mut profile = read_instance(paths, instance_id)?;
     profile.last_played = Some(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -300,7 +300,12 @@ pub fn touch_played(paths: &DataPaths, instance_id: &str) -> Result<()> {
     write_instance_profile(paths, &profile)
 }
 
-fn load_profile(paths: &DataPaths, instance_id: &str) -> Result<InstanceProfile> {
+/// 读一个实例的配置。
+///
+/// 好几处都要先拿到实例才知道下一步做什么（补全要看加载器、作业要拿名字当
+/// 标题），各自抄一遍 `list_instances().find()` 是把同一个「不存在」的错误
+/// 写了四份。
+pub fn read_instance(paths: &DataPaths, instance_id: &str) -> Result<InstanceProfile> {
     list_instances(paths)?
         .into_iter()
         .find(|profile| profile.id.as_str() == instance_id)

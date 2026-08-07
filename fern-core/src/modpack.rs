@@ -20,9 +20,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{DownloadClient, DownloadEvent, DownloadTask, safe_join};
+use fern_download::{DownloadClient, DownloadTask, safe_join};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{DataPaths, InstanceProfile, LoaderKind};
 
@@ -171,17 +170,17 @@ pub async fn install(
     paths: &DataPaths,
     archive_path: &Path,
     name: Option<&str>,
-    events: &UnboundedSender<DownloadEvent>,
+    job: &crate::Job,
 ) -> Result<InstanceProfile> {
+    // 三步：读包、下文件、铺自带的配置。下载那一步之外的两步都没有字节数
+    // 可报，但它们都要花时间——分步说，起码看得出卡在哪一段。
+    job.expect(3);
+    job.step("读取整合包");
     let index = read_index(archive_path)?;
     let summary = inspect(archive_path)?;
     if summary.loader != LoaderKind::Vanilla && !is_safe_version(&summary.loader_version) {
         return Err(anyhow!("整合包写的加载器版本无法使用"));
     }
-
-    let _ = events.send(DownloadEvent::Status {
-        message: format!("准备 {}", summary.name),
-    });
 
     let profile = crate::create_instance_with_loader(
         paths,
@@ -194,7 +193,7 @@ pub async fn install(
 
     // 出了岔子就把这个半成品实例删掉。留一个下了一半的实例在曲库里，比直接
     // 失败更糟——它看起来是好的，点启动才发现不是。
-    match lay_out(paths, &game, archive_path, index, events).await {
+    match lay_out(&game, archive_path, index, job).await {
         Ok(()) => Ok(profile),
         Err(error) => {
             let _ = crate::delete_instance(paths, profile.id.as_str());
@@ -203,13 +202,8 @@ pub async fn install(
     }
 }
 
-async fn lay_out(
-    _paths: &DataPaths,
-    game: &Path,
-    archive_path: &Path,
-    index: Index,
-    events: &UnboundedSender<DownloadEvent>,
-) -> Result<()> {
+async fn lay_out(game: &Path, archive_path: &Path, index: Index, job: &crate::Job) -> Result<()> {
+    let events = &job.downloads();
     tokio::fs::create_dir_all(game).await?;
 
     let mut tasks = Vec::new();
@@ -233,18 +227,14 @@ async fn lay_out(
         });
     }
 
+    job.step(format!("下载整合包的 {} 个文件", tasks.len()));
     if !tasks.is_empty() {
-        let _ = events.send(DownloadEvent::Status {
-            message: format!("下载整合包的 {} 个文件", tasks.len()),
-        });
         DownloadClient::new(crate::settings::source_order(), 8)
             .download_all(tasks, events)
             .await?;
     }
 
-    let _ = events.send(DownloadEvent::Status {
-        message: "展开整合包自带的文件".to_owned(),
-    });
+    job.step("展开整合包自带的文件");
     // overrides 先铺，client-overrides 后铺——后者按格式定义就是用来盖前者的。
     //
     // 解压是同步的，而且大包的 overrides 有几十兆。摆在 async 函数里直接调，
@@ -263,11 +253,14 @@ pub async fn install_from_modrinth(
     paths: &DataPaths,
     version_id: &str,
     name: Option<&str>,
-    events: &UnboundedSender<DownloadEvent>,
+    job: &crate::Job,
 ) -> Result<InstanceProfile> {
+    // 取包体是 install 那三步之前的一步。
+    job.expect(1);
+    job.step("下载整合包");
     let cache = paths.root.join("cache/modpacks");
-    let archive = crate::modrinth::fetch_primary_file(version_id, &cache, events).await?;
-    install(paths, &archive, name, events).await
+    let archive = crate::modrinth::fetch_primary_file(version_id, &cache, &job.downloads()).await?;
+    install(paths, &archive, name, job).await
 }
 
 /// 把 `overrides/` 和 `client-overrides/` 铺进游戏目录。

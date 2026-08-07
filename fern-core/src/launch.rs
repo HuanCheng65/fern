@@ -145,6 +145,7 @@ pub async fn launch_instance(
     instance_id: &str,
     player_name: &str,
     events: &UnboundedSender<LauncherEvent>,
+    job: &crate::Job,
 ) -> Result<LaunchResult> {
     let stage = |stage: LaunchStage| {
         let _ = events.send(LauncherEvent::LaunchStage {
@@ -152,12 +153,13 @@ pub async fn launch_instance(
             stage,
         });
     };
+    // 补全之后还剩这一步：刷新登录、组装命令、把进程拉起来。它自己没有几个
+    // 字节可下（外置登录第一次要取一份 injector），但它是这次点击的最后一段，
+    // 该算进「共几步」里。
+    job.step("准备启动");
     stage(LaunchStage::ResolvingVersion);
     paths.ensure_exists()?;
-    let profile = crate::list_instances(paths)?
-        .into_iter()
-        .find(|profile| profile.id.as_str() == instance_id)
-        .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))?;
+    let profile = crate::read_instance(paths, instance_id)?;
     // 装了加载器时，要启动的是加载器生成的那份 JSON，它用 inheritsFrom 指回
     // 原版。合并在 version 模块里做一次，补全和启动用的必须是同一份——两边
     // 各算各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
@@ -190,9 +192,7 @@ pub async fn launch_instance(
 
     // 用哪个账号是全局设置，不是每个实例各自一份——玩家只有一个身份。
     let mut account = Account::current(player_name)?;
-    account
-        .ensure_fresh(paths, &crate::event::download_bridge(events))
-        .await?;
+    account.ensure_fresh(paths, &job.downloads()).await?;
     let credentials = account.launch_credentials()?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
     let legacy_assets = metadata

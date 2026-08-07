@@ -614,12 +614,13 @@ pub async fn install(
     instance_id: &str,
     version_id: &str,
     kind: ResourceKind,
-    events: &UnboundedSender<DownloadEvent>,
+    job: &crate::Job,
 ) -> Result<Vec<String>> {
-    let profile = crate::list_instances(paths)?
-        .into_iter()
-        .find(|profile| profile.id.as_str() == instance_id)
-        .ok_or_else(|| anyhow!("实例 {instance_id} 不存在"))?;
+    // 两步：先把要装的东西问清楚（一个模组可能牵出好几个必需依赖），再一起下。
+    job.expect(2);
+    job.step("解析依赖");
+    let events = &job.downloads();
+    let profile = crate::read_instance(paths, instance_id)?;
     let game_version = profile.game_version.as_str();
     let loader = profile.loader;
 
@@ -689,12 +690,10 @@ pub async fn install(
         }
     }
 
-    let _ = events.send(DownloadEvent::Status {
-        message: if installed.len() > 1 {
-            format!("下载 {} 个文件（含依赖）", installed.len())
-        } else {
-            "下载文件".to_owned()
-        },
+    job.step(if installed.len() > 1 {
+        format!("下载 {} 个文件（含依赖）", installed.len())
+    } else {
+        "下载文件".to_owned()
     });
     let downloader = DownloadClient::new(crate::settings::source_order(), 8);
     downloader.download_all(tasks, events).await?;

@@ -14,6 +14,7 @@ mod forge;
 mod gamelog;
 mod instance;
 mod java;
+mod job;
 mod launch;
 mod loader;
 mod microsoft;
@@ -36,8 +37,8 @@ pub use auth::{
 };
 pub use catalog::{
     InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, delete_instance,
-    duplicate_instance, instance_runtime, list_instances, list_versions, rename_instance,
-    touch_played, update_instance_settings, write_instance_profile,
+    duplicate_instance, instance_runtime, list_instances, list_versions, read_instance,
+    rename_instance, touch_played, update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
 pub use credentials::{
@@ -45,7 +46,7 @@ pub use credentials::{
     store_microsoft_session, store_session,
 };
 pub use data::DataPaths;
-pub use event::{LaunchStage, LauncherEvent, LogLevel, download_bridge};
+pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;
 pub use fern_meta::{VersionManifest, VersionManifestEntry};
 pub use gamelog::{LogLine, LogParser};
@@ -57,6 +58,7 @@ pub use java::{
     JavaRequirement, JavaRuntime, detect_java, discover as discover_java,
     requirement as java_requirement, select as select_java,
 };
+pub use job::{Job, JobEvent};
 pub use launch::{
     Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,
 };

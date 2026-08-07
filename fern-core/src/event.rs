@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use fern_download::DownloadEvent;
-
 use crate::crash::CrashReport;
+use crate::job::JobEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,7 +38,8 @@ pub enum LogLevel {
     rename_all_fields = "camelCase"
 )]
 pub enum LauncherEvent {
-    Download(DownloadEvent),
+    /// 一件耗时的事的进展。带 id，所以同时跑好几件也分得开。
+    Job(JobEvent),
     LaunchStage {
         instance_id: String,
         stage: LaunchStage,
@@ -56,25 +56,6 @@ pub enum LauncherEvent {
     /// 非正常退出。和 `GameExited` 分开发：正常关掉游戏不该在界面上留下任何
     /// 痕迹，崩了才需要说话。
     GameCrashed(CrashReport),
-}
-
-/// 把下载事件转成启动器事件的桥。
-///
-/// 下载器只认得 [`DownloadEvent`]，而界面只该订阅一条「启动器在干什么」的
-/// 流。桥在这里搭一次，比让下载器去认识启动器的事件模型好。
-pub fn download_bridge(
-    events: &tokio::sync::mpsc::UnboundedSender<LauncherEvent>,
-) -> tokio::sync::mpsc::UnboundedSender<DownloadEvent> {
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let events = events.clone();
-    tokio::spawn(async move {
-        while let Some(event) = receiver.recv().await {
-            if events.send(LauncherEvent::Download(event)).is_err() {
-                break;
-            }
-        }
-    });
-    sender
 }
 
 #[cfg(test)]

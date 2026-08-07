@@ -11,9 +11,7 @@ use fern_meta::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    DataPaths, LauncherEvent, java, loader, rules, runtime, settings::source_order, version,
-};
+use crate::{DataPaths, Job, java, loader, rules, runtime, settings::source_order, version};
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -44,24 +42,33 @@ struct AssetObject {
     size: u64,
 }
 
+/// 把这个实例补齐到能启动的状态。
+///
+/// 分四步说，而不是笼统地叫「检查文件」：装加载器和下载文件是性质完全不同的
+/// 两件事——下载幂等、可并发、失败重试即可；装 Forge 要在本地跑一个第三方
+/// 安装器，它拆开 client jar 重打，有副作用、不能并发、失败会留下半成品，而且
+/// 必须排在下载之前（它决定了后面要补哪些库）。混成一步的代价是进度条撒谎：
+/// 显示「检查游戏文件」的时候实际卡在 Forge 安装器上，一动不动一分钟。
+///
+/// 加载器那一步没有百分比可言，所以进度分两轴——纵轴是第几步，横轴才是这一步
+/// 内部的字节数。硬把它们压成一个百分比就只能靠编。
 pub async fn prepare_instance(
     paths: &DataPaths,
     instance_id: &str,
-    events: &UnboundedSender<LauncherEvent>,
+    job: &Job,
 ) -> Result<PrepareResult> {
-    let events = &crate::event::download_bridge(events);
     paths.ensure_exists()?;
-    let mut profile = crate::list_instances(paths)?
-        .into_iter()
-        .find(|profile| profile.id.as_str() == instance_id)
-        .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))?;
+    let mut profile = crate::read_instance(paths, instance_id)?;
+    // 原版没有加载器要装，那一步就不该出现在分母里。
+    let needs_loader = profile.loader != crate::LoaderKind::Vanilla;
+    job.expect(if needs_loader { 4 } else { 3 });
+
+    let events = &job.downloads();
     let version_id = profile.game_version.clone();
     let version_id = version_id.as_str();
     let downloader = DownloadClient::new(source_order(), 64);
 
-    let _ = events.send(DownloadEvent::Status {
-        message: "读取版本清单".to_owned(),
-    });
+    job.step("读取版本信息");
     let manifest_bytes = downloader
         .fetch(VERSION_MANIFEST_URL)
         .await
@@ -74,9 +81,6 @@ pub async fn prepare_instance(
         .find(|entry| entry.id == version_id)
         .ok_or_else(|| anyhow!("version {version_id} is absent from the Mojang manifest"))?;
 
-    let _ = events.send(DownloadEvent::Status {
-        message: "读取版本元数据".to_owned(),
-    });
     let version_bytes = downloader
         .fetch(&entry.url)
         .await
@@ -103,10 +107,13 @@ pub async fn prepare_instance(
     // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
     // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
     // 另一份，会出现「文件明明下好了却说缺」这种最难查的问题。
-    if profile.loader != crate::LoaderKind::Vanilla
-        && let Some(loader) = profile.loader_profile.clone()
-    {
+    if needs_loader && let Some(loader) = profile.loader_profile.clone() {
         {
+            job.step(format!(
+                "安装 {} {}",
+                crate::loader_display_name(profile.loader),
+                loader.version
+            ));
             // NeoForge / Forge 的 processors 要把原版 client jar 拆开重打，
             // 所以它必须先在磁盘上。Fabric 不需要，但多验一次已经存在的文件
             // 只是一次 sha1，不值得为它分叉。
@@ -134,6 +141,7 @@ pub async fn prepare_instance(
             }
         }
     }
+    job.step("补全游戏文件");
     let effective_id = crate::effective_version_id(&profile);
     let metadata: VersionMetadata = version::resolve(paths, &effective_id)
         .with_context(|| format!("读取 {effective_id} 的版本描述"))?;
@@ -220,15 +228,13 @@ pub async fn prepare_instance(
         total_files: tasks.len() as u64,
         total_bytes: tasks.iter().filter_map(|task| task.size).sum(),
     };
-    let _ = events.send(DownloadEvent::Status {
-        message: "开始补全文件".to_owned(),
-    });
     downloader.download_all(tasks, events).await?;
 
     if let Some((index_id, index)) = legacy_assets {
         materialize_legacy_assets(paths, instance_id, &index_id, &index, events).await?;
     }
 
+    job.step("准备 Java");
     // Java 也是这个实例缺的文件之一，补全就该把它补上。放在这里而不是启动
     // 时：启动那一步不该再有几百兆的下载，而补全本来就是「跑一遍直到齐活」。
     let requirement = java::requirement(
