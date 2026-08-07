@@ -233,21 +233,31 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
-    border-radius: 999px;
     background: var(--panel);
     box-shadow: inset 0 0 0 1px var(--panel-line);
     /* `-webkit-` 前缀不能省：WebKitGTK 只认带前缀的那个。 */
     -webkit-backdrop-filter: blur(20px) saturate(1.2);
     backdrop-filter: blur(20px) saturate(1.2);
+    /*
+     * 圆角是一个定值，**不过渡**。
+     *
+     * 32px 高的盒子上 18px 的圆角会被钳到 16px——正好是半高，也就是一颗完整
+     * 的胶囊；盒子长高之后同一个值就自然变成一个圆角矩形。形状是跟着尺寸白
+     * 来的，一行声明，不需要动画。
+     *
+     * 上一版写的是 `999px → var(--r3)`。CSS 插值插的是**指定值**（999→800→
+     * 500…），而这些值一路上都还在钳制区间里，于是前大半段圆角一动不动，直到
+     * 指定值掉到钳制线以下才突然开始收——盒子这时还在长高、钳制线还在上移，
+     * 三件事凑在一起就是那一下说不清的「咔」。
+     */
+    border-radius: var(--r3);
     transition:
       left var(--t-slow) var(--spring),
       bottom var(--t-slow) var(--spring),
-      border-radius var(--t-slow) var(--spring),
       box-shadow var(--t-base) var(--ease);
   }
 
   .pill.open .surface {
-    border-radius: var(--r3);
     box-shadow:
       inset 0 0 0 1px var(--panel-line),
       var(--shadow-lg);
