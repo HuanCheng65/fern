@@ -104,7 +104,7 @@
 
   const ACCOUNTS: { kind: AccountKind; title: string; note: string; ready: boolean }[] = [
     { kind: 'microsoft', title: '微软账户', note: '正版登录，联机、皮肤与成就', ready: false },
-    { kind: 'authlib', title: '外置登录', note: 'authlib-injector，第三方验证服务器', ready: false },
+    { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 皮肤站', ready: true },
     { kind: 'offline', title: '离线模式', note: '只在本地世界和离线服务器游玩', ready: true },
   ]
 </script>
@@ -146,6 +146,12 @@
             </button>
           {/each}
         </div>
+
+        <!-- 向导只问「用哪种」，登录本身留到设置页：一屏一件事，而登录要填
+             三个框、要联网、还可能失败，那不该是第一印象的一部分。 -->
+        {#if accountKind === 'authlib'}
+          <p class="note">选好了。继续走完，之后在设置里登录皮肤站账号。</p>
+        {/if}
 
         {#if accountKind === 'offline'}
           <div class="field inline">
@@ -392,6 +398,13 @@
   .field label {
     color: var(--ink-3);
     font-size: var(--t-small);
+  }
+
+  /* 选了外置登录之后的一句交代，和 .lede 同级但更轻。 */
+  .note {
+    margin: var(--s4) 0 0;
+    color: var(--ink-3);
+    font-size: var(--t-body);
   }
 
   .err {

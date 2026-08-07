@@ -38,6 +38,18 @@
     { path: string; home: string; major: number; version: string; vendor: string; managed: boolean }[]
   >([])
   let runtimeError = $state('')
+
+  interface YggdrasilSession {
+    apiRoot: string
+    playerName: string
+    uuid: string
+  }
+  let session = $state<YggdrasilSession | null>(null)
+  let apiRoot = $state('https://littleskin.cn/api/yggdrasil')
+  let username = $state('')
+  let password = $state('')
+  let loggingIn = $state(false)
+  let loginError = $state('')
   let themeCode = $state('')
   let copied = $state(false)
   let importError = $state('')
@@ -51,7 +63,44 @@
       .then((value) => (paths = value))
       .catch((error) => (pathError = String(error)))
     void loadRuntimes()
+    void invoke<YggdrasilSession | null>('yggdrasil_session')
+      .then((value) => (session = value))
+      .catch(() => {
+        // 钥匙串用不了的时候这里会失败，但那句话该在用户真的去登录时再说，
+        // 打开设置页就先弹一条报错是噪音。
+      })
   })
+
+  async function login() {
+    if (!apiRoot.trim() || !username.trim() || !password) {
+      loginError = '皮肤站地址、邮箱和密码都要填'
+      return
+    }
+    loggingIn = true
+    loginError = ''
+    try {
+      session = await invoke<YggdrasilSession>('yggdrasil_login', {
+        apiRoot: apiRoot.trim(),
+        username: username.trim(),
+        password,
+      })
+      // 拿到令牌就把密码从内存里去掉，它已经没有用处了。
+      password = ''
+    } catch (error) {
+      loginError = String(error)
+    } finally {
+      loggingIn = false
+    }
+  }
+
+  async function logout() {
+    try {
+      await invoke('yggdrasil_logout')
+      session = null
+    } catch (error) {
+      loginError = String(error)
+    }
+  }
 
   async function loadRuntimes() {
     if (!inTauri()) return
@@ -239,27 +288,92 @@
             </button>
           </div>
         {:else if section === 'account'}
-          <div class="row">
-            <span class="label">
-              登录方式
-              <small>微软账户与 authlib-injector 外置登录尚未接入。</small>
-            </span>
-            <span class="value">离线模式</span>
-          </div>
           <div class="row stack">
             <span class="label">
-              玩家名称
-              <small>用于离线启动。这个名字会生成稳定的离线 UUID。</small>
+              登录方式
+              <small>微软正版登录还没有接入，它要等 Azure 的应用白名单审批。</small>
             </span>
-            <input
-              class="input name"
-              value={prefs.playerName}
-              maxlength="16"
-              spellcheck="false"
-              placeholder="Steve"
-              oninput={(event) => prefs.setPlayerName(event.currentTarget.value)}
+            <Choice
+              label="登录方式"
+              value={prefs.accountKind === 'authlib' ? 'authlib' : 'offline'}
+              onchange={(next) => prefs.setAccount(next, prefs.playerName)}
+              options={[
+                { value: 'offline', label: '离线模式' },
+                { value: 'authlib', label: '外置登录' },
+              ]}
             />
           </div>
+
+          {#if prefs.accountKind === 'authlib'}
+            {#if session}
+              <div class="row">
+                <span class="label">
+                  已登录
+                  <small class="t-mono">{session.apiRoot}</small>
+                </span>
+                <span class="value">{session.playerName}</span>
+              </div>
+              <div class="row">
+                <span class="label">退出登录<small>令牌会从系统钥匙串里删掉。</small></span>
+                <button class="btn btn--ghost" onclick={() => void logout()}>退出</button>
+              </div>
+            {:else}
+              <div class="row stack">
+                <span class="label">
+                  皮肤站地址
+                  <small>Yggdrasil API 根地址，皮肤站的「在启动器中使用」页面会给出。</small>
+                </span>
+                <input
+                  class="input"
+                  bind:value={apiRoot}
+                  spellcheck="false"
+                  placeholder="https://littleskin.cn/api/yggdrasil"
+                />
+              </div>
+              <div class="row stack">
+                <span class="label">邮箱</span>
+                <input class="input" bind:value={username} spellcheck="false" />
+              </div>
+              <div class="row stack">
+                <span class="label">
+                  密码
+                  <small>只用来换取令牌，不会保存。令牌存进系统钥匙串。</small>
+                </span>
+                <input
+                  class="input"
+                  type="password"
+                  bind:value={password}
+                  onkeydown={(event) => event.key === 'Enter' && void login()}
+                />
+              </div>
+              <div class="row">
+                <span class="label"></span>
+                <button
+                  class="btn btn--primary"
+                  disabled={loggingIn}
+                  onclick={() => void login()}
+                >
+                  {loggingIn ? '登录中' : '登录'}
+                </button>
+              </div>
+            {/if}
+            {#if loginError}<div class="alert">{loginError}</div>{/if}
+          {:else}
+            <div class="row stack">
+              <span class="label">
+                玩家名称
+                <small>用于离线启动。这个名字会生成稳定的离线 UUID。</small>
+              </span>
+              <input
+                class="input name"
+                value={prefs.playerName}
+                maxlength="16"
+                spellcheck="false"
+                placeholder="Steve"
+                oninput={(event) => prefs.setPlayerName(event.currentTarget.value)}
+              />
+            </div>
+          {/if}
         {:else if section === 'download'}
           <div class="row">
             <span class="label">

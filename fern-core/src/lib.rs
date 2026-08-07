@@ -3,8 +3,10 @@
 //! Tauri commands call this crate. It owns launcher state and translates
 //! download, Java, account, and process events into UI-facing values.
 
+mod auth;
 mod catalog;
 mod crash;
+mod credentials;
 mod data;
 mod event;
 mod gamelog;
@@ -18,11 +20,16 @@ mod settings;
 mod tuning;
 mod version;
 
+pub use auth::{
+    AccountView, YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
+    prefetched as prefetched_metadata,
+};
 pub use catalog::{
     InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, instance_runtime,
     list_instances, list_versions, update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
+pub use credentials::{clear_session, client_token, load_session, store_session};
 pub use data::DataPaths;
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;

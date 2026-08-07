@@ -153,15 +153,6 @@ pub async fn launch_instance(
         });
     };
     stage(LaunchStage::ResolvingVersion);
-    if !(3..=16).contains(&player_name.len())
-        || !player_name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    {
-        return Err(anyhow!(
-            "offline player name must contain 3-16 ASCII letters, numbers or '_'"
-        ));
-    }
     paths.ensure_exists()?;
     let profile = crate::list_instances(paths)?
         .into_iter()
@@ -194,7 +185,8 @@ pub async fn launch_instance(
         return Err(anyhow!("client jar is missing: {}", client_jar.display()));
     }
 
-    let credentials = offline_credentials(player_name);
+    // 用哪个账号是全局设置，不是每个实例各自一份——玩家只有一个身份。
+    let (credentials, account_arguments) = resolve_account(paths, player_name, events).await?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
     let legacy_assets = metadata
         .asset_index
@@ -272,6 +264,10 @@ pub async fn launch_instance(
         jvm_arguments.push(logging.argument.clone());
     }
     jvm_arguments.extend(platform_arguments(&profile.game_version, &jvm_arguments));
+    // javaagent 要排在最前：它得在游戏的任何一个类被加载之前挂上去。
+    for (index, argument) in account_arguments.into_iter().enumerate() {
+        jvm_arguments.insert(index, argument);
+    }
     let required_java_major = metadata
         .java_version
         .as_ref()
@@ -441,6 +437,59 @@ pub async fn launch_instance(
         required_java_major,
         launch_log,
     })
+}
+
+/// 解析出这次要用谁的身份启动，以及为此要额外挂的 JVM 参数。
+///
+/// 离线模式什么都不用挂。外置登录要先把令牌刷新一遍（过期的令牌进服会被踢，
+/// 而那时候的报错和登录没有任何关系），再把 authlib-injector 挂上去。
+async fn resolve_account(
+    paths: &DataPaths,
+    player_name: &str,
+    events: &UnboundedSender<LauncherEvent>,
+) -> Result<(Credentials, Vec<String>)> {
+    if crate::current_settings().account.kind != crate::AccountKind::Authlib {
+        return Ok((offline_credentials_checked(player_name)?, Vec::new()));
+    }
+
+    let stored =
+        crate::load_session()?.ok_or_else(|| anyhow!("外置登录还没有登录过，去设置里登录一次"))?;
+    let session = crate::refresh_session(&stored)
+        .await
+        .context("刷新外置登录令牌失败，可能需要重新登录")?;
+    if session != stored {
+        crate::store_session(&session)?;
+    }
+
+    let downloads = crate::event::download_bridge(events);
+    let injector = crate::ensure_injector(paths, &downloads).await?;
+    // 预取失败不该拦住启动：injector 自己会去请求一次，只是慢一点。
+    let prefetched = crate::prefetched_metadata(&session.api_root)
+        .await
+        .unwrap_or_default();
+
+    Ok((
+        Credentials {
+            player_name: session.player_name.clone(),
+            uuid: session.uuid.clone(),
+            access_token: session.access_token.clone(),
+            user_type: "msa".to_owned(),
+        },
+        crate::auth::jvm_arguments(&injector, &session.api_root, &prefetched),
+    ))
+}
+
+/// 离线名字的规则是 Minecraft 自己的：3-16 位 ASCII。外置登录的名字由皮肤站
+/// 决定，轮不到我们校验。
+fn offline_credentials_checked(player_name: &str) -> Result<Credentials> {
+    if !(3..=16).contains(&player_name.len())
+        || !player_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(anyhow!("离线模式的名字要 3-16 位字母、数字或下划线"));
+    }
+    Ok(offline_credentials(player_name))
 }
 
 fn append_launch_log(path: &Path, message: &str) -> io::Result<()> {

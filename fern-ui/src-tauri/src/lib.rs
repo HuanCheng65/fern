@@ -232,6 +232,35 @@ fn update_instance_settings(
         .map_err(|error| format!("{error:#}"))
 }
 
+/// 外置登录。密码只在这一次调用里存在，登录成功后进系统钥匙串的是令牌。
+#[tauri::command]
+async fn yggdrasil_login(
+    api_root: String,
+    username: String,
+    password: String,
+) -> Result<fern_core::AccountView, String> {
+    let client_token = fern_core::client_token().map_err(|error| format!("{error:#}"))?;
+    let session = fern_core::authenticate(&api_root, &username, &password, &client_token)
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    fern_core::store_session(&session).map_err(|error| format!("{error:#}"))?;
+    // 只把界面用得着的那部分交出去，令牌留在这一侧。
+    Ok(fern_core::AccountView::from(&session))
+}
+
+/// 当前登录的是谁。没登录过返回 null——那是正常状态，不是错误。
+#[tauri::command]
+fn yggdrasil_session() -> Result<Option<fern_core::AccountView>, String> {
+    fern_core::load_session()
+        .map(|session| session.as_ref().map(fern_core::AccountView::from))
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn yggdrasil_logout() -> Result<(), String> {
+    fern_core::clear_session().map_err(|error| format!("{error:#}"))
+}
+
 /// 这台机器上的 Java。设置页要能看见 Fern 到底会用哪一个。
 #[tauri::command]
 fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
@@ -267,6 +296,9 @@ pub fn run() {
             installable_loaders,
             offline_account,
             detect_java,
+            yggdrasil_login,
+            yggdrasil_session,
+            yggdrasil_logout,
             list_java_runtimes,
             remove_java_runtime,
             instance_runtime,
