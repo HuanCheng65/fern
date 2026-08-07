@@ -124,10 +124,9 @@ pub async fn immutable(
         return Ok(bytes);
     }
     let bytes = downloader
-        .fetch(url)
+        .fetch_verified(url, sha1, size)
         .await
         .with_context(|| format!("读取 {url}"))?;
-    verify(&bytes, sha1, size).with_context(|| format!("{url} 校验失败"))?;
     write_atomic(path, &bytes).await?;
     Ok(bytes)
 }

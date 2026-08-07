@@ -265,6 +265,29 @@ impl DownloadClient {
     }
 
     pub async fn fetch(&self, url: &str) -> Result<Vec<u8>> {
+        self.fetch_checked(url, None, None).await
+    }
+
+    /// Fetch a metadata blob and validate it before accepting a source.
+    ///
+    /// Some mirrors return semantically equivalent JSON with different
+    /// serialization, so a successful HTTP response still needs to pass the
+    /// publisher's checksum before that source is considered usable.
+    pub async fn fetch_verified(
+        &self,
+        url: &str,
+        expected_sha1: Option<&str>,
+        expected_size: Option<u64>,
+    ) -> Result<Vec<u8>> {
+        self.fetch_checked(url, expected_sha1, expected_size).await
+    }
+
+    async fn fetch_checked(
+        &self,
+        url: &str,
+        expected_sha1: Option<&str>,
+        expected_size: Option<u64>,
+    ) -> Result<Vec<u8>> {
         let url = Url::parse(url).context("invalid download URL")?;
         let mut last_error = None;
         for source in self.ordered_sources(&url) {
@@ -278,8 +301,21 @@ impl DownloadClient {
                     Ok(response) if response.status().is_success() => {
                         match response.bytes().await {
                             Ok(bytes) => {
-                                self.health.record(&host, true);
-                                return Ok(bytes.to_vec());
+                                let bytes = bytes.to_vec();
+                                let size_ok =
+                                    expected_size.is_none_or(|size| bytes.len() as u64 == size);
+                                let sha1_ok =
+                                    expected_sha1.is_none_or(|sha1| sha1_matches(&bytes, sha1));
+                                if size_ok && sha1_ok {
+                                    self.health.record(&host, true);
+                                    return Ok(bytes);
+                                }
+                                self.health.record(&host, false);
+                                last_error =
+                                    Some(anyhow!("checksum or size mismatch for {}", rewritten));
+                                // A deterministic mismatch means this source's representation
+                                // differs from the publisher's bytes; retry the next source.
+                                break;
                             }
                             Err(error) => last_error = Some(error.into()),
                         }
