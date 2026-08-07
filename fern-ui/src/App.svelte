@@ -84,9 +84,11 @@
       return
     }
     if (event.key === 'Escape') {
-      // 由外向内关：先收浮层，再退出详情。
-      if (nav.overlay) nav.dismiss()
-      else nav.back()
+      // 由外向内关：浮层内部还有更浅的一层就先退那一层（设置里的二级页），
+      // 再收浮层，最后才退出详情。
+      if (nav.overlay) {
+        if (!nav.popFocus()) nav.dismiss()
+      } else nav.back()
       return
     }
     // 左右方向键就是镜头。输入框里除外——那时候方向键属于光标。

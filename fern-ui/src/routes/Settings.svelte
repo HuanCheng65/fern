@@ -24,14 +24,18 @@
    */
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
-  import { Check, Copy, FolderOpen, X } from 'lucide-svelte'
+  import { Check, ChevronLeft, Copy, FolderOpen, X } from 'lucide-svelte'
   import AccountList from '../components/AccountList.svelte'
+  import AccountProfile from '../components/AccountProfile.svelte'
+  import AddAccount from '../components/AddAccount.svelte'
   import SettingRow from '../components/SettingRow.svelte'
   import Choice from '../components/Choice.svelte'
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { accounts } from '../lib/accounts.svelte'
   import { SETTINGS_SECTIONS } from '../lib/settings-catalog'
+  import { expand } from '../lib/motion'
+  import { nav } from '../lib/nav.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
@@ -55,22 +59,40 @@
   /**
    * 从命令面板直接落到某一行时，把它滚进视野并亮一下。
    *
-   * `at` 可以是「分区」也可以是「分区/行」——前者是「打开设置的这一节」，
-   * 后者是「我要找的那一项在这里」，后一句说完就该消失，所以是一段会退掉的
-   * 底色而不是一个选中态。
+   * 这一句说完就该消失，所以是一段会退掉的底色，而不是一个选中态。
    */
   let focused = $state('')
 
   const sections = SETTINGS_SECTIONS
 
+  /**
+   * 设置有两级。
+   *
+   * 根页是那张表单：七节，每节若干行，改一个开关就是改一个值。**但有些东西
+   * 不是一个值**——一个账户有名字、UUID、类型、皮肤站、绑定的实例，还有
+   * 「设为当前」「改名」「移除」三个动作。把它塞进表单的一行里，就只能塞成
+   * 一段就地展开的东西：看一眼 UUID 要把那一行撑开，添加账户要在名单中间
+   * 撑开一整张表单，而撑开的那一刻，下面所有的行都往下跳一截。
+   *
+   * 所以加了第二级：**一行可以是一个入口。** 语法在 `nav.focus` 里定义，
+   * `分区/行/目标` 的第三段就是这一级。它和场景的纵深是同一套语法（一次
+   * 返回回到上一层、就地展开而不是横移），只是发生在浮层内部。
+   */
+  const location = $derived(at.split('/').filter(Boolean))
+  /** 二级页属于哪一行。`分区/行`。 */
+  const page = $derived(location.slice(0, 2).join('/'))
+  const target = $derived(location.length >= 3 ? location[2] : '')
+
   let section = $state<SectionId>('appearance')
   // 外面指定了落点就跟着走。设置已经开着时也生效——命令面板搜到一个设置项，
   // 该把人直接带到那一行，而不是在第一屏放下就不管了。
   $effect(() => {
-    const [wanted, row] = at.split('/')
-    if (!sections.some((item) => item.id === wanted)) return
+    const [wanted, row] = location
+    if (!wanted || !sections.some((item) => item.id === wanted)) return
     section = wanted as SectionId
-    if (!row) return
+    // 在二级页上时不闪那一行：人已经不在那一屏上了。
+    if (!row || target) return
+    const at = `${wanted}/${row}`
     focused = at
     // 等这一节渲染出来再找它。分区是刚刚才切过去的，这一帧里它还不在 DOM 里。
     requestAnimationFrame(() => {
@@ -78,6 +100,17 @@
         .querySelector(`[data-setting="${at}"]`)
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     })
+  })
+
+  /** 返回按钮上写的是它所属的那一节。 */
+  const sectionLabel = $derived(
+    sections.find((item) => item.id === location[0])?.label ?? '设置',
+  )
+
+  /** 二级页的标题。 */
+  const subtitle = $derived.by(() => {
+    if (target === 'new') return '添加账户'
+    return accounts.list.find((item) => item.id === target)?.playerName ?? '账户'
   })
   let paths = $state({ root: '', logs: '' })
   let pathError = $state('')
@@ -264,6 +297,38 @@
 </script>
 
 <div class="settings">
+  {#if target}
+    <!--
+      二级页。整块换掉而不是挤在右栏里：左侧那列锚点回答的是「这一长页我要看
+      哪一段」，而这里已经不是那一页了——留着它只会让人以为自己还站在表单上。
+    -->
+    <div class="sub scroll" data-page-scroll in:expand>
+      <header>
+        <div class="crumbs">
+          <!-- 返回到它所属的那一节，名字从目录里取——这一级是通用机制，不是
+               账户专用的。 -->
+          <button class="btn btn--link" onclick={() => nav.show('settings', location.slice(0, 2).join('/'))}>
+            <ChevronLeft size={14} strokeWidth={2} />{sectionLabel}
+          </button>
+          <h1 class="t-h1">{subtitle}</h1>
+        </div>
+        <button class="btn btn--icon close" aria-label="关闭设置" onclick={onback}>
+          <X size={16} />
+        </button>
+      </header>
+
+      <div class="sub-body">
+        {#if target === 'new'}
+          <AddAccount ondone={(id) => nav.show('settings', `account/list${id ? `/${id}` : ''}`)} />
+        {:else}
+          <AccountProfile
+            accountId={target}
+            ongone={() => nav.show('settings', 'account/list')}
+          />
+        {/if}
+      </div>
+    </div>
+  {:else}
   <Form
     {sections}
     {section}
@@ -587,9 +652,38 @@
           </SettingRow>
         {/if}
   </Form>
+  {/if}
 </div>
 
 <style>
+  /* 二级页和根页共用同一套头部与列宽，只是没有左边那列锚点。 */
+  .sub {
+    height: 100%;
+    min-height: 0;
+    padding-right: var(--s2);
+  }
+
+  .sub-body {
+    max-width: 640px;
+    padding-bottom: var(--s8);
+  }
+
+  .crumbs {
+    display: grid;
+    gap: 2px;
+  }
+
+  .crumbs .btn--link {
+    gap: 2px;
+    justify-self: start;
+    padding-left: 0;
+    color: var(--ink-3);
+  }
+
+  .crumbs .btn--link:hover {
+    color: var(--ink);
+  }
+
   .runtimes {
     display: grid;
     gap: 1px;

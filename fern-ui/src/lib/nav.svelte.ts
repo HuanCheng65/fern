@@ -57,11 +57,23 @@ class NavStore {
   params = $state<Params>({})
   overlay = $state<OverlayId>('')
   /**
-   * 浮层里要落在哪一段（设置的哪一节）。
+   * 浮层内部现在在哪。
    *
-   * 浮层不进地址，所以这不是路由的一部分——它是「打开的时候看这里」，
-   * 用完就不再有意义。顶栏的头像和命令面板都靠它把人直接送到目的地，
-   * 而不是送到设置的第一屏再让人自己找。
+   * 语法是 `分区/行/目标`，逐级可选：
+   *
+   * ```text
+   * ''                       设置的第一节
+   * account                  账户那一节
+   * game/gc                  游戏那一节，并把「垃圾回收器」那一行滚进视野闪一下
+   * account/list/xxxxxxxx    账户名单的二级页：那一个账户的档案
+   * ```
+   *
+   * 它一开始只是「打开的时候看这里」，用完就不再有意义。加了二级页之后它变成
+   * 了**浮层内部的位置**——因为那两件事本来就是同一件：能被 ⌘K 直接送达的
+   * 地方，和用户此刻站着的地方，不该是两个变量。这样二级页也就自动可寻址、
+   * Esc 也就知道该先退哪一层。
+   *
+   * 仍然不进地址：浮层不是「地方」，回退历史里不该出现「打开过设置」。
    */
   focus = $state('')
 
@@ -173,6 +185,18 @@ class NavStore {
   toggle(overlay: OverlayId, focus = '') {
     this.overlay = this.overlay === overlay ? '' : overlay
     this.focus = this.overlay ? focus : ''
+  }
+
+  /**
+   * 浮层内部往回退一级。退不动就返回 false，让调用方去关掉整个浮层。
+   *
+   * 「由外向内关」那条规矩要成立，Esc 就得知道浮层内部还有没有更浅的一层。
+   */
+  popFocus(): boolean {
+    const parts = this.focus.split('/').filter(Boolean)
+    if (parts.length < 3) return false
+    this.focus = parts.slice(0, 2).join('/')
+    return true
   }
 
   dismiss() {

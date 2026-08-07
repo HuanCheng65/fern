@@ -13,6 +13,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { inTauri } from './instances.svelte'
+import { nav } from './nav.svelte'
 import { commands, provides } from './palette.svelte'
 
 export type AccountKind = 'offline' | 'microsoft' | 'authlib'
@@ -185,6 +186,9 @@ provides(() =>
   })),
 )
 
+/** 档案是设置里的二级页，所以它的地址就是 `nav.focus` 的第三段。 */
+const profileAt = (id: string) => `account/list/${id}`
+
 commands(() => [
   {
     id: 'account.switch',
@@ -195,5 +199,33 @@ commands(() => [
     run: (subject) => {
       if (subject) void accounts.use(subject.id)
     },
+  },
+  {
+    id: 'account.profile',
+    title: '账户档案',
+    hint: accounts.playerName,
+    accepts: 'account',
+    // 默认宾语是当前账户：多数时候「看看我的档案」说的就是它。
+    subject: () => {
+      const item = accounts.active
+      if (!item) return undefined
+      return {
+        type: 'account' as const,
+        id: item.id,
+        title: item.playerName,
+        hint: KIND_LABEL[item.kind],
+        seed: item.uuid,
+        run: () => nav.show('settings', profileAt(item.id)),
+      }
+    },
+    run: (subject) => {
+      if (subject) nav.show('settings', profileAt(subject.id))
+    },
+  },
+  {
+    id: 'account.add',
+    title: '添加账户',
+    accepts: 'none',
+    run: () => nav.show('settings', profileAt('new')),
   },
 ])

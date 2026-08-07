@@ -1,0 +1,279 @@
+<script lang="ts">
+  /**
+   * 添加账户。设置里的二级页，分两步。
+   *
+   * 分步不是为了仪式感，是因为**三种方式要问的东西差别极大**：离线要一个名字，
+   * 正版要你去浏览器输一个八位码，外置要三个字段。上一版把三者塞进名单里就地
+   * 展开，于是这一块的高度每选一次就跳一次，而且三张表单必须同时存在于同一段
+   * 标记里。
+   *
+   * 第一步只做一件事：说清楚三种方式各自是什么。这一步选错的代价不小——离线
+   * 账户进不了正版服务器，而这句话要在选之前说，不是在失败之后说。
+   */
+  import { ArrowLeft } from 'lucide-svelte'
+  import { accounts, type AccountKind } from '../lib/accounts.svelte'
+  import { notices } from '../lib/notices.svelte'
+
+  interface Props {
+    /** 加成了就带着新账户的 id 回去，取消则不带。 */
+    ondone: (id?: string) => void
+  }
+
+  let { ondone }: Props = $props()
+
+  /** 空串表示还停在第一步。 */
+  let kind = $state<AccountKind | ''>('')
+  let offlineName = $state('')
+  let apiRoot = $state('https://littleskin.cn/api/yggdrasil')
+  let username = $state('')
+  let password = $state('')
+
+  const OFFLINE_NAME = /^[A-Za-z0-9_]{3,16}$/
+
+  const KINDS: { kind: AccountKind; title: string; note: string }[] = [
+    { kind: 'microsoft', title: '微软账户', note: '正版登录，支持联机、皮肤与成就' },
+    { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 兼容皮肤站' },
+    { kind: 'offline', title: '离线模式', note: '仅可游玩本地世界与离线服务器' },
+  ]
+
+  /** 加完之后新出现的那一个就是它。名册按添加顺序排，最新的在最后。 */
+  const newest = () => accounts.list[accounts.list.length - 1]?.id
+
+  function pick(next: AccountKind) {
+    kind = next
+    accounts.error = ''
+  }
+
+  function back() {
+    kind = ''
+    password = ''
+    accounts.error = ''
+  }
+
+  function finish(name: string) {
+    notices.say({ title: `已添加 ${name}` })
+    ondone(newest())
+  }
+
+  async function submitOffline() {
+    const name = offlineName.trim()
+    if (!OFFLINE_NAME.test(name)) return
+    await accounts.addOffline(name)
+    if (!accounts.error) finish(name)
+  }
+
+  async function submitYggdrasil() {
+    if (!apiRoot.trim() || !username.trim() || !password) return
+    await accounts.loginYggdrasil(apiRoot.trim(), username.trim(), password)
+    // 拿到令牌就把密码从内存里去掉，它已经没有用处了。
+    password = ''
+    if (!accounts.error) finish(accounts.list[accounts.list.length - 1]?.playerName ?? '账户')
+  }
+
+  async function submitMicrosoft() {
+    await accounts.loginMicrosoft()
+    if (!accounts.error) finish(accounts.list[accounts.list.length - 1]?.playerName ?? '账户')
+  }
+</script>
+
+<div class="adder">
+  {#if kind === ''}
+    <p class="lead t-quiet">可以同时保存多个身份，之后随时切换。</p>
+    <div class="kinds">
+      {#each KINDS as option (option.kind)}
+        <button class="kind" onclick={() => pick(option.kind)}>
+          <strong>{option.title}</strong>
+          <small>{option.note}</small>
+        </button>
+      {/each}
+    </div>
+  {:else}
+    <button class="btn btn--link step-back" onclick={back}>
+      <ArrowLeft size={14} strokeWidth={2} />换一种方式
+    </button>
+
+    {#if kind === 'offline'}
+      <form
+        class="fields"
+        onsubmit={(event) => {
+          event.preventDefault()
+          void submitOffline()
+        }}
+      >
+        <label class="field">
+          <span>
+            玩家名称
+            <small>3–16 位字母、数字或下划线。UUID 由名称推导，修改名称即更换身份。</small>
+          </span>
+          <input
+            class="input"
+            bind:value={offlineName}
+            maxlength="16"
+            spellcheck="false"
+            placeholder="Steve"
+          />
+        </label>
+        <button class="btn btn--primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>
+          添加
+        </button>
+      </form>
+    {:else if kind === 'microsoft'}
+      {#if accounts.deviceCode}
+        <!-- 登录码是这一屏此刻唯一要做的事，所以给它整行和最大的字号。 -->
+        <div class="fields">
+          <span class="field-label">
+            在浏览器中输入以下代码
+            <small>密码仅在微软页面输入，不经过 Fern。</small>
+          </span>
+          <p class="code t-mono selectable">{accounts.deviceCode.userCode}</p>
+          <p class="t-mono site selectable">{accounts.deviceCode.verificationUri}</p>
+        </div>
+      {:else}
+        <div class="fields">
+          <span class="field-label">
+            微软账户
+            <small>获取登录码后在浏览器中完成验证，无需在此输入密码。</small>
+          </span>
+          <button class="btn btn--primary" disabled={accounts.busy} onclick={() => void submitMicrosoft()}>
+            {accounts.busy ? '等待中' : '获取登录码'}
+          </button>
+        </div>
+      {/if}
+    {:else}
+      <form
+        class="fields"
+        onsubmit={(event) => {
+          event.preventDefault()
+          void submitYggdrasil()
+        }}
+      >
+        <label class="field">
+          <span>
+            皮肤站地址
+            <small>Yggdrasil API 根地址，可在皮肤站的「在启动器中使用」页面获取。</small>
+          </span>
+          <input class="input" bind:value={apiRoot} spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>邮箱</span>
+          <input class="input" bind:value={username} spellcheck="false" autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>
+            密码
+            <small>仅用于换取令牌，不会保存。令牌存入系统钥匙串。</small>
+          </span>
+          <input class="input" type="password" bind:value={password} autocomplete="current-password" />
+        </label>
+        <button class="btn btn--primary" type="submit" disabled={accounts.busy}>
+          {accounts.busy ? '登录中' : '登录'}
+        </button>
+      </form>
+    {/if}
+  {/if}
+
+  {#if accounts.error}<div class="alert">{accounts.error}</div>{/if}
+</div>
+
+<style>
+  .adder {
+    display: grid;
+    gap: var(--s5);
+  }
+
+  .lead {
+    margin: 0;
+    font-size: var(--t-small);
+  }
+
+  /* 三种方式各占一整行：它们要说的话不一样长，挤成三列会把最长的那句截断。 */
+  .kinds {
+    display: grid;
+    gap: var(--s2);
+  }
+
+  .kind {
+    display: grid;
+    gap: 3px;
+    padding: var(--s3) var(--s4);
+    border-radius: var(--r2);
+    background: var(--tint-1);
+    color: var(--ink-3);
+    text-align: left;
+    transition:
+      color var(--t-fast) var(--ease),
+      background var(--t-fast) var(--ease);
+  }
+
+  .kind:hover {
+    background: var(--tint-2);
+    color: var(--ink-2);
+  }
+
+  .kind strong {
+    color: var(--ink);
+    font-size: var(--t-body);
+    font-weight: 500;
+  }
+
+  .kind small {
+    font-size: var(--t-small);
+  }
+
+  .step-back {
+    justify-self: start;
+    gap: 4px;
+    padding-left: 0;
+    color: var(--ink-3);
+  }
+
+  .step-back:hover {
+    color: var(--ink);
+  }
+
+  .fields {
+    display: grid;
+    gap: var(--s4);
+    justify-items: stretch;
+  }
+
+  .field {
+    display: grid;
+    gap: var(--s2);
+  }
+
+  .field > span,
+  .field-label {
+    display: grid;
+    gap: 3px;
+    color: var(--ink);
+    font-size: var(--t-body);
+  }
+
+  .field small,
+  .field-label small {
+    max-width: 46ch;
+    color: var(--ink-3);
+    font-size: var(--t-small);
+    line-height: 1.55;
+  }
+
+  .fields .btn--primary {
+    justify-self: start;
+  }
+
+  /* 八位码是这一刻唯一要读的东西，字号给到位。 */
+  .code {
+    margin: 0;
+    color: var(--ink);
+    font-size: var(--t-h1);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+  }
+
+  .site {
+    margin: 0;
+    color: var(--ink-2);
+    overflow-wrap: anywhere;
+  }
+</style>
