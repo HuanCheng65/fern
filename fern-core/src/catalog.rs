@@ -162,6 +162,21 @@ pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<Instance
     })
 }
 
+/// 钉住这个实例用哪个账户。`None` 是「跟着当前账户走」。
+///
+/// 不走 `update_instance_settings`：那个接口整份替换 `settings`，而账户不在
+/// 那份结构里——正因为它会被整份替换。
+pub fn set_instance_account(
+    paths: &DataPaths,
+    instance_id: &str,
+    account_id: Option<&str>,
+) -> Result<InstanceProfile> {
+    let mut profile = read_instance(paths, instance_id)?;
+    profile.account_id = account_id.map(str::to_owned);
+    write_instance_profile(paths, &profile)?;
+    Ok(profile)
+}
+
 /// 改实例设置。整份换掉而不是逐字段打补丁：设置面板本来就是一次性提交
 /// 一整屏，逐字段的接口只会在两端各埋一半的默认值。
 pub fn update_instance_settings(

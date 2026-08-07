@@ -133,6 +133,16 @@ pub struct InstanceProfile {
     pub cover: CoverSeed,
     #[serde(default)]
     pub settings: InstanceSettings,
+    /// 这个实例用哪个账户。None 表示跟着当前账户走。
+    ///
+    /// 放在这里而不是 `settings` 里，因为 `settings` 是被整份替换的（实例
+    /// 设置面板一次提交一整屏），一个它不认识的字段会被顺手抹掉。
+    ///
+    /// 第一次成功启动会把当时用的那一个记下来，所以「绑定」不需要一个绑定
+    /// 界面——它是「记住上次」的副产品。下周再打开这个整合包，它还是用小号，
+    /// 哪怕这期间你用大号玩过别的。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// 上次真的把游戏跑起来的时刻，Unix 秒。从没玩过就是 None。
     ///
     /// 曲库默认按它排序——「上次玩的那个」几乎总是「这次要玩的那个」。存
@@ -155,6 +165,7 @@ impl InstanceProfile {
             game_version: game_version.into(),
             loader: LoaderKind::Vanilla,
             loader_profile: None,
+            account_id: None,
             cover: CoverSeed {
                 identity: cover_identity,
                 growth: 0,

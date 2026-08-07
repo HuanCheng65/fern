@@ -21,6 +21,8 @@ export interface Instance {
   cover: string
   /** 上次玩过的 Unix 秒。从没玩过是 undefined。 */
   lastPlayed?: number
+  /** 这个实例用哪个账户。没记过就是 undefined，跟着当前账户走。 */
+  accountId?: string
 }
 
 export interface VersionOption {
@@ -42,6 +44,7 @@ interface CoreInstance {
   loader: string
   cover?: { identity: string }
   lastPlayed?: number
+  accountId?: string
 }
 
 export const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -64,6 +67,7 @@ const toInstance = (profile: CoreInstance): Instance => ({
   loader: loaderName(profile.loader),
   cover: profile.cover?.identity || profile.id,
   lastPlayed: profile.lastPlayed,
+  accountId: profile.accountId,
 })
 
 const SELECTED_KEY = 'fern.instance.selected'
@@ -154,6 +158,22 @@ class InstanceStore {
       // 拿不到就只给原版：少一个选项，好过给一个点了会失败的选项。
     }
     return this.loaders
+  }
+
+  /**
+   * 钉住这个实例用哪个账户。null 是「跟着当前账户走」。
+   *
+   * 启动那一步也会写它——第一次用某个账户启动之后，这个实例就记住了。所以
+   * 这里是「改一下」，不是「设置一次」。
+   */
+  async setAccount(id: string, accountId: string | null) {
+    if (!inTauri()) return
+    try {
+      await invoke('set_instance_account', { instanceId: id, accountId })
+      await this.load()
+    } catch (error) {
+      this.error = String(error)
+    }
   }
 
   /** 改名、复制、删除之后都要重新读一遍，列表和封面才对得上。 */

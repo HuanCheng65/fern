@@ -189,9 +189,18 @@ pub async fn launch_instance(
         return Err(anyhow!("client jar is missing: {}", client_jar.display()));
     }
 
-    // 名册里当前那一个。哪个实例用哪个账号，见 accounts.rs。
-    let mut account = Account::active(paths)?;
+    // 这个实例记着的那一个，没记过就跟当前的走（见 accounts.rs）。
+    let record = crate::account_for_instance(paths, &profile)
+        .ok_or_else(|| anyhow!("还没有账户，请在设置中添加一个"))?;
+    let mut account = Account::load(&record)?;
     account.ensure_fresh(paths, &job.downloads()).await?;
+    // 刷新过了才记：这一刻「这个实例用这个账户」才算真的成立。之后游戏因为
+    // 别的原因起不来也无所谓，身份这件事已经定了。
+    if profile.account_id.as_deref() != Some(record.id.as_str()) {
+        let mut updated = profile.clone();
+        updated.account_id = Some(record.id.clone());
+        crate::write_instance_profile(paths, &updated)?;
+    }
     let credentials = account.launch_credentials()?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
     let legacy_assets = metadata

@@ -35,6 +35,7 @@ mod version;
 pub use account::Account;
 pub use accounts::{
     AccountKind, AccountRecord, Roster, Secret, active as active_account,
+    for_instance as account_for_instance,
     add_offline as add_offline_account, adopt_session as adopt_account, list as list_accounts,
     remove as remove_account, rename_offline as rename_offline_account,
     set_active as set_active_account,
@@ -46,7 +47,8 @@ pub use auth::{
 pub use catalog::{
     InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, delete_instance,
     duplicate_instance, instance_runtime, list_instances, list_versions, read_instance,
-    rename_instance, touch_played, update_instance_settings, write_instance_profile,
+    rename_instance, set_instance_account, touch_played, update_instance_settings,
+    write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
 pub use credentials::{client_token, store_secret};

@@ -21,7 +21,6 @@
   import Mark from './Mark.svelte'
   import { platform } from '../lib/frame.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
-  import { accounts } from '../lib/accounts.svelte'
 
   interface Props {
     /** 当前详情的名字。顶栏不认识实例，只认识一个要显示的词。 */
@@ -48,7 +47,6 @@
     if (detailLabel) held = detailLabel
   })
   const isMac = $derived(platform === 'macos')
-  const initials = $derived((accounts.playerName || 'FERN').slice(0, 2).toUpperCase())
 
   $effect(() => {
     const el = buttons[nav.index]
@@ -126,14 +124,6 @@
       onclick={() => nav.toggle('settings')}
     >
       <Settings size={16} strokeWidth={1.8} />
-    </button>
-
-    <button
-      class="avatar"
-      onclick={() => nav.show('settings', 'account')}
-      title={accounts.playerName || '添加账户'}
-    >
-      {initials}
     </button>
   </div>
 
@@ -304,28 +294,6 @@
     margin-left: auto;
   }
 
-  .avatar {
-    display: grid;
-    place-items: center;
-    width: 26px;
-    height: 26px;
-    margin-left: var(--s2);
-    border-radius: 50%;
-    background: var(--tint-2);
-    box-shadow: inset 0 0 0 1px var(--hairline);
-    color: var(--ink-2);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    transition:
-      background var(--t-fast) var(--ease),
-      color var(--t-fast) var(--ease);
-  }
-
-  .avatar:hover {
-    color: var(--ink);
-    background: var(--tint-3);
-  }
 
   /* 窗口窄到五个词和两侧要打架时，先牺牲词距。 */
   @media (max-width: 860px) {

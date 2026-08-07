@@ -725,6 +725,19 @@ async fn remove_account(id: String) -> Result<(), String> {
     .await?
 }
 
+/// 钉住某个实例用哪个账户。`account_id` 为 null 表示跟着当前账户走。
+#[tauri::command]
+async fn set_instance_account(
+    instance_id: String,
+    account_id: Option<String>,
+) -> Result<fern_core::InstanceProfile, String> {
+    off_thread(move || {
+        fern_core::set_instance_account(&paths()?, &instance_id, account_id.as_deref())
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 /// 外置登录。密码只在这一次调用里存在，登录成功后进系统钥匙串的是令牌。
 #[tauri::command]
 async fn yggdrasil_login(
@@ -818,6 +831,7 @@ pub fn run() {
             add_offline_account,
             rename_offline_account,
             remove_account,
+            set_instance_account,
             microsoft_login,
             yggdrasil_login,
             list_java_runtimes,

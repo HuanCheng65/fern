@@ -12,11 +12,11 @@
    * 内容压在左下角，右边和上边整片留给背景。这不是没排满，是画框的意思。
    */
   import { ChevronDown, Play, X } from 'lucide-svelte'
+  import AccountChip from '../components/AccountChip.svelte'
   import Stage from '../layouts/Stage.svelte'
   import { instances } from '../lib/instances.svelte'
   import { fraction, jobs, measure } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
-  import { prefs } from '../lib/prefs.svelte'
 
   interface Props {
     onswitch: () => void
@@ -72,6 +72,9 @@
             {/if}
           </span>
         </button>
+
+        <!-- 用谁的身份，就站在启动键旁边——那是它唯一真正重要的时刻。 -->
+        <AccountChip instanceId={current.id} />
 
         {#if job && measure(job)}
           <span class="detail t-mono">{measure(job)}</span>

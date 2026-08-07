@@ -120,6 +120,7 @@ mod tests {
                 growth: 0,
             },
             settings: InstanceSettings::default(),
+            account_id: None,
             last_played: None,
         }
     }

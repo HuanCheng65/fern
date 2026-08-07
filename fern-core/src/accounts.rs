@@ -245,6 +245,20 @@ pub fn active(paths: &DataPaths) -> Option<AccountRecord> {
     load(paths).active().cloned()
 }
 
+/// 这个实例该用谁。
+///
+/// 实例记着的那一个优先，没记过才跟当前的走。记着的那一个已经被移除了就当没
+/// 记过——账户没了不该让实例启动不起来，何况屏幕上会显示换成了谁。
+pub fn for_instance(paths: &DataPaths, profile: &crate::InstanceProfile) -> Option<AccountRecord> {
+    let roster = load(paths);
+    profile
+        .account_id
+        .as_deref()
+        .and_then(|id| roster.accounts.iter().find(|account| account.id == id))
+        .or_else(|| roster.active())
+        .cloned()
+}
+
 pub fn set_active(paths: &DataPaths, id: &str) -> Result<()> {
     let mut roster = load(paths);
     if !roster.accounts.iter().any(|account| account.id == id) {
@@ -421,6 +435,38 @@ mod tests {
 
         remove(&paths, &first.id).expect("remove");
         assert!(active(&paths).is_none());
+
+        fs::remove_dir_all(&paths.root).expect("clean up");
+    }
+
+    #[test]
+    fn an_instance_keeps_the_account_it_last_launched_with() {
+        let paths = paths("binding");
+        let alt = add_offline(&paths, "Alt").expect("add");
+        let main = add_offline(&paths, "Main").expect("add");
+        assert_eq!(active(&paths).expect("active").id, main.id);
+
+        let mut profile = crate::InstanceProfile::vanilla(
+            crate::InstanceId::parse("modpack").expect("id"),
+            "整合包",
+            "1.21.1",
+        );
+        // 没记过就跟当前的走。
+        assert_eq!(
+            for_instance(&paths, &profile).expect("resolved").id,
+            main.id
+        );
+
+        // 记过之后，哪怕这期间用大号玩过别的，它还是用小号。
+        profile.account_id = Some(alt.id.clone());
+        assert_eq!(for_instance(&paths, &profile).expect("resolved").id, alt.id);
+
+        // 记着的那个被移除了，就当没记过——账户没了不该让实例启动不起来。
+        remove(&paths, &alt.id).expect("remove");
+        assert_eq!(
+            for_instance(&paths, &profile).expect("resolved").id,
+            main.id
+        );
 
         fs::remove_dir_all(&paths.root).expect("clean up");
     }
