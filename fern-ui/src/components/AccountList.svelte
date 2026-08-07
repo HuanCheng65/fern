@@ -72,7 +72,7 @@
 
 <div class="accounts">
   {#if accounts.list.length === 0 && !accounts.loading}
-    <p class="t-quiet empty">还没有账户。添加一个之后才能启动游戏。</p>
+    <p class="t-quiet empty">尚未添加账户。添加后方可启动游戏。</p>
   {/if}
 
   <ul class="roster">
@@ -140,7 +140,7 @@
       {#if adding === 'offline'}
         <form class="fields" onsubmit={(event) => { event.preventDefault(); void submitOffline() }}>
           <label class="field">
-            <span>玩家名称<small>3–16 位字母、数字或下划线。UUID 由它算出，改名等于换一个身份。</small></span>
+            <span>玩家名称<small>3–16 位字母、数字或下划线。UUID 由名称推导，修改名称即更换身份。</small></span>
             <input class="input" bind:value={offlineName} maxlength="16" spellcheck="false" placeholder="Steve" />
           </label>
           <button class="btn btn--primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>

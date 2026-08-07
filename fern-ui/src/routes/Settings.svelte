@@ -311,7 +311,7 @@
           <div class="row stack">
             <span class="label">
               账户
-              <small>可以同时留着多个身份，点名字切换。令牌存在系统钥匙串里，不写进任何文件。</small>
+              <small>可保存多个身份，点击名称切换。令牌存储于系统钥匙串，不写入任何文件。</small>
             </span>
             <AccountList />
           </div>
@@ -323,11 +323,11 @@
           -->
           <div class="row stack">
             <span class="label">
-              交给游戏的内存
+              游戏内存上限
               <small>
-                自动分配的堆和实例里手填的值都被这条线夹住。
+                自动分配的堆与实例中手动指定的值均以此为上限。
                 {#if budget.physicalMb}
-                  这台机器共 {gigabytes(budget.physicalMb)} GB，默认给游戏一半。
+                  本机内存共 {gigabytes(budget.physicalMb)} GB，默认上限为其一半。
                 {/if}
               </small>
             </span>
@@ -350,7 +350,7 @@
                   void refreshBudget()
                 }}
               >
-                默认
+                恢复默认
               </button>
             </div>
           </div>
@@ -358,7 +358,7 @@
           <div class="row">
             <span class="label">
               垃圾回收器
-              <small>ZGC 停顿更短，但占用更多内存与 CPU。实例可以单独覆盖。</small>
+              <small>ZGC 停顿更短，但占用更多内存与 CPU。实例可单独覆盖。</small>
             </span>
             <Choice
               label="垃圾回收器"
@@ -374,7 +374,7 @@
           <div class="row stack">
             <span class="label">
               游戏窗口
-              <small>不指定就交给游戏自己记住的尺寸。</small>
+              <small>未指定时沿用游戏自身记录的尺寸。</small>
             </span>
             <div class="slider-row">
               <Choice
@@ -411,7 +411,7 @@
             <span class="label">
               额外 JVM 参数
               <small>
-                排在 Fern 自己那几个之后，所以同名的开关以你写的为准。按空格分开，不解析引号。
+                置于 Fern 内置参数之后，同名参数以此处为准。以空格分隔，不解析引号。
               </small>
             </span>
             <input
@@ -443,7 +443,7 @@
           <div class="row stack">
             <span class="label">
               已安装的运行时
-              <small>缺什么会在首次启动那个实例时自动补上，这一层不需要照看。</small>
+              <small>缺失的版本将在首次启动相应实例时自动下载，无需手动维护。</small>
             </span>
             {#if runtimes.length === 0}
               <p class="t-quiet">未找到可用的 Java，首次启动游戏时将自动下载。</p>

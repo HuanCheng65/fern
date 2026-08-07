@@ -203,7 +203,7 @@
             {#if runtime && runtime.modsCount > 0}
               {runtime.modsCount} 个模组 · 物理内存 {Math.round(runtime.physicalMemoryMb / 1024)} GB
             {:else}
-              物理内存 {Math.round((runtime?.physicalMemoryMb ?? 0) / 1024)} GB，交给游戏至多 {Math.round(
+              物理内存 {Math.round((runtime?.physicalMemoryMb ?? 0) / 1024)} GB，游戏上限 {Math.round(
                 ceiling / 1024,
               )} GB
             {/if}

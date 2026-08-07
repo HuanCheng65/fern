@@ -66,7 +66,7 @@ pub async fn mutable(
 ) -> Result<Cached> {
     // slug 里会拼进游戏版本号这种来自网络的字符串，它要变成文件名。
     if !is_safe_slug(slug) {
-        return Err(anyhow!("缓存名不能作为文件名：{slug}"));
+        return Err(anyhow!("缓存名称不可用作文件名：{slug}"));
     }
     let path = paths.cache.join(slug);
     let local = read_with_age(&path).await;
@@ -95,7 +95,7 @@ pub async fn mutable(
                 // 留痕。不留的话，「为什么昨晚发的快照没出现」将来是一个
                 // 完全没有线索的问题。
                 let _ = paths.append_log(&format!(
-                    "[metacache] {slug} 刷新失败（{error:#}），改用 {} 分钟前的缓存",
+                    "[metacache] {slug} 刷新失败（{error:#}），使用 {} 分钟前的缓存",
                     age.as_secs() / 60
                 ));
                 Ok(Cached {

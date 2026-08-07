@@ -103,7 +103,7 @@ pub fn load(paths: &DataPaths) -> Roster {
         Ok(bytes) => match serde_json::from_slice::<Roster>(&bytes) {
             Ok(roster) => roster,
             Err(error) => {
-                let _ = paths.append_log(&format!("[accounts] accounts.json 读不出来：{error}"));
+                let _ = paths.append_log(&format!("[accounts] accounts.json 解析失败：{error}"));
                 Roster::default()
             }
         },
@@ -169,7 +169,9 @@ fn migrate(paths: &DataPaths) -> Roster {
         }
         Ok(None) => {}
         Err(error) => {
-            let _ = paths.append_log(&format!("[accounts] 迁移微软账户时读不到钥匙串：{error:#}"));
+            let _ = paths.append_log(&format!(
+                "[accounts] 迁移微软账户时无法访问系统钥匙串：{error:#}"
+            ));
         }
     }
 
@@ -193,7 +195,9 @@ fn migrate(paths: &DataPaths) -> Roster {
         }
         Ok(None) => {}
         Err(error) => {
-            let _ = paths.append_log(&format!("[accounts] 迁移外置账户时读不到钥匙串：{error:#}"));
+            let _ = paths.append_log(&format!(
+                "[accounts] 迁移外置账户时无法访问系统钥匙串：{error:#}"
+            ));
         }
     }
 
@@ -262,7 +266,7 @@ pub fn for_instance(paths: &DataPaths, profile: &crate::InstanceProfile) -> Opti
 pub fn set_active(paths: &DataPaths, id: &str) -> Result<()> {
     let mut roster = load(paths);
     if !roster.accounts.iter().any(|account| account.id == id) {
-        return Err(anyhow!("没有这个账户"));
+        return Err(anyhow!("账户不存在"));
     }
     roster.active = id.to_owned();
     save(paths, &roster)
@@ -365,9 +369,9 @@ pub fn rename_offline(paths: &DataPaths, id: &str, player_name: &str) -> Result<
         .accounts
         .iter_mut()
         .find(|account| account.id == id)
-        .ok_or_else(|| anyhow!("没有这个账户"))?;
+        .ok_or_else(|| anyhow!("账户不存在"))?;
     if account.kind != AccountKind::Offline {
-        return Err(anyhow!("只有离线账户的名字由本地决定"));
+        return Err(anyhow!("仅离线账户的名称由本地指定"));
     }
     account.player_name = fresh.player_name;
     account.uuid = fresh.uuid;

@@ -199,7 +199,7 @@ pub async fn launch_instance(
 
     // 这个实例记着的那一个，没记过就跟当前的走（见 accounts.rs）。
     let record = crate::account_for_instance(paths, &profile)
-        .ok_or_else(|| anyhow!("还没有账户，请在设置中添加一个"))?;
+        .ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
     let mut account = Account::load(&record)?;
     account.ensure_fresh(paths, &job.downloads()).await?;
     // 刷新过了才记：这一刻「这个实例用这个账户」才算真的成立。之后游戏因为

@@ -57,7 +57,7 @@ impl Account {
     /// 名册里当前那一个。
     pub fn active(paths: &DataPaths) -> Result<Self> {
         let record =
-            accounts::active(paths).ok_or_else(|| anyhow!("还没有账户，请在设置中添加一个"))?;
+            accounts::active(paths).ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
         Self::load(&record)
     }
 
@@ -74,7 +74,7 @@ impl Account {
             kind => {
                 let missing = || {
                     anyhow!(
-                        "{} 的登录信息已经不在钥匙串里了，请重新登录",
+                        "{} 的登录信息已不在系统钥匙串中，请重新登录",
                         record.player_name
                     )
                 };

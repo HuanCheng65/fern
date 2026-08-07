@@ -47,7 +47,7 @@
 />
 
 <div class="chip-root" bind:this={root}>
-  <button class="chip" onclick={() => (open = !open)} title="以谁的身份启动">
+  <button class="chip" onclick={() => (open = !open)} title="启动身份">
     {#if account}
       <span class="face"><Cover seed={account.uuid} quality={0.4} /></span>
       <span class="who">{account.playerName}</span>
@@ -60,7 +60,7 @@
   {#if open}
     <div class="menu">
       {#if accounts.list.length === 0}
-        <p class="none-row">还没有账户</p>
+        <p class="none-row">尚未添加账户</p>
       {/if}
       {#each accounts.list as item (item.id)}
         <button class="row" onclick={() => void pick(item.id)}>

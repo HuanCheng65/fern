@@ -284,7 +284,7 @@ async fn manifest_entry(
         Freshness::Within(metacache::LISTING_TTL),
     )
     .await?;
-    let missing = || anyhow!("Mojang 的版本清单里没有 {version_id}");
+    let missing = || anyhow!("Mojang 版本清单中不存在 {version_id}");
     let find = |bytes: &[u8]| -> Result<Option<VersionManifestEntry>> {
         let manifest: VersionManifest = serde_json::from_slice(bytes).context("解析版本清单")?;
         Ok(manifest
