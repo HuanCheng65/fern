@@ -18,6 +18,7 @@
   import { listen } from '@tauri-apps/api/event'
   import { Check, Copy, FolderOpen, X } from 'lucide-svelte'
   import Choice from '../components/Choice.svelte'
+  import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { inTauri } from '../lib/instances.svelte'
@@ -28,13 +29,14 @@
 
   let { onback }: Props = $props()
 
-  const sections = [
+  type SectionId = 'appearance' | 'account' | 'download' | 'data'
+
+  const sections: { id: SectionId; label: string }[] = [
     { id: 'appearance', label: '外观' },
     { id: 'account', label: '账户' },
     { id: 'download', label: '下载' },
     { id: 'data', label: '数据' },
-  ] as const
-  type SectionId = (typeof sections)[number]['id']
+  ]
 
   let section = $state<SectionId>('appearance')
   let paths = $state({ root: '', logs: '' })
@@ -197,26 +199,22 @@
   }
 </script>
 
-<section class="settings scroll">
-  <div class="inner">
-    <header>
-      <h1 class="t-h1">设置</h1>
-      <button class="btn btn--icon close" aria-label="关闭设置" onclick={onback}>
-        <X size={16} />
-      </button>
-    </header>
+<div class="settings">
+  <Form
+    {sections}
+    {section}
+    onsection={(id) => (section = id as SectionId)}
+  >
+    {#snippet head()}
+      <header>
+        <h1 class="t-h1">设置</h1>
+        <button class="btn btn--icon close" aria-label="关闭设置" onclick={onback}>
+          <X size={16} />
+        </button>
+      </header>
+    {/snippet}
 
-    <div class="layout">
-      <nav aria-label="设置分类">
-        {#each sections as item (item.id)}
-          <button class:on={section === item.id} onclick={() => (section = item.id)}>
-            {item.label}
-          </button>
-        {/each}
-      </nav>
-
-      <div class="content">
-        {#if section === 'appearance'}
+    {#if section === 'appearance'}
           <div class="row">
             <span class="label">强调色</span>
             <Choice
@@ -534,10 +532,8 @@
             <span class="t-mono value">Fern 0.1.0</span>
           </div>
         {/if}
-      </div>
-    </div>
-  </div>
-</section>
+  </Form>
+</div>
 
 <style>
   /* 八位码是这一刻唯一要读的东西，字号给到位。 */
@@ -580,14 +576,9 @@
     position: absolute;
     inset: 0;
     z-index: 5;
-    padding: 0 var(--pad-x) var(--s8);
+    padding: 0 var(--pad-x);
     background: var(--panel);
     backdrop-filter: blur(26px) saturate(1.3);
-  }
-
-  .inner {
-    max-width: 860px;
-    margin: 0 auto;
   }
 
   header {
@@ -603,41 +594,10 @@
     margin-top: 2px;
   }
 
-  .layout {
-    display: grid;
-    grid-template-columns: 120px minmax(0, 1fr);
-    gap: clamp(var(--s5), 5vw, var(--s8));
-  }
 
-  nav {
-    display: flex;
-    flex-direction: column;
-    align-items: start;
-    gap: var(--s1);
-    position: sticky;
-    top: 0;
-    align-self: start;
-  }
 
-  nav button {
-    padding: var(--s1) 0;
-    color: var(--ink-4);
-    font-size: var(--t-body);
-    transition: color var(--t-fast) var(--ease);
-  }
 
-  nav button:hover {
-    color: var(--ink-2);
-  }
 
-  nav button.on {
-    color: var(--ink);
-    font-weight: 550;
-  }
-
-  .content {
-    min-width: 0;
-  }
 
   /* 每一行是「一个名字，一个控件」。说明文字只在没有它就会用错的地方出现。 */
   .row {
@@ -759,17 +719,6 @@
   }
 
   @media (max-width: 720px) {
-    .layout {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--s5);
-    }
-
-    nav {
-      position: static;
-      flex-direction: row;
-      gap: var(--s4);
-    }
-
     .row {
       flex-direction: column;
       align-items: stretch;

@@ -149,6 +149,13 @@ class SupplyStore {
 
   /** 已经翻到第几页。列表在返回详情页之后要还在原地。 */
   #offset = 0
+  /** 结果区滚到哪了。切走再回来要接着看，不然又要从头往下滑一遍。 */
+  scrollTop = 0
+
+  /** 点卡片的那一刻就知道标题了，不必等详情加载完面包屑才对。 */
+  beginViewing(title: string) {
+    this.viewingTitle = title
+  }
 
   /** 把筛选条件设成「为这个实例找东西」。跨场景跳转过来时用。 */
   aimAt(instanceId: string) {

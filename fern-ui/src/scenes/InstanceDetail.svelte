@@ -14,6 +14,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { Check, FolderOpen, Play, RefreshCw } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
+  import Detail from '../layouts/Detail.svelte'
   import InstanceSettings from '../components/InstanceSettings.svelte'
   import LogLines from '../components/LogLines.svelte'
   import ModList from '../components/ModList.svelte'
@@ -31,10 +32,10 @@
 
   /** 原版实例装不了模组，那个 tab 摆在那里只会浪费一次点击。 */
   const tabs = $derived([
-    { id: 'overview', label: '概览' },
+    { id: 'overview', label: '概览', reading: true },
     ...(instance.loader === 'Vanilla' ? [] : [{ id: 'mods', label: '模组' }]),
     { id: 'saves', label: '存档' },
-    { id: 'settings', label: '设置' },
+    { id: 'settings', label: '设置', reading: true },
     { id: 'log', label: '日志' },
   ])
 
@@ -50,136 +51,116 @@
   )
 </script>
 
-<section class="detail scroll">
-  <div class="banner">
+<Detail {tabs} {tab} ontab={(id) => nav.setTab(id)}>
+  {#snippet banner()}
     <Cover seed={instance.cover} quality={0.7} />
     <div class="banner-fade"></div>
-  </div>
+  {/snippet}
 
-  <header class="head">
+  {#snippet head()}
     <div class="titles">
-      <h1 class="t-h1">{instance.name}</h1>
-      <p class="t-mono facts">
-        Minecraft {instance.gameVersion} · {instance.loader} · {played}
-      </p>
-    </div>
-
-    <div class="acts">
-      <button
-        class="btn btn--primary"
-        disabled={launch.busy || launch.running}
-        onclick={() => void launch.launch(instance.id, prefs.playerName)}
-      >
-        {#if launch.running}
-          运行中
-        {:else if launch.busy}
-          {launch.label || '准备中'}
-        {:else}
-          <Play size={15} fill="currentColor" strokeWidth={0} />启动
-        {/if}
-      </button>
-
-      <!--
-        「设为当前」和「打开详情」是两个动作。只想翻一眼模组列表的人，不该
-        因此把启动场景上的实例换掉。
-      -->
-      {#if isCurrent}
-        <span class="t-quiet now"><Check size={14} strokeWidth={2.2} />当前实例</span>
-      {:else}
-        <button class="btn btn--ghost" onclick={() => instances.select(instance.id)}>
-          设为当前
-        </button>
-      {/if}
-    </div>
-  </header>
-
-  <nav class="tabs" aria-label="实例分区">
-    {#each tabs as item (item.id)}
-      <button class:on={tab === item.id} onclick={() => nav.setTab(item.id)}>{item.label}</button>
-    {/each}
-  </nav>
-
-  <div class="panel-body">
-    {#if tab === 'overview'}
-      <dl class="grid">
-        <div><dt>Minecraft</dt><dd class="t-mono">{instance.gameVersion}</dd></div>
-        <div><dt>加载器</dt><dd class="t-mono">{instance.loader}</dd></div>
-        <div><dt>实例 ID</dt><dd class="t-mono selectable">{instance.id}</dd></div>
-      </dl>
-      <div class="links">
-        <button
-          class="btn btn--link"
-          onclick={() => void invoke('open_instance_directory', { instanceId: instance.id })}
-        >
-          <FolderOpen size={13} strokeWidth={1.9} />游戏目录
-        </button>
-        <button class="btn btn--link" onclick={() => void launch.repair(instance.id)}>
-          <RefreshCw size={13} strokeWidth={1.9} />校验文件
-        </button>
+      <div>
+        <h1 class="t-h1">{instance.name}</h1>
+        <p class="t-mono facts">
+          Minecraft {instance.gameVersion} · {instance.loader} · {played}
+        </p>
       </div>
-      {#if launch.error}
-        <div class="alert">{launch.error}</div>
-      {/if}
-    {:else if tab === 'mods'}
-      <ModList instanceId={instance.id} />
-    {:else if tab === 'saves'}
-      <SaveList instanceId={instance.id} />
-    {:else if tab === 'settings'}
-      <InstanceSettings
-        instanceId={instance.id}
-        instanceName={instance.name}
-        ongone={(replacement) => (replacement ? nav.open(replacement) : nav.back())}
-      />
-    {:else}
-      <LogLines
-        lines={ownLog}
-        emptyNote={launch.instanceId === instance.id
-          ? '本次运行尚无输出。'
-          : '这个实例本次会话还没有运行过。'}
-      />
-      <button class="btn btn--link logs" onclick={() => void invoke('open_logs_directory')}>
-        <FolderOpen size={13} strokeWidth={1.9} />日志目录
+
+      <div class="acts">
+        <button
+          class="btn btn--primary"
+          disabled={launch.busy || launch.running}
+          onclick={() => void launch.launch(instance.id, prefs.playerName)}
+        >
+          {#if launch.running}
+            运行中
+          {:else if launch.busy}
+            {launch.label || '准备中'}
+          {:else}
+            <Play size={15} fill="currentColor" strokeWidth={0} />启动
+          {/if}
+        </button>
+
+        <!--
+          「设为当前」和「打开详情」是两个动作。只想翻一眼模组列表的人，不该
+          因此把启动场景上的实例换掉。
+        -->
+        {#if isCurrent}
+          <span class="t-quiet now"><Check size={14} strokeWidth={2.2} />当前实例</span>
+        {:else}
+          <button class="btn btn--ghost" onclick={() => instances.select(instance.id)}>
+            设为当前
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/snippet}
+
+  {#if tab === 'overview'}
+    <dl class="grid">
+      <div><dt>Minecraft</dt><dd class="t-mono">{instance.gameVersion}</dd></div>
+      <div><dt>加载器</dt><dd class="t-mono">{instance.loader}</dd></div>
+      <div><dt>实例 ID</dt><dd class="t-mono selectable">{instance.id}</dd></div>
+    </dl>
+    <div class="links">
+      <button
+        class="btn btn--link"
+        onclick={() => void invoke('open_instance_directory', { instanceId: instance.id })}
+      >
+        <FolderOpen size={13} strokeWidth={1.9} />游戏目录
       </button>
+      <button class="btn btn--link" onclick={() => void launch.repair(instance.id)}>
+        <RefreshCw size={13} strokeWidth={1.9} />校验文件
+      </button>
+    </div>
+    {#if launch.error}
+      <div class="alert">{launch.error}</div>
     {/if}
-  </div>
-</section>
+  {:else if tab === 'mods'}
+    <ModList instanceId={instance.id} />
+  {:else if tab === 'saves'}
+    <SaveList instanceId={instance.id} />
+  {:else if tab === 'settings'}
+    <InstanceSettings
+      instanceId={instance.id}
+      instanceName={instance.name}
+      ongone={(replacement) => (replacement ? nav.open(replacement) : nav.back())}
+    />
+  {:else}
+    <LogLines
+      lines={ownLog}
+      emptyNote={launch.instanceId === instance.id
+        ? '本次运行尚无输出。'
+        : '这个实例本次会话还没有运行过。'}
+    />
+    <button class="btn btn--link logs" onclick={() => void invoke('open_logs_directory')}>
+      <FolderOpen size={13} strokeWidth={1.9} />日志目录
+    </button>
+  {/if}
+</Detail>
 
 <style>
-  .detail {
-    height: 100%;
-    min-height: 0;
-    padding-right: var(--s2);
-  }
-
-  /* 横幅是从卡片展开来的那张封面，不是另一张图。 */
-  .banner {
-    position: relative;
-    height: clamp(140px, 22vh, 220px);
-    overflow: hidden;
-    border-radius: var(--r3);
-  }
-
   /* 底边化开，标题才不像压在一张图上。 */
+  .titles {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s4);
+    min-width: 0;
+  }
+
+  .titles h1 {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
   .banner-fade {
     position: absolute;
     inset: auto 0 0;
     height: 55%;
     background: linear-gradient(to bottom, transparent, var(--bg, rgba(6, 8, 10, 0.55)));
     pointer-events: none;
-  }
-
-  .head {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--s4);
-    padding: var(--s4) 0 var(--s3);
-  }
-
-  .titles h1 {
-    margin: 0;
-    overflow-wrap: anywhere;
   }
 
   .facts {
@@ -202,36 +183,6 @@
 
   .now :global(svg) {
     color: var(--accent);
-  }
-
-  .tabs {
-    display: flex;
-    gap: var(--s5);
-    padding-bottom: var(--s3);
-    box-shadow: inset 0 -1px 0 var(--hairline-2);
-  }
-
-  /* 和顶栏同一套语言：实色对淡出，不画下划线也不套胶囊。 */
-  .tabs button {
-    padding: 0;
-    color: var(--ink);
-    font-size: var(--t-body);
-    opacity: 0.4;
-    transition: opacity var(--t-base) var(--ease);
-  }
-
-  .tabs button:hover {
-    opacity: 0.75;
-  }
-
-  .tabs button.on {
-    opacity: 1;
-  }
-
-  .panel-body {
-    display: flex;
-    flex-direction: column;
-    padding: var(--s4) 0 var(--s6);
   }
 
   .grid {

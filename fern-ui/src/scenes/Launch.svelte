@@ -12,6 +12,7 @@
    * 内容压在左下角，右边和上边整片留给背景。这不是没排满，是画框的意思。
    */
   import { ChevronDown, Play, X } from 'lucide-svelte'
+  import Stage from '../layouts/Stage.svelte'
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { prefs } from '../lib/prefs.svelte'
@@ -26,9 +27,8 @@
   const current = $derived(instances.current)
 </script>
 
-<section class="launch">
+<Stage>
   {#if current}
-    <div class="copy">
       <button class="name" onclick={onswitch} title="切换实例">
         <span>{current.name}</span>
         <ChevronDown size={26} strokeWidth={1.6} />
@@ -74,9 +74,7 @@
           </button>
         </div>
       {/if}
-    </div>
   {:else}
-    <div class="copy">
       <h1 class="t-display">创建第一个实例</h1>
       <div class="go-row">
         <button class="btn btn--primary" onclick={oncreate} disabled={instances.loading}>
@@ -86,23 +84,10 @@
       {#if instances.error}
         <div class="alert error"><span>{instances.error}</span></div>
       {/if}
-    </div>
   {/if}
-</section>
+</Stage>
 
 <style>
-  /* 内容坐在左下角，上方和右方是留白。 */
-  .launch {
-    display: flex;
-    align-items: flex-end;
-    height: 100%;
-    padding-bottom: var(--s2);
-  }
-
-  .copy {
-    width: min(620px, 100%);
-  }
-
   /* 实例名同时是切换器的入口——文档里说点实例名呼出切换器。 */
   .name {
     display: flex;

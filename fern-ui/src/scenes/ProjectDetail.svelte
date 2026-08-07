@@ -1,12 +1,13 @@
 <script lang="ts">
   /**
-   * 项目详情——补给场景向内的那一级。
-   *
-   * 页面本身回答三个问题：这是什么、长什么样、装哪个版本。
+   * 项目详情——补给场景向内的那一级。用详情布局（docs/UI_DESIGN.md 十）。
    *
    * **版本一个都不藏。** 装不上的标出原因而不是过滤掉——「还没适配 1.21」是
    * 用户需要知道的事实，一个空列表说不出这句话。而且版本不对和加载器不对分开
    * 报告：前者要等作者更新，后者是选错了实例，应对方式不同。
+   *
+   * 「安装到哪个实例」在这一页也能改。装东西这个动作发生在这里，决定装给谁的
+   * 控件却留在上一页，等于逼人退回去改完再进来。
    *
    * **不渲染介绍正文。** Modrinth 的 body 是一整篇 markdown，渲染它要么引一个
    * 解析器加一层消毒，要么自己写一个——把网络来的字符串变成 DOM 是 XSS 面，
@@ -15,7 +16,9 @@
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowUpRight, Check, Download } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
+  import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
+  import { nav } from '../lib/nav.svelte'
   import {
     compactNumber,
     compatibility,
@@ -39,6 +42,12 @@
   let installed = $state<string[]>([])
   let showAll = $state(false)
 
+  const TABS = [
+    { id: 'versions', label: '版本' },
+    { id: 'about', label: '关于', reading: true },
+  ]
+  const tab = $derived(TABS.some((item) => item.id === nav.tab) ? nav.tab : 'versions')
+
   const target = $derived(supply.target)
   /**
    * 装到哪个目录由**项目自己**说了算，不是看筛选栏现在选着什么——从地址直接
@@ -51,16 +60,13 @@
         ? 'shader'
         : 'mod',
   )
-  /** 装不上的不藏，但默认收在「显示全部版本」后面——多数人要的是能装的那个。 */
+
   const judged = $derived(
-    versions.map((version) => ({
-      version,
-      fit: compatibility(version, target, kind),
-    })),
+    versions.map((version) => ({ version, fit: compatibility(version, target, kind) })),
   )
   const fitting = $derived(judged.filter((item) => item.fit.ok))
-  const shown = $derived(showAll ? judged : fitting.slice(0, 12))
-  const hiddenCount = $derived(judged.length - shown.length)
+  /** 装不上的不藏，但默认收在展开后面——多数人要的是能装的那个。 */
+  const shown = $derived(showAll ? judged : fitting.slice(0, 20))
 
   const day = (iso: string) => iso.slice(0, 10)
 
@@ -78,7 +84,7 @@
       ])
       detail = project
       versions = list
-      supply.viewingTitle = project.title
+      supply.beginViewing(project.title)
       error = ''
     } catch (cause) {
       error = String(cause)
@@ -110,63 +116,47 @@
   })
 </script>
 
-<section class="project scroll">
-  {#if loading}
-    <p class="t-quiet hint">读取中</p>
-  {:else if !detail}
-    <div class="alert">{error || '读不到这个项目。'}</div>
-  {:else}
-    <header class="head">
-      <span class="icon">
-        {#if detail.iconUrl}
-          <img src={detail.iconUrl} alt="" />
-        {:else}
-          <Cover seed={detail.slug} quality={0.5} />
-        {/if}
-      </span>
+{#if loading}
+  <p class="t-quiet pad">读取中</p>
+{:else if !detail}
+  <div class="alert pad">{error || '读不到这个项目。'}</div>
+{:else}
+  <Detail tabs={TABS} {tab} ontab={(id) => nav.setTab(id)}>
+    {#snippet banner()}
+      {#if detail?.gallery[0]}
+        <img class="shot" src={detail.gallery[0].url} alt="" />
+      {:else}
+        <Cover seed={detail?.slug ?? slug} quality={0.6} />
+      {/if}
+      <div class="fade"></div>
+    {/snippet}
+
+    {#snippet head()}
       <div class="titles">
-        <h1 class="t-h1">{detail.title}</h1>
-        <p class="summary">{detail.description}</p>
-        <p class="t-mono facts">
-          {compactNumber(detail.downloads)} 次下载 · {compactNumber(detail.followers)} 关注
-          {#if detail.license}· {detail.license}{/if}
-          · 更新于 {day(detail.updated)}
-        </p>
+        <span class="icon">
+          {#if detail?.iconUrl}
+            <img src={detail.iconUrl} alt="" />
+          {:else}
+            <Cover seed={detail?.slug ?? slug} quality={0.5} />
+          {/if}
+        </span>
+        <div class="words">
+          <h1 class="t-h1">{detail?.title}</h1>
+          <p class="summary">{detail?.description}</p>
+        </div>
       </div>
-    </header>
+    {/snippet}
 
-    {#if detail.categories.length > 0}
-      <div class="tags">
-        {#each detail.categories as tag (tag)}<span class="tag">{tag}</span>{/each}
-      </div>
-    {/if}
-
-    {#if detail.gallery.length > 0}
-      <div class="gallery scroll">
-        {#each detail.gallery as image (image.url)}
-          <figure>
-            <img src={image.url} alt={image.title} loading="lazy" />
-            {#if image.title}<figcaption class="t-quiet">{image.title}</figcaption>{/if}
-          </figure>
-        {/each}
-      </div>
-    {/if}
-
-    <div class="links">
-      {#each detail.links as link (link.url)}
-        <button class="btn btn--link" onclick={() => void invoke('open_external', { url: link.url })}>
-          {link.label}<ArrowUpRight size={13} strokeWidth={1.9} />
-        </button>
-      {/each}
-    </div>
-
-    <section class="versions">
+    {#if tab === 'versions'}
       <div class="v-head">
-        <span class="label">版本</span>
-        {#if target}
-          <span class="t-quiet">
-            安装到 <strong>{target.name}</strong> · {target.gameVersion} · {target.loader}
-          </span>
+        <span class="t-quiet">{fitting.length} 个版本可以装进</span>
+        <!-- 装到哪，在这一页也能改。 -->
+        {#if instances.list.length > 0}
+          <select class="select" bind:value={supply.targetId}>
+            {#each instances.recent as item (item.id)}
+              <option value={item.id}>{item.name} · {item.gameVersion} · {item.loader}</option>
+            {/each}
+          </select>
         {:else}
           <span class="t-quiet">还没有实例，创建一个才能安装</span>
         {/if}
@@ -185,7 +175,7 @@
       {/if}
 
       {#if versions.length === 0}
-        <p class="t-quiet hint">这个项目还没有发布任何版本。</p>
+        <p class="t-quiet">这个项目还没有发布任何版本。</p>
       {:else}
         <ul class="list">
           {#each shown as { version, fit } (version.id)}
@@ -216,43 +206,94 @@
           {/each}
         </ul>
 
-        {#if hiddenCount > 0 || showAll}
+        {#if fitting.length === 0 && !showAll}
+          <p class="t-quiet">没有适用于这个实例的版本。</p>
+        {/if}
+        {#if judged.length > shown.length || showAll}
           <button class="btn btn--link" onclick={() => (showAll = !showAll)}>
             {showAll ? '只看装得上的' : `显示全部 ${judged.length} 个版本`}
           </button>
         {/if}
-        {#if fitting.length === 0 && !showAll}
-          <p class="t-quiet hint">没有适用于这个实例的版本。展开可以看全部。</p>
-        {/if}
       {/if}
-    </section>
+    {:else}
+      <dl class="facts">
+        <div><dt>下载</dt><dd class="t-mono">{compactNumber(detail?.downloads ?? 0)}</dd></div>
+        <div><dt>关注</dt><dd class="t-mono">{compactNumber(detail?.followers ?? 0)}</dd></div>
+        <div><dt>更新</dt><dd class="t-mono">{day(detail?.updated ?? '')}</dd></div>
+        {#if detail?.license}
+          <div><dt>许可证</dt><dd class="t-mono">{detail.license}</dd></div>
+        {/if}
+      </dl>
+
+      {#if detail && detail.categories.length > 0}
+        <div class="tags">
+          {#each detail.categories as name (name)}<span class="tag">{name}</span>{/each}
+        </div>
+      {/if}
+
+      {#if detail && detail.gallery.length > 0}
+        <div class="gallery">
+          {#each detail.gallery as image (image.url)}
+            <figure>
+              <img src={image.url} alt={image.title} loading="lazy" />
+              {#if image.title}<figcaption class="t-quiet">{image.title}</figcaption>{/if}
+            </figure>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="links">
+        {#each detail?.links ?? [] as link (link.url)}
+          <button
+            class="btn btn--link"
+            onclick={() => void invoke('open_external', { url: link.url })}
+          >
+            {link.label}<ArrowUpRight size={13} strokeWidth={1.9} />
+          </button>
+        {/each}
+      </div>
+    {/if}
 
     {#if error}<div class="alert">{error}</div>{/if}
-  {/if}
-</section>
+  </Detail>
+{/if}
 
 <style>
-  .project {
+  .pad {
+    margin: var(--s5) 0;
+  }
+
+  .shot,
+  .fade {
+    position: absolute;
+    inset: 0;
+  }
+
+  .shot {
+    width: 100%;
     height: 100%;
-    min-height: 0;
-    padding-right: var(--s2);
+    object-fit: cover;
   }
 
-  .hint {
-    margin: var(--s4) 0;
+  /* 底边化开，标题才不像压在一张图上。 */
+  .fade {
+    top: auto;
+    height: 60%;
+    background: linear-gradient(to bottom, transparent, rgba(6, 8, 10, 0.62));
+    pointer-events: none;
   }
 
-  .head {
+  .titles {
     display: flex;
     align-items: flex-start;
     gap: var(--s4);
-    padding-bottom: var(--s4);
+    min-width: 0;
   }
 
   .icon {
     display: block;
-    width: 76px;
-    height: 76px;
+    width: 64px;
+    height: 64px;
     flex: none;
     overflow: hidden;
     border-radius: var(--r2);
@@ -265,11 +306,11 @@
     object-fit: cover;
   }
 
-  .titles {
+  .words {
     min-width: 0;
   }
 
-  .titles h1 {
+  .words h1 {
     margin: 0;
     overflow-wrap: anywhere;
   }
@@ -282,17 +323,39 @@
     line-height: 1.6;
   }
 
+  .v-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s3);
+    padding-bottom: var(--s3);
+  }
+
   .facts {
-    margin: var(--s3) 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--s4);
+    margin: 0 0 var(--s5);
+  }
+
+  .facts dt {
     color: var(--ink-4);
     font-size: var(--t-micro);
+  }
+
+  .facts dd {
+    margin: 4px 0 0;
+    color: var(--ink-2);
+    font-size: var(--t-body);
+    overflow-wrap: anywhere;
   }
 
   .tags {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s2);
-    padding-bottom: var(--s4);
+    padding-bottom: var(--s5);
   }
 
   .tag {
@@ -303,43 +366,32 @@
     font-size: var(--t-micro);
   }
 
-  /* 图库横向滚：竖着铺会把版本列表推到屏幕外面去。 */
   .gallery {
-    display: flex;
-    gap: var(--s3);
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: var(--s3);
+    display: grid;
+    gap: var(--s4);
+    padding-bottom: var(--s5);
   }
 
   .gallery figure {
-    flex: none;
-    width: min(300px, 68vw);
     margin: 0;
   }
 
   .gallery img {
     display: block;
     width: 100%;
-    aspect-ratio: 16 / 9;
-    object-fit: cover;
     border-radius: var(--r2);
     background: var(--tint-1);
   }
 
   .gallery figcaption {
     margin-top: 6px;
-    overflow: hidden;
     font-size: var(--t-micro);
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .links {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s4);
-    padding: var(--s3) 0 var(--s5);
   }
 
   .links .btn {
@@ -351,35 +403,10 @@
     color: var(--ink);
   }
 
-  .versions {
-    padding-top: var(--s4);
-    padding-bottom: var(--s6);
-    box-shadow: inset 0 1px 0 var(--hairline-2);
-  }
-
-  .v-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--s3);
-  }
-
-  .label {
-    color: var(--ink);
-    font-size: var(--t-body);
-    font-weight: 500;
-  }
-
-  .v-head strong {
-    color: var(--ink-2);
-    font-weight: 500;
-  }
-
   .list {
     display: grid;
     gap: 1px;
-    margin: var(--s3) 0;
+    margin: 0 0 var(--s3);
     padding: 0;
     list-style: none;
   }
@@ -429,7 +456,7 @@
   }
 
   .done {
-    padding: var(--s3) 0;
+    padding-bottom: var(--s4);
   }
 
   .ok {
@@ -453,9 +480,5 @@
     font-size: var(--t-micro);
     line-height: 1.7;
     overflow-wrap: anywhere;
-  }
-
-  .done p:last-child {
-    margin: 0;
   }
 </style>

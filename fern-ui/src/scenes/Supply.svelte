@@ -1,27 +1,35 @@
 <script lang="ts">
   /**
-   * 补给站——一个独立的、找东西的地方。
+   * 补给站——一个独立的、找东西的地方。用浏览布局（docs/UI_DESIGN.md 十）。
    *
    * 上一版把搜索结果按当前实例的版本和加载器过滤掉了。那让它成了「给这个实例
    * 装东西」的附属品：没有实例就什么都看不到，而且永远看不见「这个模组还没
    * 适配你这个版本」这个事实——一个空列表说不出这句话。
    *
-   * 现在筛选条件是明确的控件，默认全不限；「装到哪个实例」是另一件事，摆在
-   * 旁边，只在真的要装的时候才用得上。装不装得上是版本上的标注。
+   * 筛选在左栏纵向排布，不是顶部一排 chip：**横向换地方，纵向改视图**。资源
+   * 类型、游戏版本、加载器改的都是同一批东西的呈现，不是「去别处」。
    *
-   * 只做模组、资源包、光影：这三种是「下一个文件放进一个目录」就完事的。
-   * 整合包要建实例，那是另一条路径，没做就不摆在这里。
+   * 结果无限滚动，翻到哪、搜的什么、筛选了什么全在 store 里——点进一个项目
+   * 再返回，接着看，不用重新往下滑一遍。
    */
   import { Search } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
+  import FilterGroup from '../components/FilterGroup.svelte'
+  import Browse from '../layouts/Browse.svelte'
   import ProjectDetailView from './ProjectDetail.svelte'
   import { instances } from '../lib/instances.svelte'
   import { nav } from '../lib/nav.svelte'
   import { compactNumber, KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
 
-  /** 版本筛选只给正式版，快照在补给站里几乎没人找。 */
+  let results = $state<HTMLElement>()
+  let sentinel = $state<HTMLElement>()
+
+  /** 版本筛选只列最近这些正式版。八百个版本铺在左栏里没人找得到。 */
   const releases = $derived(
-    instances.versions.filter((item) => item.kind === 'release').slice(0, 60),
+    instances.versions
+      .filter((item) => item.kind === 'release')
+      .slice(0, 14)
+      .map((item) => ({ id: item.id, label: item.id })),
   )
 
   // 从实例的模组页跳过来时带着实例 id，直接把条件对准它。用掉就从地址里去掉，
@@ -38,16 +46,46 @@
     if (!supply.loaded && !supply.searching) void supply.search()
   })
 
+  // 回到列表时把滚动位置放回去。等一帧，让结果先铺出来。
+  $effect(() => {
+    if (nav.detail || !results) return
+    const node = results
+    requestAnimationFrame(() => (node.scrollTop = supply.scrollTop))
+  })
+
+  /**
+   * 无限滚动。用 IntersectionObserver 而不是监听 scroll：哨兵进入视野才问，
+   * 滚动过程中一次计算都不用做。
+   */
+  $effect(() => {
+    if (!sentinel || !results) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) supply.more()
+      },
+      { root: results, rootMargin: '400px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  })
+
+  function open(slug: string, title: string) {
+    supply.scrollTop = results?.scrollTop ?? 0
+    // 点的那一刻就知道叫什么，面包屑不必等详情加载完。
+    supply.beginViewing(title)
+    nav.open(slug)
+  }
+
   void instances.loadVersions()
 </script>
 
 {#if nav.detail}
   <ProjectDetailView slug={nav.detail} />
 {:else}
-  <section class="supply">
-    <header class="bar">
+  <Browse>
+    {#snippet search()}
       <div class="field">
-        <Search size={15} strokeWidth={1.9} />
+        <Search size={16} strokeWidth={1.9} />
         <input
           class="input"
           bind:value={supply.query}
@@ -56,195 +94,129 @@
           onkeydown={(event) => event.key === 'Enter' && supply.refresh()}
         />
       </div>
+    {/snippet}
 
-      <div class="kinds">
-        {#each KINDS as item (item.id)}
-          <button
-            class="chip"
-            class:on={supply.kind === item.id}
-            onclick={() => {
-              supply.kind = item.id
-              supply.refresh()
-            }}
-          >
-            {item.label}
-          </button>
-        {/each}
-      </div>
-    </header>
+    {#snippet filters()}
+      <FilterGroup
+        label="类型"
+        value={supply.kind}
+        options={KINDS.map((item) => ({ id: item.id, label: item.label }))}
+        onchange={(value) => {
+          supply.kind = value as typeof supply.kind
+          supply.refresh()
+        }}
+      />
 
-    <div class="filters">
-      <label class="pick">
-        <span class="t-quiet">游戏版本</span>
-        <select
-          class="select"
-          bind:value={supply.gameVersion}
-          onchange={() => supply.refresh()}
-        >
-          <option value="">不限</option>
-          {#each releases as version (version.id)}
-            <option value={version.id}>{version.id}</option>
-          {/each}
-        </select>
-      </label>
+      <FilterGroup
+        label="游戏版本"
+        value={supply.gameVersion}
+        options={releases}
+        anyLabel="全部"
+        onchange={(value) => {
+          supply.gameVersion = value
+          supply.refresh()
+        }}
+      />
 
-      <!-- 资源包和光影没有加载器这个概念，摆一个选了没用的控件是噪音。 -->
+      <!-- 资源包和光影没有加载器这个概念，摆一组选了没用的选项是噪音。 -->
       {#if supply.kind === 'mod'}
-        <label class="pick">
-          <span class="t-quiet">加载器</span>
-          <select class="select" bind:value={supply.loader} onchange={() => supply.refresh()}>
-            <option value="">不限</option>
-            {#each LOADER_FILTERS as item (item.id)}
-              <option value={item.id}>{item.label}</option>
-            {/each}
-          </select>
-        </label>
+        <FilterGroup
+          label="加载器"
+          value={supply.loader}
+          options={LOADER_FILTERS}
+          anyLabel="全部"
+          onchange={(value) => {
+            supply.loader = value
+            supply.refresh()
+          }}
+        />
       {/if}
 
-      <label class="pick">
-        <span class="t-quiet">排序</span>
-        <select class="select" bind:value={supply.sort} onchange={() => supply.refresh()}>
-          {#each SORTS as item (item.id)}
-            <option value={item.id}>{item.label}</option>
-          {/each}
-        </select>
-      </label>
+      <FilterGroup
+        label="排序"
+        value={supply.sort}
+        options={SORTS}
+        onchange={(value) => {
+          supply.sort = value
+          supply.refresh()
+        }}
+      />
+    {/snippet}
 
-      <!-- 装到哪，是上下文不是筛选，所以推到最右边并且和左边隔开。 -->
-      {#if instances.list.length > 0}
-        <label class="pick target">
-          <span class="t-quiet">安装到</span>
-          <select class="select" bind:value={supply.targetId}>
-            {#each instances.recent as item (item.id)}
-              <option value={item.id}>{item.name}</option>
-            {/each}
-          </select>
-        </label>
+    <div class="results" bind:this={results}>
+      {#if supply.error}
+        <div class="alert">{supply.error}</div>
+      {:else if supply.searching && supply.hits.length === 0}
+        <p class="t-quiet hint">搜索中</p>
+      {:else if supply.hits.length === 0}
+        <p class="t-quiet hint">没有匹配的结果。</p>
+      {:else}
+        <div class="grid">
+          {#each supply.hits as hit (hit.projectId)}
+            <button class="card" onclick={() => open(hit.slug, hit.title)}>
+              <span class="icon">
+                {#if hit.iconUrl}
+                  <img src={hit.iconUrl} alt="" loading="lazy" />
+                {:else}
+                  <!-- 没有图标的项目用生成式色块补位，网格才不会破相。 -->
+                  <Cover seed={hit.slug} quality={0.4} />
+                {/if}
+              </span>
+              <span class="text">
+                <strong>{hit.title}</strong>
+                <small class="desc">{hit.description}</small>
+                <small class="t-mono meta">{compactNumber(hit.downloads)} · {hit.author}</small>
+              </span>
+            </button>
+          {/each}
+        </div>
+
+        <div class="foot" bind:this={sentinel}>
+          {#if supply.searching}
+            <span class="t-quiet">加载中</span>
+          {:else if supply.canLoadMore}
+            <span class="t-quiet">已显示 {supply.hits.length} / {supply.total}</span>
+          {:else}
+            <span class="t-quiet">共 {supply.total} 个结果，到底了</span>
+          {/if}
+        </div>
       {/if}
     </div>
-
-    {#if supply.error}
-      <div class="alert">{supply.error}</div>
-    {:else if supply.searching && supply.hits.length === 0}
-      <p class="t-quiet hint">搜索中</p>
-    {:else if supply.hits.length === 0}
-      <p class="t-quiet hint">没有匹配的结果。</p>
-    {:else}
-      <div class="grid scroll">
-        {#each supply.hits as hit (hit.projectId)}
-          <button class="card" onclick={() => nav.open(hit.slug)}>
-            <span class="icon">
-              {#if hit.iconUrl}
-                <img src={hit.iconUrl} alt="" loading="lazy" />
-              {:else}
-                <!-- 没有图标的项目用生成式色块补位，网格才不会破相。 -->
-                <Cover seed={hit.slug} quality={0.4} />
-              {/if}
-            </span>
-            <span class="text">
-              <strong>{hit.title}</strong>
-              <small class="desc">{hit.description}</small>
-              <small class="t-mono meta">{compactNumber(hit.downloads)} · {hit.author}</small>
-            </span>
-          </button>
-        {/each}
-      </div>
-
-      <div class="foot">
-        <span class="t-quiet">共 {supply.total} 个结果，已显示 {supply.hits.length} 个</span>
-        {#if supply.canLoadMore}
-          <button class="btn btn--link" disabled={supply.searching} onclick={() => supply.more()}>
-            {supply.searching ? '加载中' : '加载更多'}
-          </button>
-        {/if}
-      </div>
-    {/if}
-  </section>
+  </Browse>
 {/if}
 
 <style>
-  .supply {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-  }
-
-  .bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--s3);
-  }
-
   .field {
     display: flex;
     align-items: center;
     gap: var(--s2);
-    width: min(420px, 100%);
+    width: min(460px, 100%);
     color: var(--ink-4);
   }
 
   .field .input {
     flex: 1;
     min-width: 0;
+    font-size: var(--t-h2);
   }
 
-  .kinds {
-    display: flex;
-    gap: var(--s2);
-  }
-
-  .chip {
-    padding: 5px var(--s3);
-    border-radius: 999px;
-    background: var(--tint-1);
-    color: var(--ink-3);
-    font-size: var(--t-small);
-    transition:
-      background var(--t-fast) var(--ease),
-      color var(--t-fast) var(--ease);
-  }
-
-  .chip:hover {
-    color: var(--ink-2);
-    background: var(--tint-2);
-  }
-
-  .chip.on {
-    background: var(--accent);
-    color: var(--on-accent);
-  }
-
-  .filters {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--s2) var(--s5);
-    padding: var(--s4) 0;
-  }
-
-  .pick {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-  }
-
-  /* 「安装到」不是筛选，推到另一头去。 */
-  .target {
-    margin-left: auto;
+  /* 滚动容器就是结果区本身，哨兵和滚动记忆都挂在它身上。 */
+  .results {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--tint-3) transparent;
+    padding-right: var(--s2);
   }
 
   /* 列数跟着窗口走，不写断点。 */
   .grid {
-    flex: 1;
-    min-height: 0;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: var(--s2);
     align-content: start;
-    padding-right: var(--s2);
   }
 
   .card {
@@ -309,14 +281,11 @@
   }
 
   .hint {
-    margin: var(--s4) 0 0;
+    margin: 0;
   }
 
   .foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s3);
-    padding-top: var(--s3);
+    padding: var(--s5) 0 var(--s4);
+    text-align: center;
   }
 </style>

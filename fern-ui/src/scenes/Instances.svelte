@@ -15,6 +15,7 @@
    */
   import { Play, Plus } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
+  import Collection from '../layouts/Collection.svelte'
   import InstanceDetail from './InstanceDetail.svelte'
   import NewInstance from './NewInstance.svelte'
   import { instances } from '../lib/instances.svelte'
@@ -50,13 +51,13 @@
     {#if instances.error}<div class="alert">{instances.error}</div>{/if}
   </section>
 {:else}
-  <section class="library">
-    <div class="bar">
+  <Collection>
+    {#snippet controls()}
       <span class="t-quiet">{instances.list.length} 个实例</span>
       <button class="btn btn--link" onclick={oncreate}><Plus size={14} />新建实例</button>
-    </div>
+    {/snippet}
 
-    <div class="grid scroll">
+    <div class="grid">
       {#each instances.recent as item (item.id)}
         <div class="card" class:on={instances.current?.id === item.id}>
           <button class="face" onclick={() => nav.open(item.id)} title="打开 {item.name}">
@@ -81,7 +82,7 @@
         </div>
       {/each}
     </div>
-  </section>
+  </Collection>
 {/if}
 
 <style>
@@ -101,30 +102,12 @@
     line-height: 1.65;
   }
 
-  .library {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-  }
-
-  .bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s3);
-    padding-bottom: var(--s4);
-  }
-
   /* 列数跟着窗口走，不写断点。 */
   .grid {
-    flex: 1;
-    min-height: 0;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
     gap: var(--s4);
     align-content: start;
-    padding-right: var(--s2);
   }
 
   .card {
