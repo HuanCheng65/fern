@@ -36,8 +36,15 @@ jobs:
         with:
           workspaces: . -> target
 
-      - name: Install Rust formatting component
-        run: rustup component add rustfmt
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      # fern-core 通过 keyring 依赖 libdbus-1（令牌存系统钥匙串）。runner 镜像
+      # 里有没有它不保证，缺了的话 cargo test 会在 libdbus-sys 的构建脚本上挂。
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -57,6 +64,11 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      # clippy 这次拦下过好几处真问题（可折叠的 if、手写的 range contains）。
+      # 只跑 fmt 不跑 clippy，等于把一半的静态检查关掉了。
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
   package:
     name: Package ${{ matrix.name }}
     needs: quality
@@ -64,6 +76,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - name: Linux x64
+            runner: ubuntu-latest
+            rust_targets: x86_64-unknown-linux-gnu
+            build_args: --target x86_64-unknown-linux-gnu --bundles deb,appimage
+            artifact_name: Fern-Linux-x64
+            artifact_paths: |
+              fern-ui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+              fern-ui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
           - name: Windows x64
             runner: windows-latest
             rust_targets: x86_64-pc-windows-msvc
@@ -91,6 +111,17 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: fern-ui/pnpm-lock.yaml
+
+      # Tauri 在 Linux 上要 WebKitGTK 一整套；libdbus-1-dev 是 keyring 要的。
+      # 其余平台的钥匙串走系统原生 API，不需要额外的包。
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev \
+            libayatana-appindicator3-dev libxdo-dev libssl-dev \
+            libdbus-1-dev build-essential file pkg-config
 
       - name: Install Rust targets
         run: rustup target add ${{ matrix.rust_targets }}
