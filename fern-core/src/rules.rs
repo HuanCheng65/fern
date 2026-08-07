@@ -78,19 +78,32 @@ fn detect_os_version() -> String {
 }
 
 /// 启动上下文里的开关（文档 §1.4）。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Features {
     /// 实例设置里指定了窗口尺寸。
     pub custom_resolution: bool,
     /// 试玩模式。Fern 不启动试玩版，永远是 false。
     pub demo: bool,
-    /// 「启动后直接进某个存档/服务器」。还没做。
-    pub quick_play: bool,
+    /// 启动后直接进某个存档或服务器。
+    pub quick_play: Option<QuickPlay>,
+}
+
+/// 启动之后直接进哪里。
+///
+/// 元数据把这三个 feature 分开写：`has_quick_plays_support` 决定要不要
+/// `--quickPlayPath`，另外两个各自决定单人还是多人那一条参数。所以这里也
+/// 分开答，而不是给一个笼统的布尔。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuickPlay {
+    /// 存档目录名。
+    World(String),
+    /// `host` 或 `host:port`。
+    Server(String),
 }
 
 /// 这台机器 + 这次启动的规则上下文。
 ///
-/// 三个 feature 都显式写进去，哪怕是 false。求值器比的是「键存在且值相等」，
+/// feature 全部显式写进去，哪怕是 false。求值器比的是「键存在且值相等」，
 /// 少一个键，要求 `false` 的规则就会被判为不匹配——现在的元数据只用到要求
 /// `true` 的写法，所以漏掉也看不出问题，但那是碰巧。
 pub fn context(features: Features) -> RuleContext {
@@ -104,7 +117,18 @@ pub fn context(features: Features) -> RuleContext {
                 features.custom_resolution,
             ),
             ("is_demo_user".to_owned(), features.demo),
-            ("has_quick_plays_support".to_owned(), features.quick_play),
+            (
+                "has_quick_plays_support".to_owned(),
+                features.quick_play.is_some(),
+            ),
+            (
+                "is_quick_play_singleplayer".to_owned(),
+                matches!(features.quick_play, Some(QuickPlay::World(_))),
+            ),
+            (
+                "is_quick_play_multiplayer".to_owned(),
+                matches!(features.quick_play, Some(QuickPlay::Server(_))),
+            ),
         ]),
     }
 }
@@ -113,6 +137,34 @@ pub fn context(features: Features) -> RuleContext {
 mod tests {
     use super::*;
     use fern_meta::{OsRule, Rule, RuleAction, rules_allow};
+
+    #[test]
+    fn quick_play_answers_three_features_separately() {
+        // 元数据把它们分开写：一条决定要不要 --quickPlayPath，另外两条各自
+        // 决定单人还是多人。合成一个布尔的话，进服务器时会连单人那条参数
+        // 一起带上。
+        let none = context(Features::default()).features;
+        assert!(!none["has_quick_plays_support"]);
+        assert!(!none["is_quick_play_singleplayer"]);
+        assert!(!none["is_quick_play_multiplayer"]);
+
+        let world = context(Features {
+            quick_play: Some(QuickPlay::World("新的世界".to_owned())),
+            ..Features::default()
+        })
+        .features;
+        assert!(world["has_quick_plays_support"]);
+        assert!(world["is_quick_play_singleplayer"]);
+        assert!(!world["is_quick_play_multiplayer"]);
+
+        let server = context(Features {
+            quick_play: Some(QuickPlay::Server("mc.example.net".to_owned())),
+            ..Features::default()
+        })
+        .features;
+        assert!(!server["is_quick_play_singleplayer"]);
+        assert!(server["is_quick_play_multiplayer"]);
+    }
 
     #[test]
     fn this_machine_reports_a_real_os_version() {

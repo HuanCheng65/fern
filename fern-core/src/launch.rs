@@ -143,6 +143,7 @@ pub struct LaunchResult {
 pub async fn launch_instance(
     paths: &DataPaths,
     instance_id: &str,
+    quick_play: Option<crate::QuickPlay>,
     events: &UnboundedSender<LauncherEvent>,
     job: &crate::Job,
 ) -> Result<LaunchResult> {
@@ -186,6 +187,7 @@ pub async fn launch_instance(
     stage(LaunchStage::CheckingFiles);
     let context = rules::context(rules::Features {
         custom_resolution: effective.resolution.is_some(),
+        quick_play: quick_play.clone(),
         ..rules::Features::default()
     });
     let natives_directory = paths.game_directory(instance_id).join("natives");
@@ -264,6 +266,16 @@ pub async fn launch_instance(
         .insert("launcher_version", env!("CARGO_PKG_VERSION"))
         .insert("clientid", "")
         .insert("auth_xuid", "");
+    // 直接进某个世界或某个服务器。元数据里那三条参数由 feature 决定要不要
+    // 出现，这里只负责把它们要的值备好——变量缺了的话参数会原样带着
+    // `${...}` 进命令行，游戏收到的是一个字面上的占位符。
+    if let Some(quick) = &quick_play {
+        variables = variables.insert("quickPlayPath", "quickPlay/log.json");
+        variables = match quick {
+            crate::QuickPlay::World(name) => variables.insert("quickPlaySingleplayer", name),
+            crate::QuickPlay::Server(address) => variables.insert("quickPlayMultiplayer", address),
+        };
+    }
     if let Some(resolution) = &effective.resolution {
         variables = variables
             .insert("resolution_width", resolution.width.to_string())

@@ -25,7 +25,7 @@
 
 import { match } from 'pinyin-pro'
 
-export type SubjectType = 'instance' | 'account' | 'place' | 'project'
+export type SubjectType = 'instance' | 'account' | 'place' | 'project' | 'world' | 'server'
 
 /** 一个可以被指名的东西。 */
 export interface Subject {
@@ -93,6 +93,18 @@ export function providesRemote(source: RemoteSource) {
   remoteSources.push(source)
 }
 
+const openHooks: Array<() => void> = []
+
+/**
+ * 面板打开时做一次的事。
+ *
+ * 给那些「要读一次磁盘才知道」的来源用。放在打开这一刻而不是每次按键：它们
+ * 变化的频率是分钟级的，而按键是毫秒级的。
+ */
+export function onOpen(hook: () => void) {
+  openHooks.push(hook)
+}
+
 /** 贡献一批动作。在暴露这些动作的模块里调用。 */
 export function commands(source: () => Action[]) {
   actionSources.push(source)
@@ -103,6 +115,8 @@ export const TYPE_LABEL: Record<SubjectType, string> = {
   account: '账户',
   place: '前往',
   project: '补给',
+  world: '存档',
+  server: '服务器',
 }
 
 /**
@@ -396,6 +410,7 @@ class PaletteStore {
     this.scope = scope
     this.cursor = 0
     this.ask()
+    for (const hook of openHooks) hook()
   }
 
   /** 查询变了就把光标收回第一行，否则它会停在一个已经不存在的位置上。 */

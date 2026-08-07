@@ -28,6 +28,7 @@ mod registry;
 mod rules;
 mod runtime;
 mod saves;
+mod servers;
 mod settings;
 mod tuning;
 mod version;
@@ -92,8 +93,10 @@ pub use mods::{
     set_enabled as set_mod_enabled,
 };
 pub use prepare::{PrepareResult, prepare_instance};
+pub use rules::QuickPlay;
 pub use runtime::{ensure_java, install as install_java, remove as remove_runtime};
-pub use saves::{SaveEntry, list as list_saves};
+pub use saves::{SaveEntry, list as list_saves, names as save_names};
+pub use servers::{ServerEntry, list as list_servers};
 pub use settings::{
     AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,
     current as current_settings, effective as effective_settings, load as load_settings,

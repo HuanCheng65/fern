@@ -148,7 +148,14 @@ class LaunchStore {
     this.log = []
   }
 
-  async launch(instanceId: string) {
+  /**
+   * 启动。
+   *
+   * `into` 是「直接进去」：一个存档目录名或一个服务器地址。游戏自己支持这件事
+   * （quickPlay 参数），而启动器是唯一知道你有哪些世界和哪些服务器的地方——
+   * 把这两半接上，搜一个世界名回车就直接落在那个世界里。
+   */
+  async launch(instanceId: string, into?: { world?: string; server?: string }) {
     if (this.busy || this.running) return
     this.#begin(instanceId)
     const name = nameOf(instanceId)
@@ -163,6 +170,8 @@ class LaunchStore {
       // 宣告它的存在和进展，不负责编一个显示用的名字。
       await invoke<{ processId: number }>('launch_instance', {
         instanceId,
+        world: into?.world ?? null,
+        server: into?.server ?? null,
         title: `启动 ${name}`,
         subjects: [instanceId],
       })

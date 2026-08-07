@@ -34,6 +34,7 @@
   import { DURATION, scaled } from './lib/motion'
   import { nav } from './lib/nav.svelte'
   import { palette } from './lib/palette.svelte'
+  import './lib/places.svelte'
   import { prefs } from './lib/prefs.svelte'
   import { supply } from './lib/supply.svelte'
   import { theme } from './lib/theme.svelte'

@@ -404,10 +404,68 @@ async fn prepare_instance(
     result
 }
 
+/// 这台机器上所有实例的存档与服务器。
+///
+/// 只取名字：命令面板要回答的是「有哪些世界」，而算体积要把每个世界的几万个
+/// 区块文件都 stat 一遍。随开随取，不缓存——世界是在游戏里建的，服务器是在
+/// 游戏里加的，任何缓存都会悄悄过期。
+#[tauri::command]
+async fn list_places() -> Result<Places, String> {
+    off_thread(|| {
+        let paths = paths()?;
+        let instances =
+            fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))?;
+        let mut saves = Vec::new();
+        let mut servers = Vec::new();
+        for profile in &instances {
+            let id = profile.id.as_str();
+            for name in fern_core::save_names(&paths, id) {
+                saves.push(PlaceEntry {
+                    instance_id: id.to_owned(),
+                    instance_name: profile.name.clone(),
+                    name,
+                    address: None,
+                });
+            }
+            for server in fern_core::list_servers(&paths, id) {
+                servers.push(PlaceEntry {
+                    instance_id: id.to_owned(),
+                    instance_name: profile.name.clone(),
+                    name: server.name,
+                    address: Some(server.address),
+                });
+            }
+        }
+        Ok(Places { saves, servers })
+    })
+    .await?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaceEntry {
+    instance_id: String,
+    instance_name: String,
+    name: String,
+    address: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct Places {
+    saves: Vec<PlaceEntry>,
+    servers: Vec<PlaceEntry>,
+}
+
+/// 启动。
+///
+/// `world` / `server` 是「直接进去」：前者是存档目录名，后者是服务器地址。
+/// 两个都给时以 `world` 为准——一次只能进一个地方。
 #[tauri::command]
 async fn launch_instance(
     app: tauri::AppHandle,
     instance_id: String,
+    world: Option<String>,
+    server: Option<String>,
     title: String,
     subjects: Vec<String>,
 ) -> Result<fern_core::LaunchResult, String> {
@@ -420,9 +478,18 @@ async fn launch_instance(
         .await
         .map_err(|error| format!("{error:#}"));
     let result = match prepared {
-        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &events, &job)
-            .await
-            .map_err(|error| format!("{error:#}")),
+        Ok(_) => {
+            let quick = match (world, server) {
+                (Some(name), _) if !name.is_empty() => Some(fern_core::QuickPlay::World(name)),
+                (_, Some(address)) if !address.is_empty() => {
+                    Some(fern_core::QuickPlay::Server(address))
+                }
+                _ => None,
+            };
+            fern_core::launch_instance(&paths, &instance_id, quick, &events, &job)
+                .await
+                .map_err(|error| format!("{error:#}"))
+        }
         Err(error) => Err(error),
     };
     job.finish(&result);
@@ -929,6 +996,7 @@ pub fn run() {
             open_logs_directory,
             prepare_instance,
             launch_instance,
+            list_places,
             pearl_host,
             pearl_join,
             pearl_stop,

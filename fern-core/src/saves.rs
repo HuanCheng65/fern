@@ -52,6 +52,23 @@ fn tree_bytes(path: &Path) -> u64 {
         .sum()
 }
 
+/// 只要名字，不算体积。
+///
+/// 命令面板要的是「这台机器上有哪些世界」，而 `tree_bytes` 会把每个世界的
+/// 几万个区块文件都 stat 一遍——那是详情页里「这个存档占多大」才需要付的
+/// 代价。二十个实例各走一遍的话，一次搜索要等好几秒。
+pub fn names(paths: &DataPaths, instance_id: &str) -> Vec<String> {
+    let root = paths.game_directory(instance_id).join("saves");
+    let Ok(entries) = fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.path().join("level.dat").is_file())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .collect()
+}
+
 /// 列出一个实例的存档，最近保存的排在前面。
 ///
 /// `saves` 目录不存在是正常的——还没进过游戏的实例没有存档，这不是错误。
