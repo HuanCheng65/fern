@@ -23,6 +23,8 @@
  * 真正的界面去）。后者是防止它长成第二个应用的闸门。
  */
 
+import { match } from 'pinyin-pro'
+
 export type SubjectType = 'instance' | 'account' | 'place' | 'project'
 
 /** 一个可以被指名的东西。 */
@@ -104,34 +106,51 @@ export const TYPE_LABEL: Record<SubjectType, string> = {
 }
 
 /**
- * 子序列匹配，带质量分。
+ * 匹配与打分。
  *
- * 只判命中与否不够：同一个查询下，一个开头就对上的结果和一个跨了半句才凑齐
- * 的结果不该并列。连续命中和词首命中各自加权，于是「fabopt」在
- * 「Fabulously Optimized」上得分远高于在一段碰巧含有这些字母的描述上。
+ * 一条路走完全部情况：拉丁子序列、直接打汉字、全拼、首字母，以及它们的混搭
+ * （`scfserver` 命中「生存服 Server」）。空格和符号在查询里可有可无——人凭
+ * 记忆报一个名字的时候，不会记得那里到底有没有连字符。
+ *
+ * `match` 只回答「命中落在哪几个位置」，排序要的分由位置算出来：落在词首的
+ * 位置和连续的位置各自加权，于是紧凑的、从词头开始的匹配排在前面。这比自己
+ * 写一遍子序列更准——无论命中来自原文还是拼音，位置的含义都是同一个。
  *
  * 返回 undefined 表示没命中。
  */
 export function score(text: string, query: string): number | undefined {
-  if (!query) return 0
-  const haystack = text.toLowerCase()
-  const needle = query.toLowerCase().replace(/\s+/g, '')
-  let index = 0
+  const needle = query.trim()
+  if (!needle) return 0
+  let hit: number[] | null
+  try {
+    hit = match(text, needle)
+  } catch {
+    // 拼音那一层出了意外也不该让整个面板空掉，退回最朴素的包含判断。
+    return text.toLowerCase().includes(needle.toLowerCase()) ? 1 : undefined
+  }
+  if (!hit || hit.length === 0) return undefined
+
   let points = 0
   let streak = 0
-  for (let position = 0; position < haystack.length && index < needle.length; position += 1) {
-    if (haystack[position] !== needle[index]) {
-      streak = 0
-      continue
-    }
-    // 词首（开头，或者跟在分隔符后面）说明用户是按词打的，值更多分。
-    const previous = position > 0 ? haystack[position - 1]! : ' '
-    const atWordStart = position === 0 || /[\s\-_.·/]/.test(previous)
-    points += 1 + streak + (atWordStart ? 3 : 0)
-    streak += 1
-    index += 1
+  for (let n = 0; n < hit.length; n += 1) {
+    const at = hit[n]!
+    streak = n > 0 && hit[n - 1] === at - 1 ? streak + 1 : 0
+    points += 1 + streak + (startsAWord(text, at) ? 3 : 0)
   }
-  return index === needle.length ? points : undefined
+  return points
+}
+
+/**
+ * 这个位置是不是一个词的开头。
+ *
+ * 每个汉字都算——中文没有空格，一个字就是一个能被首字母指代的单位。拉丁那边
+ * 看前一个字符是不是字母或数字，所以 `Sodium-Extra` 的 `E` 和 `Fabric API`
+ * 的 `A` 都算。
+ */
+function startsAWord(text: string, at: number): boolean {
+  if (at === 0) return true
+  if (/[\u4e00-\u9fff]/.test(text[at]!)) return true
+  return /[^\p{L}\p{N}]/u.test(text[at - 1]!)
 }
 
 const FRECENCY_KEY = 'fern.palette.frecency'
