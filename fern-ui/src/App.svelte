@@ -18,6 +18,7 @@
   import CreateInstance from './components/CreateInstance.svelte'
   import CrashReport from './components/CrashReport.svelte'
   import InstanceSettings from './components/InstanceSettings.svelte'
+  import GameLog from './components/GameLog.svelte'
   import WindowFrame from './components/WindowFrame.svelte'
   import LaunchScene from './scenes/Launch.svelte'
   import InstancesScene from './scenes/Instances.svelte'
@@ -47,6 +48,7 @@
   let paletteOpen = $state(false)
   let createOpen = $state(false)
   let instanceSettingsOpen = $state(false)
+  let logOpen = $state(false)
   let setupOpen = $state(false)
   /** 设置在磁盘上，读完才知道该不该出向导。读完之前只铺背景。 */
   let ready = $state(false)
@@ -54,7 +56,7 @@
   /** 镜头往哪边走，决定新场景从哪一侧滑进来。 */
   let direction = $state(1)
 
-  const overlayOpen = $derived(paletteOpen || createOpen || instanceSettingsOpen)
+  const overlayOpen = $derived(paletteOpen || createOpen || instanceSettingsOpen || logOpen)
   /** 背景用当前实例的名字当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.name ?? 'Fern')
 
@@ -113,6 +115,18 @@
         ]
       : []),
     { id: 'create', title: '新建实例', run: () => (createOpen = true) },
+    // 日志平时不该占地方，但出事的时候必须找得到——所以放在命令面板里，
+    // 而且只在真的有内容时才列出来。
+    ...(launch.log.length > 0
+      ? [
+          {
+            id: 'log',
+            title: '查看游戏日志',
+            hint: `${launch.log.length} 行`,
+            run: () => (logOpen = true),
+          },
+        ]
+      : []),
     ...scenes
       .filter((item) => item.id !== scene)
       .map((item) => ({
@@ -296,6 +310,10 @@
       instanceName={instances.current.name}
       onclose={() => (instanceSettingsOpen = false)}
     />
+  {/if}
+
+  {#if logOpen}
+    <GameLog onclose={() => (logOpen = false)} />
   {/if}
 
   {#if createOpen}
