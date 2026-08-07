@@ -14,16 +14,19 @@
    * 不值得为一段介绍开这个口。正文交给「在 Modrinth 打开」。
    */
   import { invoke } from '@tauri-apps/api/core'
-  import { ArrowUpRight, Check, Download, Plus } from 'lucide-svelte'
+  import { ArrowUpRight, Download, Plus } from 'lucide-svelte'
   import Loading from '../components/Loading.svelte'
   import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
   import { jobs } from '../lib/jobs.svelte'
   import { nav } from '../lib/nav.svelte'
+  import { notices } from '../lib/notices.svelte'
   import {
     compactNumber,
     compatibility,
     supply,
+    type InstallOutcome,
+    type InstallPlan,
     type ProjectDetail,
     type ProjectVersion,
     type ResourceKind,
@@ -46,8 +49,16 @@
    * 看不到任何痕迹；失败了错误也随组件一起蒸发了。
    */
   let clicked = $state('')
-  let installed = $state<string[]>([])
   let showAll = $state(false)
+  /**
+   * 展开看前置的那一行，以及它的计划。
+   *
+   * 计划要联网算（要问上游每个依赖是什么，还要把实例里已有的模组哈希一遍），
+   * 所以不给每一行都算——只算被展开的那一个。
+   */
+  let opened = $state('')
+  let plan = $state<InstallPlan | null>(null)
+  let planning = $state(false)
 
   /** 这个项目上现在有没有事情在跑。走开再回来它还在。 */
   const job = $derived(jobs.forSubject(slug))
@@ -110,6 +121,48 @@
     }
   }
 
+  /** 数一数这个版本声明了几个必需前置。只要一个数，不用联网。 */
+  const required = (version: ProjectVersion) =>
+    version.dependencies.filter((item) => item.kind === 'required').length
+
+  /** 展开／收起某一行的前置。展开时才去算计划。 */
+  async function inspect(version: ProjectVersion) {
+    if (opened === version.id) {
+      opened = ''
+      return
+    }
+    opened = version.id
+    plan = null
+    await loadPlan(version)
+  }
+
+  async function loadPlan(version: ProjectVersion) {
+    if (!target || !inTauri()) return
+    planning = true
+    try {
+      const result = await invoke<InstallPlan>('install_plan', {
+        instanceId: target.id,
+        versionId: version.id,
+        kind,
+      })
+      // 等回来的时候用户可能已经点开了另一行。
+      if (opened === version.id) plan = result
+    } catch (cause) {
+      if (opened === version.id) error = String(cause)
+    } finally {
+      planning = false
+    }
+  }
+
+  const STATE_LABEL: Record<string, string> = {
+    satisfied: '已安装',
+    disabled: '已安装但已禁用',
+    mismatched: '已安装的版本不适用',
+    planned: '将一并安装',
+    unavailable: '没有适用版本',
+    conflicting: '与已安装的冲突',
+  }
+
   async function install(version: ProjectVersion) {
     clicked = version.id
     error = ''
@@ -128,14 +181,35 @@
         return
       }
       if (!target) return
+      const where = target
       // 这件事既属于这个项目，也属于那个实例——两边的页面都该看得见它。
-      installed = await invoke<string[]>('install_from_modrinth', {
-        instanceId: target.id,
+      const outcome = await invoke<InstallOutcome>('install_from_modrinth', {
+        instanceId: where.id,
         versionId: version.id,
         kind,
         title: `安装 ${detail?.title ?? '资源'}`,
-        subjects: [slug, target.id],
+        subjects: [slug, where.id],
       })
+      // 结果不留在这一页：它是一件已经做完的事，而用户下一秒可能就走了。
+      const extra = outcome.installed.length - 1
+      notices.say({
+        title: `已安装 ${outcome.installed[0] ?? detail?.title ?? '资源'}`,
+        detail: [
+          extra > 0 ? `连同 ${outcome.installed.slice(1).join('、')}` : '',
+          outcome.reused.length > 0 ? `${outcome.reused.join('、')}已经有了，未重复安装` : '',
+        ]
+          .filter(Boolean)
+          .join('。'),
+        action: {
+          label: `在 ${where.name} 中查看`,
+          run: () => {
+            instances.select(where.id)
+            nav.enter('instances', where.id)
+          },
+        },
+      })
+      // 装完之后计划就过期了：刚装上的那些，现在是「已经有了」。
+      if (opened === version.id) void loadPlan(version)
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -215,50 +289,95 @@
         {/if}
       </div>
 
-      {#if installed.length > 0}
-        <div class="done">
-          <p class="ok"><Check size={15} strokeWidth={2.4} />已安装 {installed.length} 个文件</p>
-          <ul class="files t-mono">
-            {#each installed as file (file)}<li>{file}</li>{/each}
-          </ul>
-          {#if installed.length > 1}
-            <p class="t-quiet">其中包含自动解析的必需依赖。</p>
-          {/if}
-        </div>
-      {/if}
-
       {#if versions.length === 0}
         <p class="t-quiet">这个项目还没有发布任何版本。</p>
       {:else}
         <ul class="list">
           {#each shown as { version, fit } (version.id)}
             <li class="row" class:off={!fit.ok}>
-              <span class="text">
-                <strong>{version.versionNumber}</strong>
-                <small class="t-mono">
-                  {day(version.datePublished)}
-                  {#if version.versionType !== 'release'}
-                    · <em class="pre">{version.versionType}</em>
-                  {/if}
-                  {#if fit.note}· {fit.note}{/if}
-                </small>
-              </span>
-              <button
-                class="btn btn--ghost"
-                disabled={(!isPack && !target) || !fit.ok || job !== undefined}
-                title={fit.ok ? (isPack ? '建成新实例' : '安装') : fit.note}
-                onclick={() => void install(version)}
-              >
-                {#if job && clicked === version.id}
-                  {job.stage || (isPack ? '创建中' : '安装中')}
-                {:else if job}
-                  等待中
-                {:else if isPack}
-                  <Plus size={14} strokeWidth={2} />创建实例
-                {:else}
-                  <Download size={14} strokeWidth={1.9} />安装
+              <div class="line">
+                <span class="text">
+                  <strong>{version.versionNumber}</strong>
+                  <small class="t-mono">
+                    {day(version.datePublished)}
+                    {#if version.versionType !== 'release'}
+                      · <em class="pre">{version.versionType}</em>
+                    {/if}
+                    {#if fit.note}· {fit.note}{/if}
+                  </small>
+                </span>
+
+                <!--
+                  前置在装之前就该看得见。展开才去算：算一份计划要问上游每个
+                  依赖是什么，再把实例里已有的模组哈希一遍，不该为了列表里
+                  二十行都做一遍。
+                -->
+                {#if !isPack && required(version) > 0}
+                  <button
+                    class="btn btn--link deps"
+                    aria-expanded={opened === version.id}
+                    onclick={() => void inspect(version)}
+                  >
+                    {required(version)} 个前置
+                  </button>
                 {/if}
-              </button>
+
+                <button
+                  class="btn btn--ghost"
+                  disabled={(!isPack && !target) || !fit.ok || job !== undefined}
+                  title={fit.ok ? (isPack ? '建成新实例' : '安装') : fit.note}
+                  onclick={() => void install(version)}
+                >
+                  {#if job && clicked === version.id}
+                    {job.stage || (isPack ? '创建中' : '安装中')}
+                  {:else if job}
+                    等待中
+                  {:else if isPack}
+                    <Plus size={14} strokeWidth={2} />创建实例
+                  {:else}
+                    <Download size={14} strokeWidth={1.9} />安装
+                  {/if}
+                </button>
+              </div>
+
+              {#if opened === version.id}
+                <div class="plan">
+                  {#if planning && !plan}
+                    <p class="t-quiet">正在核对这个实例里已经有什么…</p>
+                  {:else if !target}
+                    <p class="t-quiet">先选一个安装目标，才能知道哪些前置已经有了。</p>
+                  {:else if plan}
+                    <ul class="reqs">
+                      {#each plan.requirements as item (item.projectId)}
+                        <li class="req {item.state}">
+                          <span class="dot"></span>
+                          <span class="who">
+                            {item.title}
+                            {#if item.versionNumber}<small class="t-mono">{item.versionNumber}</small
+                              >{/if}
+                          </span>
+                          <span class="state">
+                            {STATE_LABEL[item.state] ?? item.state}{item.kind === 'optional'
+                              ? '（可选）'
+                              : ''}
+                          </span>
+                        </li>
+                      {/each}
+                    </ul>
+                    <!--
+                      「这次会下几个文件」和「已经有几个」都要说。只说前者，
+                      用户看不出去重发生过；只说后者，他不知道要等多久。
+                    -->
+                    <p class="t-quiet tally">
+                      这次会下载 {plan.files.length} 个文件{plan.requirements.filter(
+                        (item) => item.state === 'satisfied',
+                      ).length > 0
+                        ? `，${plan.requirements.filter((item) => item.state === 'satisfied').length} 个前置已经有了`
+                        : ''}。
+                    </p>
+                  {/if}
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -491,12 +610,91 @@
   }
 
   .row {
+    padding: var(--s2) 0;
+    box-shadow: inset 0 -1px 0 var(--hairline-2);
+  }
+
+  .line {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--s3);
-    padding: var(--s2) 0;
-    box-shadow: inset 0 -1px 0 var(--hairline-2);
+  }
+
+  .deps {
+    flex: none;
+    margin-left: auto;
+    color: var(--ink-3);
+  }
+
+  .deps:hover {
+    color: var(--ink);
+  }
+
+  /* 展开的那一块缩进对齐版本号，读起来才是「属于这一行」。 */
+  .plan {
+    padding: var(--s3) 0 var(--s2);
+  }
+
+  .reqs {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .req {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    font-size: var(--t-small);
+  }
+
+  /* 状态先用一个点说，再用文字说。扫一眼够了的时候不用读字。 */
+  .req .dot {
+    flex: none;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--ink-4);
+  }
+
+  .req.satisfied .dot {
+    background: var(--accent);
+  }
+
+  .req.unavailable .dot,
+  .req.conflicting .dot,
+  .req.mismatched .dot,
+  .req.disabled .dot {
+    background: var(--danger);
+  }
+
+  .req .who {
+    color: var(--ink-2);
+  }
+
+  .req .who small {
+    margin-left: 4px;
+    color: var(--ink-4);
+    font-size: var(--t-micro);
+  }
+
+  .req .state {
+    margin-left: auto;
+    color: var(--ink-3);
+    font-size: var(--t-micro);
+  }
+
+  .req.unavailable .state,
+  .req.conflicting .state {
+    color: var(--danger);
+  }
+
+  .tally {
+    margin: var(--s3) 0 0;
+    font-size: var(--t-micro);
   }
 
   .row:last-child {
@@ -532,32 +730,5 @@
   .pre {
     font-style: normal;
     color: var(--ink-3);
-  }
-
-  .done {
-    padding-bottom: var(--s4);
-  }
-
-  .ok {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    margin: 0;
-    color: var(--ink);
-    font-size: var(--t-body);
-  }
-
-  .ok :global(svg) {
-    color: var(--accent);
-  }
-
-  .files {
-    margin: var(--s2) 0;
-    padding: 0;
-    list-style: none;
-    color: var(--ink-4);
-    font-size: var(--t-micro);
-    line-height: 1.7;
-    overflow-wrap: anywhere;
   }
 </style>

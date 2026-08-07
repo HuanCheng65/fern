@@ -528,7 +528,23 @@ async fn project_versions(project: String) -> Result<Vec<fern_core::ProjectVersi
         .map_err(|error| format!("{error:#}"))
 }
 
-/// 装一个版本。模组会连同必需依赖一起装。
+/// 按下安装会发生什么：装哪些文件、哪些前置已经有了、哪些还缺。
+///
+/// 界面在装之前问这一个，装的时候后端再算一遍同样的计划——所以显示的和做的
+/// 永远是同一件事。
+#[tauri::command]
+async fn install_plan(
+    instance_id: String,
+    version_id: String,
+    kind: fern_core::ResourceKind,
+) -> Result<fern_core::InstallPlan, String> {
+    let paths = paths()?;
+    fern_core::resolve_install_plan(&paths, &instance_id, &version_id, kind)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 装一个版本。模组会连同**还缺的**必需依赖一起装。
 #[tauri::command]
 async fn install_from_modrinth(
     app: tauri::AppHandle,
@@ -537,7 +553,7 @@ async fn install_from_modrinth(
     kind: fern_core::ResourceKind,
     title: String,
     subjects: Vec<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<fern_core::InstallOutcome, String> {
     let paths = paths()?;
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
@@ -980,6 +996,7 @@ pub fn run() {
             inspect_modpack,
             import_modpack,
             project_versions,
+            install_plan,
             install_from_modrinth,
             list_mods,
             list_saves,

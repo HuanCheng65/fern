@@ -127,13 +127,19 @@ impl DownloadSource for BmclapiSource {
     }
 }
 
-pub fn sha1_matches(bytes: &[u8], expected: &str) -> bool {
-    let digest = Sha1::digest(bytes);
-    let actual = digest
+/// A file's SHA-1 as lowercase hex.
+///
+/// Content-addressed services key on this exact spelling, so the formatting
+/// belongs next to the hashing rather than at every call site.
+pub fn sha1_hex(bytes: &[u8]) -> String {
+    Sha1::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    actual.eq_ignore_ascii_case(expected)
+        .collect()
+}
+
+pub fn sha1_matches(bytes: &[u8], expected: &str) -> bool {
+    sha1_hex(bytes).eq_ignore_ascii_case(expected)
 }
 
 pub async fn verify_file(path: &Path, expected_sha1: &str, expected_size: u64) -> Result<bool> {

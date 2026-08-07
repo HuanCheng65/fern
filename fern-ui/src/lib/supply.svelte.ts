@@ -73,6 +73,13 @@ export interface ProjectDetail {
   links: ProjectLink[]
 }
 
+export type DependencyKind = 'required' | 'optional' | 'incompatible' | 'embedded'
+
+export interface VersionDependency {
+  projectId?: string
+  kind: DependencyKind
+}
+
 export interface ProjectVersion {
   id: string
   name: string
@@ -83,6 +90,57 @@ export interface ProjectVersion {
   downloads: number
   datePublished: string
   fileName?: string
+  /** 只有 id，没有名字。名字在安装计划里（`install_plan`）。 */
+  dependencies: VersionDependency[]
+}
+
+/**
+ * 一条前置现在是什么状况。
+ *
+ * `satisfied` 和 `planned` 的区别是这一屏存在的理由：前者是「已经有了，不会
+ * 再下一份」，后者是「这次会一起装」。上一版两种都不说，于是同一个前置被反复
+ * 装进同一个实例，而界面上看不出任何区别。
+ */
+export type RequirementState =
+  | 'satisfied'
+  | 'disabled'
+  | 'mismatched'
+  | 'planned'
+  | 'unavailable'
+  | 'conflicting'
+
+export interface Requirement {
+  projectId: string
+  slug: string
+  title: string
+  iconUrl?: string
+  kind: DependencyKind
+  state: RequirementState
+  versionNumber?: string
+}
+
+export interface PlannedFile {
+  projectId: string
+  versionId: string
+  title: string
+  versionNumber: string
+  fileName: string
+  bytes: number
+  primary: boolean
+}
+
+/** 按下安装会发生什么。后端算的，装的时候用的是同一份。 */
+export interface InstallPlan {
+  files: PlannedFile[]
+  requirements: Requirement[]
+  bytes: number
+}
+
+/** 装完了有什么可说的。 */
+export interface InstallOutcome {
+  installed: string[]
+  files: string[]
+  reused: string[]
 }
 
 const PAGE = 40

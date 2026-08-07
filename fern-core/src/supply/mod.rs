@@ -14,11 +14,12 @@
 //! 是**建一个实例**。
 
 pub(crate) mod modpack;
+pub(crate) mod plan;
+pub(crate) mod survey;
 
 use anyhow::{Context, Result, anyhow};
 use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{DataPaths, LoaderKind};
@@ -193,6 +194,20 @@ pub struct ProjectVersion {
     pub date_published: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_name: Option<String>,
+    /// 这个版本声明的依赖，原样带上。
+    ///
+    /// 只有 id，没有名字——列表里每一行都去换一次名字是几十次请求。想知道
+    /// 它们是什么，点进去看那一份计划（`resolve_install_plan`）。
+    pub dependencies: Vec<VersionDependency>,
+}
+
+/// 版本列表里那个「N 个前置」的原料。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionDependency {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub kind: plan::DependencyKind,
 }
 
 // ——— 线上的 JSON 形状，只取用得上的字段 ———
@@ -359,6 +374,26 @@ async fn get<T: serde::de::DeserializeOwned>(url: &str) -> Result<T> {
     Err(last_error
         .unwrap_or_else(|| anyhow!("请求 {url} 失败"))
         .context(format!("请求 {url}")))
+}
+
+/// 带 JSON 请求体的那一种。只有按 hash 批量查版本用得上。
+///
+/// 不做重试：POST 在语义上不保证幂等，而这一个具体的接口失败了就退回「不知道
+/// 装了什么」，比反复敲上游好。
+async fn post<T: serde::de::DeserializeOwned>(url: &str, body: Vec<u8>) -> Result<T> {
+    let response = client()
+        .post(url)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .with_context(|| format!("请求 {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(anyhow!("Modrinth 返回 HTTP {status}"));
+    }
+    let bytes = response.bytes().await.context("读取 Modrinth 的响应")?;
+    serde_json::from_slice(&bytes).context("解析 Modrinth 的响应")
 }
 
 enum Refusal {
@@ -572,6 +607,73 @@ async fn raw_versions(
     get(&url).await
 }
 
+async fn raw_version(version_id: &str) -> Result<RawVersion> {
+    get(&format!("{API}/version/{version_id}")).await
+}
+
+/// 一批 sha1 分别是哪个版本。
+///
+/// 这是 Modrinth 上唯一可靠的「这个文件是什么」——文件名不是身份，同一个模组
+/// 从不同渠道拿到的文件名可以完全不同。一次问一批，不是一个文件一次。
+async fn versions_by_hash(
+    hashes: &[String],
+) -> Result<std::collections::HashMap<String, survey::KnownVersion>> {
+    #[derive(Serialize)]
+    struct Request<'a> {
+        hashes: &'a [String],
+        algorithm: &'a str,
+    }
+
+    let mut out = std::collections::HashMap::new();
+    // 一次问太多会被上游拒绝，也会把一次失败的代价放大到整批。
+    for chunk in hashes.chunks(100) {
+        let body = serde_json::to_vec(&Request {
+            hashes: chunk,
+            algorithm: "sha1",
+        })?;
+        let found: std::collections::HashMap<String, RawVersion> =
+            post(&format!("{API}/version_files"), body).await?;
+        for (hash, version) in found {
+            out.insert(
+                hash,
+                survey::KnownVersion {
+                    project_id: version.project_id,
+                    version_id: version.id,
+                    version_number: version.version_number,
+                    game_versions: version.game_versions,
+                    loaders: version.loaders,
+                },
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// 一批项目 id 分别叫什么。id 对用户没有任何意义。
+async fn project_names(ids: &[String]) -> Result<std::collections::HashMap<String, plan::Named>> {
+    let mut unique: Vec<&str> = ids.iter().map(String::as_str).collect();
+    unique.sort_unstable();
+    unique.dedup();
+    if unique.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let query = urlencoding(&json_array(&unique));
+    let projects: Vec<RawProject> = get(&format!("{API}/projects?ids={query}")).await?;
+    Ok(projects
+        .into_iter()
+        .map(|project| {
+            (
+                project.id,
+                plan::Named {
+                    slug: project.slug,
+                    title: project.title,
+                    icon_url: project.icon_url,
+                },
+            )
+        })
+        .collect())
+}
+
 fn describe(raw: RawVersion) -> ProjectVersion {
     let file_name = raw.primary_file().map(|file| file.filename.clone());
     ProjectVersion {
@@ -584,6 +686,14 @@ fn describe(raw: RawVersion) -> ProjectVersion {
         downloads: raw.downloads,
         date_published: raw.date_published,
         file_name,
+        dependencies: raw
+            .dependencies
+            .iter()
+            .map(|dependency| VersionDependency {
+                project_id: dependency.project_id.clone().filter(|id| !id.is_empty()),
+                kind: plan::DependencyKind::from_api(&dependency.dependency_type),
+            })
+            .collect(),
     }
 }
 
@@ -609,25 +719,22 @@ pub async fn fetch_primary_file(
     Ok(destination)
 }
 
-/// 装一个版本，连同它的必需依赖。
+/// 装一个版本，连同它缺的那些必需依赖。
 ///
-/// 依赖多半只给 `project_id`，得自己去挑一个兼容版本；少数会指定
-/// `version_id`，那就照它说的来。`optional` 的不装——那是作者的建议，不是
-/// 要求，替用户决定装什么不是我们的事。
+/// 「缺的」是这里的关键词：计划由 [`plan::resolve`] 算，它看得见实例里已经有
+/// 什么，所以已经装过的前置不会再下一份。界面上显示的也是同一份计划——显示
+/// 一套、做另一套，是这类功能出错最常见的方式。
 pub async fn install(
     paths: &DataPaths,
     instance_id: &str,
     version_id: &str,
     kind: ResourceKind,
     job: &crate::Job,
-) -> Result<Vec<String>> {
+) -> Result<InstallOutcome> {
     // 两步：先把要装的东西问清楚（一个模组可能牵出好几个必需依赖），再一起下。
     job.expect(2);
     job.step("解析依赖");
     let events = &job.downloads();
-    let profile = crate::read_instance(paths, instance_id)?;
-    let game_version = profile.game_version.as_str();
-    let loader = profile.loader;
 
     let subdirectory = kind
         .directory()
@@ -635,74 +742,68 @@ pub async fn install(
     let directory = paths.game_directory(instance_id).join(subdirectory);
     tokio::fs::create_dir_all(&directory).await?;
 
-    let mut seen_projects = HashSet::new();
-    let mut pending = vec![(version_id.to_owned(), 0usize)];
-    let mut tasks = Vec::new();
-    let mut installed = Vec::new();
-
-    while let Some((id, depth)) = pending.pop() {
-        if depth > MAX_DEPTH {
-            continue;
-        }
-        let version: RawVersion = get(&format!("{API}/version/{id}")).await?;
-        if !seen_projects.insert(version.project_id.clone()) {
-            continue;
-        }
-
-        let Some(file) = version.primary_file() else {
-            return Err(anyhow!("{} 这个版本没有可下载的文件", version.name));
-        };
-        // Modrinth 每个文件都给 sha1，所以这里是有校验的下载。
-        tasks.push(DownloadTask::new(
-            fern_download::safe_join(&directory, std::path::Path::new(&file.filename))?,
-            &file.url,
-            &file.hashes.sha1,
-            file.size,
-        )?);
-        installed.push(file.filename.clone());
-
-        if !kind.has_dependencies() {
-            continue;
-        }
-        for dependency in &version.dependencies {
-            if dependency.dependency_type != "required" {
-                continue;
-            }
-            if let Some(exact) = dependency.version_id.as_ref().filter(|id| !id.is_empty()) {
-                pending.push((exact.clone(), depth + 1));
-                continue;
-            }
-            let Some(project) = dependency.project_id.as_ref() else {
-                continue;
-            };
-            if seen_projects.contains(project) {
-                continue;
-            }
-            // 依赖只给了项目，兼容的版本要自己挑：优先正式版，没有就用最新的。
-            let candidates = raw_versions(project, game_version, loader).await?;
-            let chosen = candidates
-                .iter()
-                .find(|version| version.version_type == "release")
-                .or_else(|| candidates.first());
-            match chosen {
-                Some(version) => pending.push((version.id.clone(), depth + 1)),
-                None => {
-                    return Err(anyhow!(
-                        "依赖的项目 {project} 没有适用于 {game_version} 的版本"
-                    ));
-                }
-            }
-        }
+    let plan = plan::resolve(paths, instance_id, version_id, kind).await?;
+    if let Some(missing) = plan.requirements.iter().find(|item| {
+        item.kind == plan::DependencyKind::Required
+            && item.state == plan::RequirementState::Unavailable
+    }) {
+        return Err(anyhow!(
+            "{} 需要 {}，但它没有适用于这个实例的版本",
+            plan.files
+                .first()
+                .map_or("这个版本", |file| file.title.as_str()),
+            missing.title
+        ));
     }
 
-    job.step(if installed.len() > 1 {
-        format!("下载 {} 个文件（含依赖）", installed.len())
+    let mut tasks = Vec::new();
+    for file in &plan.files {
+        // Modrinth 每个文件都给 sha1，所以这里是有校验的下载。
+        tasks.push(DownloadTask::new(
+            fern_download::safe_join(&directory, std::path::Path::new(&file.file_name))?,
+            &file.url,
+            &file.sha1,
+            file.bytes,
+        )?);
+    }
+
+    job.step(if tasks.len() > 1 {
+        format!("下载 {} 个文件（含依赖）", tasks.len())
     } else {
         "下载文件".to_owned()
     });
     let downloader = DownloadClient::new(crate::data::settings::source_order(), 8);
     downloader.download_all(tasks, events).await?;
-    Ok(installed)
+
+    Ok(InstallOutcome {
+        installed: plan.files.iter().map(|file| file.title.clone()).collect(),
+        files: plan
+            .files
+            .iter()
+            .map(|file| file.file_name.clone())
+            .collect(),
+        reused: plan
+            .requirements
+            .iter()
+            .filter(|item| item.state == plan::RequirementState::Satisfied)
+            .map(|item| item.title.clone())
+            .collect(),
+    })
+}
+
+/// 装完之后有什么可说的。
+///
+/// 分成「装了什么」和「本来就有什么」两栏：后者是这次**没有**发生的事，而它
+/// 恰恰是用户最需要知道的一句——上一版会把已有的前置再装一遍，而界面上看不出
+/// 任何区别。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallOutcome {
+    /// 装上的东西，用项目名而不是文件名——文件名是给磁盘看的。
+    pub installed: Vec<String>,
+    pub files: Vec<String>,
+    /// 已经有了、这次跳过的前置。
+    pub reused: Vec<String>,
 }
 
 /// 只转义查询串里真正会出事的那几个字符。

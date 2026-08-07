@@ -99,10 +99,15 @@ pub use supply::modpack::{
     PackSummary, inspect as inspect_modpack, install as install_modpack,
     install_from_modrinth as install_modpack_from_modrinth,
 };
+pub use supply::plan::{
+    DependencyKind, InstallPlan, PlannedFile, Requirement, RequirementState,
+    resolve as resolve_install_plan,
+};
 pub use supply::{
-    GalleryImage, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind, SearchHit, SearchQuery,
-    SearchResult, install as install_from_modrinth, is_external_url, project as modrinth_project,
-    search as search_modrinth, versions as modrinth_versions,
+    GalleryImage, InstallOutcome, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind,
+    SearchHit, SearchQuery, SearchResult, VersionDependency, install as install_from_modrinth,
+    is_external_url, project as modrinth_project, search as search_modrinth,
+    versions as modrinth_versions,
 };
 
 /// Marker for the Pearl integration boundary.
