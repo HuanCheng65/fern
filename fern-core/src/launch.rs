@@ -12,7 +12,7 @@ use fern_meta::{Library, RuleContext, VersionMetadata, rules_allow};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 
-use crate::DataPaths;
+use crate::{DataPaths, java};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -224,19 +224,22 @@ pub async fn launch_instance(
         );
     }
     let (jvm_arguments, game_arguments) = metadata.resolved_arguments(&context);
-    let (java_binary, java_major, java_version) =
-        resolve_java_binary(profile.settings.java_path.as_deref())?;
     let required_java_major = metadata
         .java_version
         .as_ref()
         .map(|version| version.major_version);
-    if let Some(required) = required_java_major {
-        if java_major < required {
-            return Err(anyhow!(
-                "Java {java_major} is incompatible with Minecraft {version_id}; Java {required} or newer is required (detected {java_version})"
-            ));
-        }
+    let requirement = java::requirement(&version_id, profile.loader, required_java_major);
+    let runtime = resolve_java_runtime(paths, &profile, &requirement)?;
+    if runtime.major < requirement.minimum {
+        return Err(anyhow!(
+            "Java {} 起不了 Minecraft {version_id}，这个版本至少需要 Java {}（当前 {}）",
+            runtime.major,
+            requirement.minimum,
+            runtime.version
+        ));
     }
+    let java_binary = runtime.path.clone();
+    let java_major = runtime.major;
     let plan = LaunchPlan {
         java_binary: java_binary.clone(),
         working_directory: game_directory,
@@ -339,68 +342,34 @@ fn chrono_like_timestamp() -> String {
     format!("[{seconds}]")
 }
 
-/// A Java runtime the launcher can actually start the game with.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JavaRuntime {
-    pub path: PathBuf,
-    pub major: u16,
-    pub version: String,
-}
-
-/// Look for a usable Java without launching anything.
+/// 挑一个 Java 出来启动这个实例。
 ///
-/// The setup wizard needs to know whether it has to say anything about Java at
-/// all; on a machine that already has one it should stay quiet. Reuses the same
-/// resolution the launcher itself uses, so the wizard cannot disagree with what
-/// happens at launch time.
-pub fn detect_java() -> Option<JavaRuntime> {
-    resolve_java_binary(None)
-        .ok()
-        .map(|(path, major, version)| JavaRuntime {
-            path,
-            major,
-            version,
-        })
-}
-
-fn resolve_java_binary(configured: Option<&Path>) -> Result<(PathBuf, u16, String)> {
-    let candidate = configured
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("java"));
-    let output = Command::new(&candidate)
-        .arg("-version")
-        .output()
-        .with_context(|| format!("find Java executable {}", candidate.display()))?;
-    let version_output = String::from_utf8_lossy(&output.stderr).into_owned()
-        + &String::from_utf8_lossy(&output.stdout);
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Java executable {} failed version check",
-            candidate.display()
-        ));
+/// 用户在实例设置里填了路径就照做——那时候他要的是控制权，不是建议；只有
+/// 版本真的不够才拦。没填就自己挑，这一层对他完全隐形。
+fn resolve_java_runtime(
+    paths: &DataPaths,
+    profile: &crate::InstanceProfile,
+    requirement: &java::JavaRequirement,
+) -> Result<java::JavaRuntime> {
+    if let Some(configured) = profile.settings.java_path.as_deref() {
+        return java::probe(configured);
     }
-    let java_major = parse_java_major(&version_output).ok_or_else(|| {
-        anyhow!(
-            "unable to determine Java version for {} ({})",
-            candidate.display(),
-            version_output.trim()
-        )
-    })?;
-    Ok((candidate, java_major, version_output.trim().to_owned()))
-}
-
-fn parse_java_major(output: &str) -> Option<u16> {
-    let version = output
-        .split_once("version \"")
-        .and_then(|(_, value)| value.split('"').next())
-        .or_else(|| {
-            output
-                .lines()
-                .find_map(|line| line.trim().strip_prefix("openjdk "))
-        })?;
-    let version = version.strip_prefix("1.").unwrap_or(version);
-    version.split('.').next()?.parse().ok()
+    let runtimes = java::discover(Some(paths));
+    java::select(&runtimes, requirement).ok_or_else(|| {
+        let found = if runtimes.is_empty() {
+            "这台机器上没有找到任何 Java".to_owned()
+        } else {
+            format!(
+                "找到的是 Java {}",
+                runtimes
+                    .iter()
+                    .map(|runtime| runtime.major.to_string())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            )
+        };
+        anyhow!("需要 Java {} 或更新的版本，{found}", requirement.minimum)
+    })
 }
 
 fn filter_jvm_arguments(arguments: Vec<String>, java_major: u16) -> Vec<String> {
@@ -594,16 +563,6 @@ mod tests {
         assert!(arguments.iter().any(|argument| argument == "-cp"));
         assert!(arguments.iter().any(|argument| argument == "FernPlayer"));
         assert_eq!(arguments.last().map(String::as_str), Some("FernPlayer"));
-    }
-
-    #[test]
-    fn parses_modern_and_legacy_java_versions() {
-        assert_eq!(
-            parse_java_major("openjdk version \"21.0.8\" 2025-07-15"),
-            Some(21)
-        );
-        assert_eq!(parse_java_major("java version \"1.8.0_402\""), Some(8));
-        assert_eq!(parse_java_major("openjdk 24.0.1 2025-04-15"), Some(24));
     }
 
     #[test]

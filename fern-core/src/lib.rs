@@ -7,6 +7,7 @@ mod catalog;
 mod data;
 mod event;
 mod instance;
+mod java;
 mod launch;
 mod prepare;
 mod settings;
@@ -19,9 +20,12 @@ pub use fern_meta::{VersionManifest, VersionManifestEntry};
 pub use instance::{
     CoverSeed, InstanceId, InstanceProfile, InstanceSettings, LoaderKind, LoaderProfile, Resolution,
 };
+pub use java::{
+    JavaRequirement, JavaRuntime, detect_java, discover as discover_java,
+    requirement as java_requirement, select as select_java,
+};
 pub use launch::{
-    Credentials, JavaRuntime, LaunchPlan, LaunchResult, LaunchVariables, detect_java,
-    launch_instance, offline_credentials,
+    Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,
 };
 pub use prepare::{PrepareResult, prepare_instance};
 pub use settings::{
