@@ -102,13 +102,13 @@ pub fn create_instance_with_loader(
             .any(|option| option.kind == loader)
         {
             return Err(anyhow!(
-                "{} 的安装还没有实现",
+                "{} 的安装尚未实现",
                 crate::loader_display_name(loader)
             ));
         }
         let version = loader_version
             .map(str::to_owned)
-            .ok_or_else(|| anyhow!("选了 {loader:?} 就必须给出加载器版本"))?;
+            .ok_or_else(|| anyhow!("选择 {loader:?} 时必须指定加载器版本"))?;
         profile.loader = loader;
         // version_id 留空：装完之后才知道上游给的是哪个 id，那时候再补。
         profile.loader_profile = Some(crate::LoaderProfile {

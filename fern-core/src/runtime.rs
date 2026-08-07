@@ -170,12 +170,12 @@ pub async fn ensure_java(
 /// 装完之后统一确认一遍：读得出来，而且真的够新。
 fn finish(install_root: &Path, requirement: &JavaRequirement, what: &str) -> Result<JavaRuntime> {
     let mut runtime = java::probe(install_root)
-        .with_context(|| format!("下载完成后仍然读不出 {} 里的 Java", install_root.display()))?;
+        .with_context(|| format!("下载完成后仍无法识别 {} 中的 Java", install_root.display()))?;
     // 是我们下的，就该由我们管：设置页要能列出来、能删掉，选择时也优先。
     runtime.managed = true;
     if runtime.major < requirement.minimum {
         return Err(anyhow!(
-            "{what} 装出来的是 Java {}，达不到这个版本要求的 Java {}",
+            "{what} 安装的是 Java {}，低于此版本要求的 Java {}",
             runtime.major,
             requirement.minimum
         ));
@@ -449,7 +449,7 @@ mod adoptium {
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>();
             if !actual.eq_ignore_ascii_case(&asset.binary.package.checksum) {
-                return Err(anyhow!("Temurin 的校验和对不上"));
+                return Err(anyhow!("Temurin 校验和不匹配"));
             }
         }
 
@@ -465,7 +465,7 @@ mod adoptium {
 
     fn adoptium_unavailable(major: u16) -> anyhow::Error {
         anyhow!(
-            "找不到适用于 {}-{} 的 Java {major}，请自行安装后在实例设置里指定路径",
+            "未找到适用于 {}-{} 的 Java {major}，请自行安装后在实例设置中指定路径",
             std::env::consts::OS,
             std::env::consts::ARCH
         )

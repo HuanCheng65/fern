@@ -68,7 +68,7 @@
   const memoryValue = $derived(settings.maxMemoryMb ?? runtime?.automaticMemoryMb ?? 2048)
 
   const javaLabel = (item: JavaRuntime) =>
-    `Java ${item.major}${item.vendor ? ` · ${item.vendor}` : ''}${item.managed ? ' · Fern 下载' : ''}`
+    `Java ${item.major}${item.vendor ? ` · ${item.vendor}` : ''}${item.managed ? ' · 由 Fern 下载' : ''}`
 
   async function load() {
     if (!inTauri()) {
@@ -119,7 +119,7 @@
 <Overlay label="{instanceName} 的设置" width="520px" {onclose}>
   <header>
     <h2 class="t-h2">{instanceName}</h2>
-    <p class="t-quiet">只影响这一个实例</p>
+    <p class="t-quiet">仅作用于此实例</p>
   </header>
 
   {#if loading}
@@ -150,16 +150,16 @@
         <div class="row-foot">
           <span class="t-quiet">
             {#if runtime && runtime.modsCount > 0}
-              {runtime.modsCount} 个模组 · 机器共 {Math.round(runtime.physicalMemoryMb / 1024)} GB
+              {runtime.modsCount} 个模组 · 物理内存 {Math.round(runtime.physicalMemoryMb / 1024)} GB
             {:else}
-              机器共 {Math.round((runtime?.physicalMemoryMb ?? 0) / 1024)} GB，上限是它的一半
+              物理内存 {Math.round((runtime?.physicalMemoryMb ?? 0) / 1024)} GB，上限为其一半
             {/if}
           </span>
           <button
             class="btn btn--link"
             onclick={() => setMemory(memoryAuto ? (runtime?.automaticMemoryMb ?? 2048) : null)}
           >
-            {memoryAuto ? '手动指定' : '回到自动'}
+            {memoryAuto ? '手动指定' : '使用自动值'}
           </button>
         </div>
       </section>
@@ -168,16 +168,16 @@
         <div class="row-head">
           <span class="label">Java</span>
           <span class="t-mono value">
-            需要 {runtime?.requirement.minimum ?? 8}{runtime?.requirement.maximum
+            需要 Java {runtime?.requirement.minimum ?? 8}{runtime?.requirement.maximum
               ? ` – ${runtime.requirement.maximum}`
-              : ' 或更新'}
+              : ' 或更高'}
           </span>
         </div>
         <div class="choices">
           <button class="pick" class:on={settings.javaPath === null} onclick={() => setJava(null)}>
             <strong>自动</strong>
             <small class="t-mono">
-              {runtime?.java ? `现在会用 Java ${runtime.java.major}` : '没有合适的，启动时会下载'}
+              {runtime?.java ? `当前将使用 Java ${runtime.java.major}` : '无匹配版本，启动时自动下载'}
             </small>
           </button>
           {#each runtimes as item (item.path)}
@@ -200,7 +200,7 @@
         {#if advanced}
           <div class="row-head adv">
             <span class="label">垃圾回收器</span>
-            <span class="t-quiet">默认 G1；ZGC 停顿更短，但更吃内存和 CPU</span>
+            <span class="t-quiet">默认 G1。ZGC 停顿更短，但占用更多内存与 CPU。</span>
           </div>
           <Choice
             label="垃圾回收器"
@@ -217,7 +217,7 @@
 
           <div class="row-head adv">
             <span class="label">进程优先级</span>
-            <span class="t-quiet">一边挂机一边干别的时才有意义</span>
+            <span class="t-quiet">降低优先级可减少对其他程序的影响。</span>
           </div>
           <Choice
             label="进程优先级"

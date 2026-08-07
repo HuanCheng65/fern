@@ -298,7 +298,7 @@ pub async fn launch_instance(
     let runtime = resolve_java_runtime(paths, &profile, &requirement)?;
     if runtime.major < requirement.minimum {
         return Err(anyhow!(
-            "Java {} 起不了 Minecraft {version_id}，这个版本至少需要 Java {}（当前 {}）",
+            "Java {} 无法运行 Minecraft {version_id}，此版本至少需要 Java {}（当前 {}）",
             runtime.major,
             requirement.minimum,
             runtime.version
@@ -646,10 +646,10 @@ fn resolve_java_runtime(
     let runtimes = java::discover(Some(paths));
     java::select(&runtimes, requirement).ok_or_else(|| {
         let found = if runtimes.is_empty() {
-            "这台机器上没有找到任何 Java".to_owned()
+            "未找到任何 Java".to_owned()
         } else {
             format!(
-                "找到的是 Java {}",
+                "已找到 Java {}",
                 runtimes
                     .iter()
                     .map(|runtime| runtime.major.to_string())
@@ -657,7 +657,7 @@ fn resolve_java_runtime(
                     .join("、")
             )
         };
-        anyhow!("需要 Java {} 或更新的版本，{found}", requirement.minimum)
+        anyhow!("需要 Java {} 或更高版本；{found}", requirement.minimum)
     })
 }
 

@@ -363,7 +363,7 @@ fn append_maven_task(tasks: &mut Vec<DownloadTask>, root: &Path, library: &Libra
         return Ok(());
     };
     let Some(relative) = fern_meta::maven_path(&library.name) else {
-        return Err(anyhow!("库坐标 {} 无法推出路径", library.name));
+        return Err(anyhow!("无法从库坐标 {} 推导路径", library.name));
     };
     let url = format!("{}{relative}", ensure_trailing_slash(repository));
     tasks.push(DownloadTask::unverified(

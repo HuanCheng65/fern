@@ -171,7 +171,7 @@ pub async fn authenticate(
         }),
     )
     .await?
-    .ok_or_else(|| anyhow!("认证服务器没有返回令牌"))?;
+    .ok_or_else(|| anyhow!("认证服务器未返回令牌"))?;
 
     // 一个账号可以挂多个角色。没有 selectedProfile 说明站点要求先选一个，
     // 只有一个可选时替用户选掉，多个就得让他自己挑——我们不替他决定进游戏
@@ -184,9 +184,9 @@ pub async fn authenticate(
         })
         .ok_or_else(|| {
             if response.available_profiles.is_empty() {
-                anyhow!("这个账号还没有角色，先去皮肤站创建一个")
+                anyhow!("该账户尚无角色，请先在皮肤站创建")
             } else {
-                anyhow!("这个账号有多个角色，Fern 还不支持选择")
+                anyhow!("该账户存在多个角色，Fern 暂不支持选择")
             }
         })?;
 
@@ -229,11 +229,11 @@ pub async fn refresh(session: &YggdrasilSession) -> Result<YggdrasilSession> {
         }),
     )
     .await?
-    .ok_or_else(|| anyhow!("刷新没有返回新令牌"))?;
+    .ok_or_else(|| anyhow!("刷新未返回新令牌"))?;
 
     let profile = response
         .selected_profile
-        .ok_or_else(|| anyhow!("刷新之后拿不到角色信息，请重新登录"))?;
+        .ok_or_else(|| anyhow!("刷新后未获取到角色信息，请重新登录"))?;
     Ok(YggdrasilSession {
         api_root: session.api_root.clone(),
         access_token: response.access_token,
@@ -259,9 +259,8 @@ pub async fn prefetched(api_root: &str) -> Result<String> {
     let bytes = response.bytes().await.context("读取皮肤站元数据")?;
     // 得是合法 JSON——injector 会当 JSON 解析，塞一段 HTML 进去只会让它在
     // 启动时报一个和真正原因无关的错。
-    serde_json::from_slice::<serde_json::Value>(&bytes).with_context(|| {
-        format!("{api_root} 返回的不是 JSON，这可能不是一个 Yggdrasil API 地址")
-    })?;
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .with_context(|| format!("{api_root} 未返回 JSON，可能不是有效的 Yggdrasil API 地址"))?;
     Ok(BASE64.encode(&bytes))
 }
 
@@ -310,7 +309,7 @@ pub async fn ensure_injector(
         .await
         .context("下载 authlib-injector")?;
     if !sha256_matches(&bytes, &manifest.checksums.sha256) {
-        return Err(anyhow!("authlib-injector 的校验和对不上"));
+        return Err(anyhow!("authlib-injector 校验和不匹配"));
     }
 
     tokio::fs::create_dir_all(destination.parent().expect("injector directory")).await?;

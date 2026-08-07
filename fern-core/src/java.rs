@@ -195,7 +195,7 @@ pub fn discover(paths: Option<&DataPaths>) -> Vec<JavaRuntime> {
 pub fn probe(path: &Path) -> Result<JavaRuntime> {
     if path.is_dir() {
         return probe_home(path, false)
-            .ok_or_else(|| anyhow!("{} 不像是一个 Java 安装目录", path.display()));
+            .ok_or_else(|| anyhow!("{} 不是有效的 Java 安装目录", path.display()));
     }
     let home = path
         .parent()

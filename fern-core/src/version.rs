@@ -64,7 +64,7 @@ pub fn read_one(paths: &DataPaths, version_id: &str) -> Result<VersionMetadata> 
     // 挡在读之前而不是写之前：`inheritsFrom` 是别人 JSON 里的一个字符串，
     // 它指向哪里由不得我们，但读哪个文件由得。
     if !is_safe_id(version_id) {
-        return Err(anyhow!("版本 id 不能作为目录名：{version_id}"));
+        return Err(anyhow!("版本 id 无法作为目录名：{version_id}"));
     }
     let path = metadata_path(paths, version_id);
     let bytes = fs::read(&path).with_context(|| format!("读取 {}", path.display()))?;
@@ -78,14 +78,14 @@ pub fn resolve(paths: &DataPaths, version_id: &str) -> Result<VersionMetadata> {
 
 fn resolve_at(paths: &DataPaths, version_id: &str, depth: usize) -> Result<VersionMetadata> {
     if depth >= MAX_DEPTH {
-        return Err(anyhow!("{version_id} 的继承链太深，可能是循环引用"));
+        return Err(anyhow!("{version_id} 的继承链过深，可能存在循环引用"));
     }
     let child = read_one(paths, version_id)?;
     let Some(parent_id) = child.inherits_from.clone() else {
         return Ok(child);
     };
     if parent_id == version_id {
-        return Err(anyhow!("{version_id} 继承了自己"));
+        return Err(anyhow!("{version_id} 继承了自身"));
     }
     let parent = resolve_at(paths, &parent_id, depth + 1)
         .with_context(|| format!("{version_id} 继承自 {parent_id}"))?;

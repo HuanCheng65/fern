@@ -103,9 +103,9 @@
   }
 
   const ACCOUNTS: { kind: AccountKind; title: string; note: string; ready: boolean }[] = [
-    { kind: 'microsoft', title: '微软账户', note: '正版登录，联机、皮肤与成就', ready: true },
-    { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 皮肤站', ready: true },
-    { kind: 'offline', title: '离线模式', note: '只在本地世界和离线服务器游玩', ready: true },
+    { kind: 'microsoft', title: '微软账户', note: '正版登录，支持联机、皮肤与成就', ready: true },
+    { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 兼容皮肤站', ready: true },
+    { kind: 'offline', title: '离线模式', note: '仅可游玩本地世界与离线服务器', ready: true },
   ]
 </script>
 
@@ -150,9 +150,9 @@
         <!-- 向导只问「用哪种」，登录本身留到设置页：一屏一件事，而登录要填
              三个框、要联网、还可能失败，那不该是第一印象的一部分。 -->
         {#if accountKind === 'authlib'}
-          <p class="note">选好了。继续走完，之后在设置里登录皮肤站账号。</p>
+          <p class="note">继续完成设置，稍后可在设置中登录皮肤站账号。</p>
         {:else if accountKind === 'microsoft'}
-          <p class="note">选好了。继续走完，之后在设置里扫码登录。</p>
+          <p class="note">继续完成设置，稍后可在设置中完成登录。</p>
         {/if}
 
         {#if accountKind === 'offline'}
@@ -180,14 +180,14 @@
       {:else if step === 'source'}
         <h1 class="title">让下载快一点。</h1>
         <p class="lede">
-          选择文件下载源。根据系统区域，Fern 建议使用 <strong>{sourceName[recommended]}</strong>。
+          选择文件下载源。根据系统区域，建议使用 <strong>{sourceName[recommended]}</strong>。
         </p>
 
         <div class="options">
           <button class="option" class:on={source === 'bmclapi'} onclick={() => (source = 'bmclapi')}>
             <span class="option-text">
               <strong>BMCLAPI<span class="hint-tag" class:show={recommended === 'bmclapi'}>推荐</span></strong>
-              <small>国内镜像，中国大陆网络下明显更快</small>
+              <small>国内镜像，中国大陆网络下更快</small>
             </span>
             {#if source === 'bmclapi'}<Check size={16} strokeWidth={2.4} />{/if}
           </button>
@@ -200,21 +200,21 @@
           </button>
         </div>
 
-        <p class="foot-note">另一个源会在这个源失败时自动接手，不会因为选错而下不动。</p>
+        <p class="foot-note">当前源失败时将自动切换到另一个源，选择错误不会导致无法下载。</p>
 
         <div class="actions">
           <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
           <button class="btn btn--primary" disabled={javaChecking} onclick={submitSource}>
-            {javaChecking ? '检查环境' : '好'}<ArrowRight size={15} />
+            {javaChecking ? '检查环境' : '继续'}<ArrowRight size={15} />
           </button>
         </div>
       {:else if step === 'java'}
         <h1 class="title">还差一样东西。</h1>
-        <p class="lede">没有找到可用的 Java。Minecraft 1.17 之前需要 Java 8，之后需要 Java 17 或 21。</p>
+        <p class="lede">未找到可用的 Java。Minecraft 1.17 之前需要 Java 8，之后需要 Java 17 或 21。</p>
         <div class="actions">
           <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
           <button class="btn btn--ghost" disabled={javaChecking} onclick={() => void checkJava()}>
-            {javaChecking ? '检测中' : '我已安装，重新检测'}
+            {javaChecking ? '检测中' : '重新检测'}
           </button>
           <button class="btn btn--primary" onclick={() => go(1)}>稍后处理<ArrowRight size={15} /></button>
         </div>
@@ -226,7 +226,7 @@
           <button class="btn btn--primary" onclick={() => finish(true)}>
             <Plus size={15} />创建实例
           </button>
-          <button class="btn btn--link" onclick={() => finish(false)}>先看看</button>
+          <button class="btn btn--link" onclick={() => finish(false)}>稍后创建</button>
         </div>
       {/if}
     </div>

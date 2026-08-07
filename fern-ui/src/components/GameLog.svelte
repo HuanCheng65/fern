@@ -52,7 +52,7 @@
     <div>
       <h2 class="t-h2">游戏日志</h2>
       <p class="t-quiet">
-        {launch.log.length} 行{counts.error > 0 ? ` · ${counts.error} 条错误` : ''}{counts.warn > 0
+        共 {launch.log.length} 行{counts.error > 0 ? ` · ${counts.error} 条错误` : ''}{counts.warn > 0
           ? ` · ${counts.warn} 条警告`
           : ''}
       </p>
@@ -61,21 +61,21 @@
   </header>
 
   {#if launch.log.length === 0}
-    <p class="empty t-quiet">这次还没有收到游戏的输出。游戏跑起来之后这里会有内容。</p>
+    <p class="empty t-quiet">本次运行尚无输出。</p>
   {:else}
     <div class="lines scroll">
       {#each shown as line, index (index)}
         <p class="line t-mono {levelClass(line.level)}">{line.message}</p>
       {/each}
       {#if shown.length === 0}
-        <p class="empty t-quiet">没有警告或错误。</p>
+        <p class="empty t-quiet">无警告或错误。</p>
       {/if}
     </div>
   {/if}
 
   <footer>
     <button class="btn btn--link" onclick={() => (onlyProblems = !onlyProblems)}>
-      {onlyProblems ? '显示全部' : '只看警告和错误'}
+      {onlyProblems ? '显示全部' : '仅显示警告与错误'}
     </button>
     <button class="btn btn--ghost" disabled={shown.length === 0} onclick={() => void copyAll()}>
       <Copy size={14} strokeWidth={1.9} />{copied ? '已复制' : '复制'}

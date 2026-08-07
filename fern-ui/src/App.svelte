@@ -263,22 +263,22 @@
           {:else if scene === 'supply'}
             <Placeholder
               seed="supply"
-              title="资源站还没有接入"
-              note="模组、整合包、资源包的搜索与安装会出现在这里。"
+              title="资源站尚未接入"
+              note="模组、整合包与资源包的搜索与安装将在此处提供。"
               onback={() => goScene('launch')}
             />
           {:else if scene === 'multiplayer'}
             <Placeholder
               seed="multiplayer"
-              title="联机还没有开放"
-              note="房间、好友和服务器列表会出现在这里。"
+              title="联机尚未开放"
+              note="房间、好友与服务器列表将在此处提供。"
               onback={() => goScene('launch')}
             />
           {:else}
             <Placeholder
               seed="wardrobe"
-              title="衣柜还没有开放"
-              note="皮肤与披风的预览和切换会出现在这里。"
+              title="衣柜尚未开放"
+              note="皮肤与披风的预览与切换将在此处提供。"
               onback={() => goScene('launch')}
             />
           {/if}

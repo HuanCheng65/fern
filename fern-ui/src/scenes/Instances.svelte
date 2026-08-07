@@ -27,7 +27,7 @@
 
 {#if instances.list.length === 0}
   <section class="blank">
-    <h1 class="t-h1">{instances.loading ? '正在读取本地实例' : '还没有实例'}</h1>
+    <h1 class="t-h1">{instances.loading ? '正在读取实例' : '暂无实例'}</h1>
     {#if !instances.loading}
       <button class="btn btn--ghost" onclick={oncreate}><Plus size={15} />新建实例</button>
     {/if}

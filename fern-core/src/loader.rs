@@ -190,7 +190,7 @@ pub async fn install(
     let id = profile
         .get("id")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow!("加载器 profile 没有 id"))?
+        .ok_or_else(|| anyhow!("加载器 profile 缺少 id"))?
         .to_owned();
     // id 会直接变成目录名，来自网络的字符串不能原样拿去拼路径。
     if !version::is_safe_id(&id) {
@@ -202,13 +202,13 @@ pub async fn install(
         .and_then(serde_json::Value::as_str);
     if inherits != Some(game_version) {
         return Err(anyhow!(
-            "这份 profile 继承的是 {inherits:?}，不是 {game_version}"
+            "该 profile 继承自 {inherits:?}，而非 {game_version}"
         ));
     }
     // 解得出 VersionMetadata 才算数：写进去一份读不动的 JSON，问题会推迟到
     // 启动那一刻才爆出来。
     serde_json::from_slice::<fern_meta::VersionMetadata>(&bytes)
-        .context("加载器 profile 不是一份能用的版本描述")?;
+        .context("加载器 profile 不是有效的版本描述")?;
 
     let path = version::metadata_path(paths, &id);
     tokio::fs::create_dir_all(path.parent().expect("version directory")).await?;

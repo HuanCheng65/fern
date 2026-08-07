@@ -31,8 +31,8 @@ fn entry(key: &str) -> Result<keyring::Entry> {
 /// 完全不同。
 fn unavailable(error: keyring::Error) -> anyhow::Error {
     anyhow::anyhow!(
-        "这台机器上打不开系统钥匙串，外置登录暂时用不了（{error}）。\
-         桌面环境下通常是没有解锁的密钥环；服务器或远程会话上则可能根本没装。"
+        "无法访问系统钥匙串（{error}）。\
+         桌面环境通常是密钥环未解锁；服务器或远程会话可能未安装密钥环服务。"
     )
 }
 

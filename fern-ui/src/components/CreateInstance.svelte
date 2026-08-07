@@ -51,8 +51,8 @@
 
   async function submit() {
     const trimmed = name.trim()
-    if (!trimmed) return (error = '给实例起个名字')
-    if (!picked) return (error = '选择一个 Minecraft 版本')
+    if (!trimmed) return (error = '请输入实例名称')
+    if (!picked) return (error = '请选择 Minecraft 版本')
     busy = true
     error = ''
     try {
@@ -155,7 +155,7 @@
           {/each}
         </div>
         {#if loader !== 'vanilla'}
-          <p class="hint left">将安装最新的稳定版，创建后可在实例设置里更改。</p>
+          <p class="hint left">将安装最新稳定版，可在实例设置中更改。</p>
         {/if}
       </div>
     {/if}

@@ -24,19 +24,19 @@
   let showRaw = $state(false)
 
   const exit = $derived(
-    report.exitCode === null ? '被系统终止' : `退出码 ${report.exitCode}`,
+    report.exitCode === null ? '进程被系统终止' : `退出码 ${report.exitCode}`,
   )
 </script>
 
 <Overlay label="游戏异常退出" width="600px" {onclose}>
   <header>
-    <h2 class="t-h2">{report.diagnosis?.title ?? '游戏异常退出了'}</h2>
+    <h2 class="t-h2">{report.diagnosis?.title ?? '游戏异常退出'}</h2>
     <p class="t-quiet">{exit}</p>
   </header>
 
   <p class="detail">
     {report.diagnosis?.detail ??
-      '这次退出的原因不在已知的模式里。下面是日志的最后一段，贴给别人看通常能更快定位。'}
+      '未匹配到已知的崩溃原因。以下为日志末尾内容，可用于进一步排查。'}
   </p>
 
   {#if report.reportPath}
@@ -49,14 +49,14 @@
   </button>
 
   {#if showRaw}
-    <pre class="scroll excerpt t-mono">{report.excerpt || '（没有捕获到日志）'}</pre>
+    <pre class="scroll excerpt t-mono">{report.excerpt || '未捕获到日志'}</pre>
   {/if}
 
   <footer>
     <button class="btn btn--ghost" onclick={onopenLogs}>
       <FolderOpen size={13} strokeWidth={1.9} />日志目录
     </button>
-    <button class="btn btn--primary" onclick={onclose}>知道了</button>
+    <button class="btn btn--primary" onclick={onclose}>关闭</button>
   </footer>
 </Overlay>
 

@@ -229,7 +229,7 @@ async fn poll_for_token(challenge: &DeviceCodeChallenge) -> Result<TokenResponse
     loop {
         tokio::time::sleep(Duration::from_secs(interval)).await;
         if now_seconds() >= deadline {
-            return Err(anyhow!("这个登录码已经过期了，重新开始一次"));
+            return Err(anyhow!("登录码已过期，请重新发起登录"));
         }
 
         let response = client()
@@ -257,8 +257,8 @@ async fn poll_for_token(challenge: &DeviceCodeChallenge) -> Result<TokenResponse
             "authorization_pending" => continue,
             // 服务端嫌我们问得太勤，照做。
             "slow_down" => interval += 5,
-            "expired_token" => return Err(anyhow!("这个登录码已经过期了，重新开始一次")),
-            "authorization_declined" => return Err(anyhow!("你在浏览器里拒绝了这次登录")),
+            "expired_token" => return Err(anyhow!("登录码已过期，请重新发起登录")),
+            "authorization_declined" => return Err(anyhow!("登录请求已在浏览器中被拒绝")),
             _ => return Err(oauth_error(&bytes, status)),
         }
     }
@@ -356,13 +356,11 @@ async fn xsts(xbl_token: &str) -> Result<(String, String)> {
 fn xsts_message(xerr: u64, status: reqwest::StatusCode) -> String {
     match xerr {
         2148916233 => {
-            "这个微软账号还没有 Xbox 账号。去 xbox.com 登录一次创建好，再回来登录。".to_owned()
+            "该微软账户尚未创建 Xbox 账户。请先在 xbox.com 登录一次以完成创建。".to_owned()
         }
-        2148916238 => {
-            "这是一个未成年账户，需要先由家庭组里的成年人把它加进去，才能单独登录。".to_owned()
-        }
-        2148916235 => "微软账号所在的国家/地区暂不支持 Xbox Live。".to_owned(),
-        2148916236 | 2148916237 => "这个账号需要先完成成人验证。".to_owned(),
+        2148916238 => "未成年账户需先由家庭组中的成年成员添加后方可登录。".to_owned(),
+        2148916235 => "该账户所在国家或地区暂不支持 Xbox Live。".to_owned(),
+        2148916236 | 2148916237 => "该账户需先完成成人验证。".to_owned(),
         0 => format!("XSTS 拒绝了这次认证（HTTP {status}）"),
         other => format!("XSTS 拒绝了这次认证（错误码 {other}）"),
     }
@@ -384,8 +382,8 @@ async fn minecraft_login(xsts_token: &str, user_hash: &str) -> Result<MinecraftT
         // 白名单没批下来时就停在这里。说清楚是审批问题，不是账号问题——
         // 否则用户会去反复检查自己的密码。
         return Err(anyhow!(
-            "微软还没有把 Fern 加进第三方启动器白名单，正版登录暂时用不了。\
-             这一步的失败记录正是申请审批的前提，申请已在流程中。"
+            "Fern 尚未通过微软的第三方启动器审批，正版登录暂不可用。\
+             本次失败记录是提交审批的前提条件。"
         ));
     }
     if !status.is_success() {
@@ -404,8 +402,8 @@ async fn minecraft_profile(access_token: &str) -> Result<MinecraftProfile> {
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         // Game Pass 用户没在官方启动器里初始化过时会走到这里。
         return Err(anyhow!(
-            "这个账号还没有 Minecraft 档案。如果是通过 Game Pass 拿到的游戏，\
-             先在官方启动器里进一次游戏、设置好名字，再回来登录。"
+            "该账户尚无 Minecraft 档案。若游戏通过 Game Pass 获得，\
+             请先在官方启动器中进入游戏并设置名称。"
         ));
     }
     if !response.status().is_success() {

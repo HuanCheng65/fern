@@ -24,7 +24,7 @@
   <div class="mark"><Cover {seed} quality={0.5} /></div>
   <h1 class="t-h1">{title}</h1>
   <p class="note">{note}</p>
-  <button class="btn btn--link" onclick={onback}>回到启动<ArrowRight size={14} /></button>
+  <button class="btn btn--link" onclick={onback}>返回启动<ArrowRight size={14} /></button>
 </section>
 
 <style>

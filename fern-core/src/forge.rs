@@ -228,15 +228,15 @@ fn write_version_json(paths: &DataPaths, version_json: &serde_json::Value) -> Re
     let id = version_json
         .get("id")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow!("安装器给的版本描述没有 id"))?
+        .ok_or_else(|| anyhow!("安装器提供的版本描述缺少 id"))?
         .to_owned();
     // id 会变成目录名，而它来自下载来的 jar。
     if !version::is_safe_id(&id) {
-        return Err(anyhow!("版本 id 不能作为目录名：{id}"));
+        return Err(anyhow!("版本 id 无法作为目录名：{id}"));
     }
     // 解得出 VersionMetadata 才算数，否则问题会推迟到启动那一刻。
     serde_json::from_value::<fern_meta::VersionMetadata>(version_json.clone())
-        .context("安装器给的版本描述读不出来")?;
+        .context("安装器提供的版本描述无法解析")?;
 
     let path = version::metadata_path(paths, &id);
     std::fs::create_dir_all(path.parent().expect("version directory"))?;
@@ -254,13 +254,13 @@ fn install_legacy(
     let install = profile
         .install
         .as_ref()
-        .ok_or_else(|| anyhow!("老格式的安装器缺少 install 段"))?;
+        .ok_or_else(|| anyhow!("旧版安装器缺少 install 段"))?;
     let _ = events.send(DownloadEvent::Status {
         message: "摆放 Forge 的核心库".to_owned(),
     });
 
     let relative = fern_meta::maven_path(&install.path)
-        .ok_or_else(|| anyhow!("坐标 {} 推不出路径", install.path))?;
+        .ok_or_else(|| anyhow!("无法从坐标 {} 推导路径", install.path))?;
     let destination = fern_download::safe_join(&paths.libraries, Path::new(&relative))?;
     std::fs::create_dir_all(destination.parent().expect("library directory"))?;
 
@@ -293,7 +293,7 @@ fn resolve_data(
         let concrete =
             if let Some(coordinate) = raw.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
                 let relative = fern_meta::maven_path(coordinate)
-                    .ok_or_else(|| anyhow!("坐标 {coordinate} 推不出路径"))?;
+                    .ok_or_else(|| anyhow!("无法从坐标 {coordinate} 推导路径"))?;
                 fern_download::safe_join(&paths.libraries, Path::new(&relative))?
                     .display()
                     .to_string()
@@ -320,7 +320,7 @@ fn expand(argument: &str, data: &HashMap<String, String>, libraries: &Path) -> R
     // 整个参数就是一个坐标的情况最常见，先处理掉。
     if let Some(coordinate) = argument.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
         let relative = fern_meta::maven_path(coordinate)
-            .ok_or_else(|| anyhow!("坐标 {coordinate} 推不出路径"))?;
+            .ok_or_else(|| anyhow!("无法从坐标 {coordinate} 推导路径"))?;
         return Ok(fern_download::safe_join(libraries, Path::new(&relative))?
             .display()
             .to_string());
@@ -508,8 +508,8 @@ async fn run_one(
 }
 
 fn library_path(paths: &DataPaths, coordinate: &str) -> Result<PathBuf> {
-    let relative =
-        fern_meta::maven_path(coordinate).ok_or_else(|| anyhow!("坐标 {coordinate} 推不出路径"))?;
+    let relative = fern_meta::maven_path(coordinate)
+        .ok_or_else(|| anyhow!("无法从坐标 {coordinate} 推导路径"))?;
     fern_download::safe_join(&paths.libraries, Path::new(&relative))
 }
 

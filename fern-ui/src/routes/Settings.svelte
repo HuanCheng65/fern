@@ -83,7 +83,7 @@
 
   async function login() {
     if (!apiRoot.trim() || !username.trim() || !password) {
-      loginError = '皮肤站地址、邮箱和密码都要填'
+      loginError = '请填写皮肤站地址、邮箱和密码'
       return
     }
     loggingIn = true
@@ -179,7 +179,7 @@
   }
 
   function applyCode() {
-    importError = theme.import(themeCode) ? '' : '这段主题码读不出来'
+    importError = theme.import(themeCode) ? '' : '无法解析该主题码'
     if (!importError) themeCode = theme.export()
   }
 
@@ -285,7 +285,7 @@
           <div class="row">
             <span class="label">
               动效
-              <small>关闭会同时停掉背景粒子和指针视差。窗口失焦时始终暂停。</small>
+              <small>关闭后同时停用背景粒子与指针视差。窗口失焦时始终暂停。</small>
             </span>
             <Choice
               label="动效"
@@ -302,7 +302,7 @@
           <div class="row stack">
             <span class="label">
               主题码
-              <small>上面这些选择的全部内容。贴给别人，对方粘贴后按应用即可复现。</small>
+              <small>包含以上全部外观选择。他人粘贴后点击应用即可复现。</small>
             </span>
             <div class="code-row">
               <input class="input selectable t-mono" bind:value={themeCode} spellcheck="false" />
@@ -350,15 +350,15 @@
                 <span class="value">{msa.playerName}</span>
               </div>
               <div class="row">
-                <span class="label">退出登录<small>令牌会从系统钥匙串里删掉。</small></span>
+                <span class="label">退出登录<small>令牌将从系统钥匙串中移除。</small></span>
                 <button class="btn btn--ghost" onclick={() => void microsoftLogout()}>退出</button>
               </div>
             {:else if deviceCode}
               <!-- 登录码是这一屏此刻唯一要做的事，所以给它整行和最大的字号。 -->
               <div class="row stack">
                 <span class="label">
-                  在浏览器里输入这个码
-                  <small>密码只在微软的页面上输入，不经过 Fern。</small>
+                  在浏览器中输入以下代码
+                  <small>密码仅在微软页面输入，不经过 Fern。</small>
                 </span>
                 <p class="code t-mono selectable">{deviceCode.userCode}</p>
                 <p class="t-mono path selectable">{deviceCode.verificationUri}</p>
@@ -367,7 +367,7 @@
               <div class="row">
                 <span class="label">
                   微软账户
-                  <small>会打开一个八位码，去浏览器里输入即可，不用在这里填密码。</small>
+                  <small>获取登录码后在浏览器中完成验证，无需在此输入密码。</small>
                 </span>
                 <button
                   class="btn btn--primary"
@@ -391,14 +391,14 @@
                 <span class="value">{session.playerName}</span>
               </div>
               <div class="row">
-                <span class="label">退出登录<small>令牌会从系统钥匙串里删掉。</small></span>
+                <span class="label">退出登录<small>令牌将从系统钥匙串中移除。</small></span>
                 <button class="btn btn--ghost" onclick={() => void logout()}>退出</button>
               </div>
             {:else}
               <div class="row stack">
                 <span class="label">
                   皮肤站地址
-                  <small>Yggdrasil API 根地址，皮肤站的「在启动器中使用」页面会给出。</small>
+                  <small>Yggdrasil API 根地址，可在皮肤站的「在启动器中使用」页面获取。</small>
                 </span>
                 <input
                   class="input"
@@ -414,7 +414,7 @@
               <div class="row stack">
                 <span class="label">
                   密码
-                  <small>只用来换取令牌，不会保存。令牌存进系统钥匙串。</small>
+                  <small>仅用于换取令牌，不会保存。令牌存入系统钥匙串。</small>
                 </span>
                 <input
                   class="input"
@@ -439,7 +439,7 @@
             <div class="row stack">
               <span class="label">
                 玩家名称
-                <small>用于离线启动。这个名字会生成稳定的离线 UUID。</small>
+                <small>用于离线启动，将据此生成固定的离线 UUID。</small>
               </span>
               <input
                 class="input name"
@@ -456,7 +456,7 @@
             <span class="label">
               下载源
               <small
-                >按你的系统区域，建议用 {sourceName[suggestedSource()]}。任一个源失败时另一个自动接手。</small
+                >根据系统区域建议使用 {sourceName[suggestedSource()]}。当前源失败时将自动切换到另一个源。</small
               >
             </span>
             <Choice
@@ -484,14 +484,14 @@
           <div class="row">
             <span class="label">
               启动后最小化
-              <small>游戏窗口开出来之后把 Fern 收起来，不是点启动那一刻。</small>
+              <small>在游戏窗口出现后最小化 Fern，而非点击启动时。</small>
             </span>
             <Choice
               label="启动后最小化"
               value={prefs.minimizeOnLaunch ? 'on' : 'off'}
               onchange={(next) => prefs.setMinimizeOnLaunch(next === 'on')}
               options={[
-                { value: 'off', label: '不动' },
+                { value: 'off', label: '保持显示' },
                 { value: 'on', label: '最小化' },
               ]}
             />
@@ -501,7 +501,7 @@
           <div class="row stack">
             <span class="label">Java 运行时</span>
             {#if runtimes.length === 0}
-              <p class="t-quiet">还没有找到任何 Java。第一次启动游戏时会自动下载。</p>
+              <p class="t-quiet">未找到可用的 Java，首次启动游戏时将自动下载。</p>
             {:else}
               <ul class="runtimes">
                 {#each runtimes as item (item.path)}
@@ -509,7 +509,7 @@
                     <span class="rt-name">
                       Java {item.major}
                       <small class="t-quiet">
-                        {item.vendor || '未知发行版'} · {item.managed ? 'Fern 下载' : '系统自带'}
+                        {item.vendor || '未知发行版'} · {item.managed ? '由 Fern 下载' : '系统自带'}
                       </small>
                     </span>
                     {#if item.managed}

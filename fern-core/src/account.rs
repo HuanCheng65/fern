@@ -52,12 +52,12 @@ impl Account {
             }),
             AccountKind::Microsoft => {
                 let session = crate::load_microsoft_session()?
-                    .ok_or_else(|| anyhow!("还没有登录微软账号，去设置里登录一次"))?;
+                    .ok_or_else(|| anyhow!("尚未登录微软账户，请在设置中登录"))?;
                 Ok(Self::Microsoft(session))
             }
             AccountKind::Authlib => {
                 let session = crate::load_session()?
-                    .ok_or_else(|| anyhow!("外置登录还没有登录过，去设置里登录一次"))?;
+                    .ok_or_else(|| anyhow!("尚未登录外置账户，请在设置中登录"))?;
                 Ok(Self::Yggdrasil {
                     session,
                     injector: None,
@@ -81,7 +81,7 @@ impl Account {
             Self::Microsoft(session) => {
                 let fresh = microsoft::ensure_fresh(session)
                     .await
-                    .context("微软令牌刷新失败，需要重新登录")?;
+                    .context("微软令牌刷新失败，请重新登录")?;
                 if &fresh != session {
                     crate::store_microsoft_session(&fresh)?;
                     *session = fresh;
@@ -95,7 +95,7 @@ impl Account {
             } => {
                 let fresh = auth::ensure_fresh(session)
                     .await
-                    .context("刷新外置登录令牌失败，可能需要重新登录")?;
+                    .context("外置登录令牌刷新失败，请重新登录")?;
                 if &fresh != session {
                     crate::store_session(&fresh)?;
                     *session = fresh;
@@ -121,7 +121,7 @@ impl Account {
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
                 {
-                    return Err(anyhow!("离线模式的名字要 3-16 位字母、数字或下划线"));
+                    return Err(anyhow!("离线模式名称需为 3-16 位字母、数字或下划线"));
                 }
                 Ok(offline_credentials(player_name))
             }
