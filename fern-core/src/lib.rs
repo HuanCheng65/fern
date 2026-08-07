@@ -3,6 +3,7 @@
 //! Tauri commands call this crate. It owns launcher state and translates
 //! download, Java, account, and process events into UI-facing values.
 
+mod account;
 mod auth;
 mod catalog;
 mod crash;
@@ -22,6 +23,7 @@ mod settings;
 mod tuning;
 mod version;
 
+pub use account::Account;
 pub use auth::{
     AccountView, YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
     prefetched as prefetched_metadata,
