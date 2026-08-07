@@ -178,6 +178,13 @@ mod tests {
         let graphics = diagnose("org.lwjgl.LWJGLException: Pixel format not accelerated")
             .expect("a diagnosis");
         assert_eq!(graphics.id, "graphics-driver");
+
+        // 端到端跑出来的真实栈：1.21.1 + Fabric 在没有显示器的机器上就是这一条。
+        let glfw = diagnose(
+            "java.lang.IllegalStateException: Failed to initialize GLFW, errors: GLFW error during init: [0x1000E]Failed to detect any supported platform",
+        )
+        .expect("a diagnosis");
+        assert_eq!(glfw.id, "graphics-driver");
     }
 
     #[test]

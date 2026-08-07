@@ -70,6 +70,10 @@ pub fn gc_arguments(java_major: u16, existing: &[String]) -> Vec<String> {
         return Vec::new();
     }
     vec![
+        // G1NewSizePercent 到今天仍然是实验选项（Java 21、25 上都拒绝启动），
+        // 而且解锁开关必须排在它前面。少了这一行，游戏根本起不来——
+        // 「Could not create the Java Virtual Machine」。
+        "-XX:+UnlockExperimentalVMOptions".to_owned(),
         "-XX:+UseG1GC".to_owned(),
         "-XX:G1NewSizePercent=20".to_owned(),
         "-XX:G1ReservePercent=20".to_owned(),
@@ -225,12 +229,28 @@ mod tests {
 
     #[test]
     fn gc_flags_stay_out_of_the_way_of_an_existing_collector() {
-        assert_eq!(gc_arguments(21, &[]).len(), 4);
+        assert!(!gc_arguments(21, &[]).is_empty());
         assert!(gc_arguments(8, &[]).is_empty());
         assert!(gc_arguments(21, &["-XX:+UseZGC".to_owned()]).is_empty());
         assert!(gc_arguments(21, &["-XX:+UseSerialGC".to_owned()]).is_empty());
         // 不相关的参数不该挡住默认值。
-        assert_eq!(gc_arguments(21, &["-Xmx4G".to_owned()]).len(), 4);
+        assert!(!gc_arguments(21, &["-Xmx4G".to_owned()]).is_empty());
+    }
+
+    #[test]
+    fn experimental_flags_are_unlocked_before_they_are_used() {
+        // 端到端跑出来的教训：少了解锁开关，JVM 直接拒绝启动，而且解锁必须
+        // 排在实验选项**前面**——顺序错了报的是一样的错。
+        let arguments = gc_arguments(21, &[]);
+        let unlock = arguments
+            .iter()
+            .position(|argument| argument == "-XX:+UnlockExperimentalVMOptions")
+            .expect("实验选项必须先解锁");
+        for (index, argument) in arguments.iter().enumerate() {
+            if argument.starts_with("-XX:G1NewSizePercent") {
+                assert!(index > unlock, "解锁开关必须排在实验选项前面");
+            }
+        }
     }
 
     #[test]

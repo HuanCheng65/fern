@@ -1,13 +1,17 @@
 [
   {
     "id": "out-of-memory",
-    "all": ["java.lang.OutOfMemoryError"],
+    "all": [
+      "java.lang.OutOfMemoryError"
+    ],
     "title": "内存不够了",
     "detail": "分配给这个实例的内存装不下当前的世界或模组。在实例设置里把内存调高一档再试。"
   },
   {
     "id": "java-too-old",
-    "all": ["UnsupportedClassVersionError"],
+    "all": [
+      "UnsupportedClassVersionError"
+    ],
     "title": "Java 版本不对",
     "detail": "这个版本或它的某个模组需要更新的 Java。清除实例设置里手动指定的 Java 路径，让 Fern 自己挑一个。"
   },
@@ -23,20 +27,31 @@
   },
   {
     "id": "duplicate-mods",
-    "any": ["Duplicate mods found", "Found a duplicate mod"],
+    "any": [
+      "Duplicate mods found",
+      "Found a duplicate mod"
+    ],
     "title": "装了两份同一个模组",
     "detail": "mods 目录里同一个模组存在多个版本。删掉旧的那一份。"
   },
   {
     "id": "mixin-conflict",
-    "all": ["org.spongepowered.asm.mixin"],
-    "any": ["MixinApplyError", "InvalidInjectionException", "MixinTransformerError"],
+    "all": [
+      "org.spongepowered.asm.mixin"
+    ],
+    "any": [
+      "MixinApplyError",
+      "InvalidInjectionException",
+      "MixinTransformerError"
+    ],
     "title": "模组之间打架了",
     "detail": "有模组改动的代码位置和另一个模组冲突，通常是某一个的版本不匹配。报告里第一个提到的模组是最可能的那个。"
   },
   {
     "id": "graphics-driver",
     "any": [
+      "Failed to initialize GLFW",
+      "GLFW error during init",
       "Pixel format not accelerated",
       "Failed to create window",
       "GLFW error 65542",
@@ -44,17 +59,24 @@
       "OpenGL 1.1 or higher"
     ],
     "title": "显卡驱动起不来",
-    "detail": "游戏拿不到可用的 OpenGL 环境。更新显卡驱动；如果是双显卡的笔记本，确认游戏跑在独显上。"
+    "detail": "游戏拿不到可用的 OpenGL 环境。更新显卡驱动；如果是双显卡的笔记本，确认游戏跑在独显上；远程桌面或无显示器的环境下游戏无法启动。"
   },
   {
     "id": "corrupt-files",
-    "any": ["ZipException", "Invalid or corrupt jarfile", "error in opening zip file"],
+    "any": [
+      "ZipException",
+      "Invalid or corrupt jarfile",
+      "error in opening zip file"
+    ],
     "title": "有文件损坏了",
     "detail": "某个 jar 没有下完整。在启动页跑一次「校验文件」，损坏的会被重新下载。"
   },
   {
     "id": "port-or-network",
-    "any": ["java.net.BindException", "Address already in use"],
+    "any": [
+      "java.net.BindException",
+      "Address already in use"
+    ],
     "title": "端口被占用",
     "detail": "另一个程序占着游戏要用的端口。多半是上一次的游戏进程还没退干净。"
   }
