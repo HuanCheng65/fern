@@ -21,6 +21,7 @@
   import Choice from '../components/Choice.svelte'
   import Loading from '../components/Loading.svelte'
   import { instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
+  import { launch } from '../lib/launch.svelte'
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
 
@@ -121,6 +122,17 @@
       // 建完直接落到它的详情页：刚建的东西该能立刻看见，而不是回到网格里自己找。
       instances.select(created.id)
       nav.open(created.id)
+      /*
+       * 建完立刻开始准备，不等第一次点启动。
+       *
+       * 建实例本身只是把选择写进一个 json，瞬间完成；装加载器、补全文件才是
+       * 花时间的部分。上一版把它们推迟到第一次启动——于是曲库里躺着一个看起来
+       * 一切正常的 Forge 实例，直到你点「启动」的那一刻才开始跑 Forge 安装器，
+       * 一等好几分钟，而用户以为自己只是点了启动。
+       *
+       * 不 await：这一页的活已经干完了，进度归实例页和岛。
+       */
+      void launch.repair(created.id, `准备 ${created.name}`)
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -154,6 +166,8 @@
       const created = await invoke<{ id: string }>('import_modpack', {
         path: pack.path,
         name: name.trim() || null,
+        title: `导入 ${pack.summary.name}`,
+        subjects: [],
       })
       await instances.load()
       instances.select(created.id)

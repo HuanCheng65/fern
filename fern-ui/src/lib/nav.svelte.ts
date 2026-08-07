@@ -34,7 +34,7 @@ export const SCENES: { id: SceneId; label: string }[] = [
 const isScene = (value: string): value is SceneId => SCENES.some((item) => item.id === value)
 
 /** 同时只开一个。浮层之间不叠罗汉——叠起来就没人知道 Esc 关的是哪一层。 */
-export type OverlayId = '' | 'settings' | 'palette' | 'tasks' | 'log'
+export type OverlayId = '' | 'settings' | 'palette' | 'island' | 'log'
 
 export type Params = Record<string, string>
 

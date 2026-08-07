@@ -258,6 +258,39 @@ mod tests {
         assert!(matches!(&events[3], JobEvent::Done { error: None, .. }));
     }
 
+    /// 界面按 `payload.payload` 两层拆这条事件。少一层多一层编译期都看不见，
+    /// 只会表现成「进度条永远不动」——那正是最难查的一类。
+    #[test]
+    fn job_events_reach_the_frontend_in_the_shape_it_destructures() {
+        let value = serde_json::to_value(LauncherEvent::Job(JobEvent::Bytes {
+            id: "job-1".to_owned(),
+            done: 41,
+            total: 50,
+            speed: 900,
+        }))
+        .expect("serialize");
+        assert_eq!(value["type"], "job");
+        assert_eq!(value["payload"]["type"], "bytes");
+        assert_eq!(value["payload"]["payload"]["done"], 41);
+
+        let started = serde_json::to_value(LauncherEvent::Job(JobEvent::Started {
+            id: "job-2".to_owned(),
+            title: "安装 Sodium".to_owned(),
+            subjects: vec!["sodium".to_owned()],
+        }))
+        .expect("serialize");
+        assert_eq!(started["payload"]["type"], "started");
+        assert_eq!(started["payload"]["payload"]["subjects"][0], "sodium");
+
+        // 成功时 error 是 null，界面据此判断该不该把它留下来。
+        let done = serde_json::to_value(LauncherEvent::Job(JobEvent::Done {
+            id: "job-2".to_owned(),
+            error: None,
+        }))
+        .expect("serialize");
+        assert!(done["payload"]["payload"]["error"].is_null());
+    }
+
     #[test]
     fn finishing_twice_only_says_so_once() {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();

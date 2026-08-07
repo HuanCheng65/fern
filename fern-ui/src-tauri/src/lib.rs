@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use pearl_core::invite::Invite;
 use pearl_core::probe::{self, ProbeOptions};
-use pearl_core::session::{self, HostOptions, JoinOptions, MinecraftSource, SessionEvent, SessionOptions};
+use pearl_core::session::{
+    self, HostOptions, JoinOptions, MinecraftSource, SessionEvent, SessionOptions,
+};
 use pearl_core::settings::{self, Settings};
 use pearl_core::sidecar::session_event_json;
 use tauri::{Emitter, Manager, State};
@@ -24,7 +26,10 @@ impl RunningPearl {
         self.share = None;
         if let Some((mut task, stop)) = self.task.take() {
             stop.stop();
-            if tokio::time::timeout(PEARL_STOP_TIMEOUT, &mut task).await.is_err() {
+            if tokio::time::timeout(PEARL_STOP_TIMEOUT, &mut task)
+                .await
+                .is_err()
+            {
                 tracing::warn!("Pearl session did not stop in time");
                 task.abort();
             }
@@ -73,8 +78,14 @@ where
     }) as Box<dyn FnMut(SessionEvent) + Send>;
     let (stop, signal) = session::stop_channel();
     let task = tauri::async_runtime::spawn(async move {
-        let detail = start(signal, emit).await.err().map(|error| format!("{error:#}"));
-        let _ = app.emit("session", serde_json::json!({ "event": "ended", "detail": detail }));
+        let detail = start(signal, emit)
+            .await
+            .err()
+            .map(|error| format!("{error:#}"));
+        let _ = app.emit(
+            "session",
+            serde_json::json!({ "event": "ended", "detail": detail }),
+        );
     });
     running.task = Some((task, stop));
     Ok(())
@@ -111,9 +122,10 @@ async fn pearl_join(
     name: String,
 ) -> Result<(), String> {
     let session = pearl_options(name)?;
-    let invite: Invite = invite.trim().parse().map_err(|_| {
-        "这串邀请码看起来不对，应该是十二个数字或一条 pearl:// 链接".to_owned()
-    })?;
+    let invite: Invite = invite
+        .trim()
+        .parse()
+        .map_err(|_| "这串邀请码看起来不对，应该是十二个数字或一条 pearl:// 链接".to_owned())?;
     run_pearl(app, sessions, None, move |stop, emit| async move {
         session::run_join(
             JoinOptions {
@@ -368,16 +380,26 @@ fn launcher_events(
     events
 }
 
+/// 标题和 `subjects` 由界面给。
+///
+/// 后端负责宣告作业的存在和进展，不负责编一个显示用的名字——用户是在哪个页面
+/// 上、对着哪个东西点的这一下，只有界面知道。`subjects` 是这件事干在谁身上
+/// （实例 id、项目 id，可以都有），界面据此把作业挂回对应的页面，而不必去认识
+/// 作业的种类。
 #[tauri::command]
 async fn prepare_instance(
     app: tauri::AppHandle,
     instance_id: String,
+    title: String,
+    subjects: Vec<String>,
 ) -> Result<fern_core::PrepareResult, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let paths = paths()?;
     let events = launcher_events(&app);
-    let result = fern_core::prepare_instance(&paths, &instance_id, &events)
+    let job = fern_core::Job::begin(&events, title, subjects);
+    let result = fern_core::prepare_instance(&paths, &instance_id, &job)
         .await
         .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
     if let Err(error) = &result {
         let _ = paths.append_log(&format!("[prepare] instance={instance_id} error={error}"));
     }
@@ -389,18 +411,24 @@ async fn launch_instance(
     app: tauri::AppHandle,
     instance_id: String,
     player_name: String,
+    title: String,
+    subjects: Vec<String>,
 ) -> Result<fern_core::LaunchResult, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let paths = paths()?;
     let events = launcher_events(&app);
-    let prepared = fern_core::prepare_instance(&paths, &instance_id, &events)
+    // 一次点击一个作业：补全和启动是同一件事的两段，各自往总步数里添自己那份。
+    let job = fern_core::Job::begin(&events, title, subjects);
+    job.expect(1);
+    let prepared = fern_core::prepare_instance(&paths, &instance_id, &job)
         .await
         .map_err(|error| format!("{error:#}"));
     let result = match prepared {
-        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &player_name, &events)
+        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &player_name, &events, &job)
             .await
             .map_err(|error| format!("{error:#}")),
         Err(error) => Err(error),
     };
+    job.finish(&result);
     if let Err(error) = &result {
         let _ = paths.append_log(&format!("[launch] instance={instance_id} error={error}"));
     }
@@ -443,13 +471,17 @@ async fn install_from_modrinth(
     instance_id: String,
     version_id: String,
     kind: fern_core::ResourceKind,
+    title: String,
+    subjects: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let paths = paths()?;
     let events = launcher_events(&app);
-    let downloads = fern_core::download_bridge(&events);
-    fern_core::install_from_modrinth(&paths, &instance_id, &version_id, kind, &downloads)
+    let job = fern_core::Job::begin(&events, title, subjects);
+    let result = fern_core::install_from_modrinth(&paths, &instance_id, &version_id, kind, &job)
         .await
-        .map_err(|error| format!("{error:#}"))
+        .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
+    result
 }
 
 /// 从 Modrinth 装一个整合包。它建的是一个**新实例**，不是装进已有的实例。
@@ -458,18 +490,21 @@ async fn install_modpack(
     app: tauri::AppHandle,
     version_id: String,
     name: Option<String>,
+    title: String,
+    subjects: Vec<String>,
 ) -> Result<fern_core::InstanceProfile, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let paths = paths()?;
     let events = launcher_events(&app);
-    let downloads = fern_core::download_bridge(&events);
+    let job = fern_core::Job::begin(&events, title, subjects);
     let result = fern_core::install_modpack_from_modrinth(
         &paths,
         &version_id,
         name.as_deref().filter(|value| !value.is_empty()),
-        &downloads,
+        &job,
     )
     .await
     .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
     if let Err(error) = &result {
         let _ = paths.append_log(&format!("[modpack] version={version_id} error={error}"));
     }
@@ -492,18 +527,22 @@ async fn import_modpack(
     app: tauri::AppHandle,
     path: String,
     name: Option<String>,
+    title: String,
+    subjects: Vec<String>,
 ) -> Result<fern_core::InstanceProfile, String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    let paths = paths()?;
     let events = launcher_events(&app);
-    let downloads = fern_core::download_bridge(&events);
-    fern_core::install_modpack(
+    let job = fern_core::Job::begin(&events, title, subjects);
+    let result = fern_core::install_modpack(
         &paths,
         std::path::Path::new(&path),
         name.as_deref().filter(|value| !value.is_empty()),
-        &downloads,
+        &job,
     )
     .await
-    .map_err(|error| format!("{error:#}"))
+    .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
+    result
 }
 
 /// 用系统浏览器打开一个链接。

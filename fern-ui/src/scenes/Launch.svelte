@@ -14,6 +14,7 @@
   import { ChevronDown, Play, X } from 'lucide-svelte'
   import Stage from '../layouts/Stage.svelte'
   import { instances } from '../lib/instances.svelte'
+  import { fraction, jobs, measure } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { prefs } from '../lib/prefs.svelte'
 
@@ -25,6 +26,15 @@
   let { onswitch, oncreate }: Props = $props()
 
   const current = $derived(instances.current)
+  /**
+   * 这颗按钮上的进度来自后端宣告的作业，不是本地攒的。
+   *
+   * 于是它对「谁发起的」免疫：从命令面板启动、从实例页启动、甚至上一次点完
+   * 就切走了再回来——只要这个实例上有事在跑，按钮就还是那副样子。
+   */
+  const job = $derived(current ? jobs.forSubject(current.id) : undefined)
+  const done = $derived(job ? fraction(job) : undefined)
+  const working = $derived(launch.busy || job !== undefined)
 </script>
 
 <Stage>
@@ -41,28 +51,30 @@
              两份游戏抢同一个存档目录。 -->
         <button
           class="btn btn--primary go"
-          class:busy={launch.busy}
+          class:busy={working}
           onclick={() => void launch.launch(current.id, prefs.playerName)}
-          disabled={launch.busy || launch.running}
+          disabled={working || launch.running}
         >
           <span
             class="fill"
-            class:pulse={launch.busy && launch.progress < 0}
-            style:width={launch.progress >= 0 ? `${launch.progress}%` : '100%'}
+            class:pulse={working && done === undefined}
+            style:width={done === undefined ? '100%' : `${done * 100}%`}
           ></span>
           <span class="go-text">
             {#if launch.running}
               游戏运行中
-            {:else if launch.busy}
-              {launch.label || '准备中'}
+            {:else if job}
+              {job.stage || job.title}
+            {:else if working}
+              准备中
             {:else}
               <Play size={16} fill="currentColor" strokeWidth={0} />启动游戏
             {/if}
           </span>
         </button>
 
-        {#if launch.busy && launch.detail}
-          <span class="detail t-mono">{launch.detail}</span>
+        {#if job && measure(job)}
+          <span class="detail t-mono">{measure(job)}</span>
         {/if}
       </div>
 

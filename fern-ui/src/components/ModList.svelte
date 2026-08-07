@@ -17,7 +17,7 @@
   import { FolderOpen, Plus, Trash2 } from 'lucide-svelte'
   import { onMount } from 'svelte'
   import { inTauri } from '../lib/instances.svelte'
-  import { formatBytes } from '../lib/launch.svelte'
+  import { formatBytes } from '../lib/jobs.svelte'
   import Loading from './Loading.svelte'
   import { nav } from '../lib/nav.svelte'
 

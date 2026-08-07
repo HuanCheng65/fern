@@ -12,7 +12,7 @@
   import { FolderOpen } from 'lucide-svelte'
   import Loading from './Loading.svelte'
   import { inTauri } from '../lib/instances.svelte'
-  import { formatBytes } from '../lib/launch.svelte'
+  import { formatBytes } from '../lib/jobs.svelte'
 
   interface SaveEntry {
     name: string

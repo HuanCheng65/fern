@@ -16,10 +16,10 @@
    * 背景不可控（启动场景整屏是封面艺术），所以顶栏默认完全透明，文字颜色跟着
    * 背景层提取的色板走；只有场景内容滚到它底下时才浮现毛玻璃。
    */
-  import { ArrowLeft, ScrollText, Settings } from 'lucide-svelte'
+  import { ArrowLeft, Settings } from 'lucide-svelte'
+  import Island from './Island.svelte'
   import Mark from './Mark.svelte'
   import { platform } from '../lib/frame.svelte'
-  import { launch } from '../lib/launch.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
 
@@ -49,7 +49,6 @@
   })
   const isMac = $derived(platform === 'macos')
   const initials = $derived((prefs.playerName || 'FERN').slice(0, 2).toUpperCase())
-  const busy = $derived(launch.busy || launch.running)
 
   $effect(() => {
     const el = buttons[nav.index]
@@ -114,32 +113,11 @@
 
   <div class="right">
     <!--
-      呼吸状态区：默认完全空白，有下载或游戏在跑时才浮现。零状态零挂件。
-      它的意义是——切到任何场景，你都知道游戏还开着。
+      呼吸状态区：默认完全空白，有事情在发生时才浮现。零状态零挂件。它的意义
+      是——切到任何场景，你都知道游戏还开着、东西还在下。顶栏不认识作业也不
+      认识游戏，那是岛的事。
     -->
-    {#if busy}
-      <button
-        class="status"
-        class:live={launch.running}
-        onclick={() => nav.toggle('tasks')}
-        title={launch.running ? '游戏运行中' : launch.label || '准备中'}
-      >
-        {#if launch.running}
-          <span class="dot"></span>运行中
-        {:else}
-          <!--
-            进度长在标志上：螺线画完即启动完成（见 docs/fern-brand-system.html
-            06）。进度未知时它沿走线自己跑，不假装知道到了百分之几。
-          -->
-          <Mark
-            size={14}
-            spinning={launch.progress < 0}
-            progress={launch.progress >= 0 ? launch.progress / 100 : undefined}
-          />
-          {launch.progress >= 0 ? `${Math.round(launch.progress)}%` : launch.label || '准备中'}
-        {/if}
-      </button>
-    {/if}
+    <Island />
 
     <button
       class="btn btn--icon"
@@ -159,23 +137,6 @@
     </button>
   </div>
 
-  {#if nav.overlay === 'tasks'}
-    <!-- 状态块点开的小面板。它讲的是全局进程，不属于任何场景。 -->
-    <div class="tasks panel">
-      {#if launch.running}
-        <p class="line"><span class="dot"></span>游戏运行中</p>
-        <button class="btn btn--link" onclick={() => nav.show('log')}>
-          <ScrollText size={12} strokeWidth={2} />查看日志
-        </button>
-      {:else}
-        <p class="line">{launch.label || '准备中'}</p>
-        {#if launch.detail}<p class="t-quiet sub t-mono">{launch.detail}</p>{/if}
-        {#if launch.progress >= 0}
-          <div class="bar"><span style:width={`${launch.progress}%`}></span></div>
-        {/if}
-      {/if}
-    </div>
-  {/if}
 </header>
 
 <style>
@@ -343,36 +304,6 @@
     margin-left: auto;
   }
 
-  .status {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    min-height: 26px;
-    margin-right: var(--s2);
-    padding: 0 var(--s3);
-    border-radius: 999px;
-    background: var(--tint-1);
-    color: var(--ink-2);
-    font-size: var(--t-micro);
-    font-variant-numeric: tabular-nums;
-    transition: background var(--t-fast) var(--ease);
-  }
-
-  .status:hover {
-    background: var(--tint-2);
-    color: var(--ink);
-  }
-
-
-
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-
   .avatar {
     display: grid;
     place-items: center;
@@ -394,47 +325,6 @@
   .avatar:hover {
     color: var(--ink);
     background: var(--tint-3);
-  }
-
-  .tasks {
-    position: absolute;
-    top: calc(var(--top) - var(--s2));
-    right: calc(var(--pad-x) + var(--frame-controls));
-    z-index: 20;
-    display: grid;
-    gap: var(--s2);
-    justify-items: start;
-    width: 260px;
-    padding: var(--s3) var(--s4);
-  }
-
-  .line {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    margin: 0;
-    color: var(--ink);
-    font-size: var(--t-small);
-  }
-
-  .sub {
-    margin: 0;
-    overflow-wrap: anywhere;
-  }
-
-  .bar {
-    width: 100%;
-    height: 2px;
-    border-radius: 2px;
-    background: var(--tint-2);
-  }
-
-  .bar span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
-    transition: width var(--t-base) var(--ease);
   }
 
   /* 窗口窄到五个词和两侧要打架时，先牺牲词距。 */

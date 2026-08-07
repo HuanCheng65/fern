@@ -18,6 +18,7 @@
   import Loading from '../components/Loading.svelte'
   import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
+  import { jobs } from '../lib/jobs.svelte'
   import { nav } from '../lib/nav.svelte'
   import {
     compactNumber,
@@ -38,9 +39,18 @@
   let versions = $state<ProjectVersion[]>([])
   let loading = $state(true)
   let error = $state('')
-  let installing = $state('')
+  /**
+   * 点的是哪一行。纯粹是本地的高亮，不是「装没装完」——那个由作业说。
+   *
+   * 上一版把安装状态整个存在这里，于是导航一走组件销毁，任务还在后台跑，回来
+   * 看不到任何痕迹；失败了错误也随组件一起蒸发了。
+   */
+  let clicked = $state('')
   let installed = $state<string[]>([])
   let showAll = $state(false)
+
+  /** 这个项目上现在有没有事情在跑。走开再回来它还在。 */
+  const job = $derived(jobs.forSubject(slug))
 
   const TABS = [
     { id: 'versions', label: '版本' },
@@ -101,13 +111,15 @@
   }
 
   async function install(version: ProjectVersion) {
-    installing = version.id
+    clicked = version.id
     error = ''
     try {
       if (isPack) {
         const created = await invoke<{ id: string; name: string }>('install_modpack', {
           versionId: version.id,
           name: detail?.title ?? null,
+          title: `安装 ${detail?.title ?? '整合包'}`,
+          subjects: [slug],
         })
         await instances.load()
         instances.select(created.id)
@@ -116,15 +128,18 @@
         return
       }
       if (!target) return
+      // 这件事既属于这个项目，也属于那个实例——两边的页面都该看得见它。
       installed = await invoke<string[]>('install_from_modrinth', {
         instanceId: target.id,
         versionId: version.id,
         kind,
+        title: `安装 ${detail?.title ?? '资源'}`,
+        subjects: [slug, target.id],
       })
     } catch (cause) {
       error = String(cause)
     } finally {
-      installing = ''
+      clicked = ''
     }
   }
 
@@ -230,12 +245,14 @@
               </span>
               <button
                 class="btn btn--ghost"
-                disabled={(!isPack && !target) || !fit.ok || installing !== ''}
+                disabled={(!isPack && !target) || !fit.ok || job !== undefined}
                 title={fit.ok ? (isPack ? '建成新实例' : '安装') : fit.note}
                 onclick={() => void install(version)}
               >
-                {#if installing === version.id}
-                  {isPack ? '创建中' : '安装中'}
+                {#if job && clicked === version.id}
+                  {job.stage || (isPack ? '创建中' : '安装中')}
+                {:else if job}
+                  等待中
                 {:else if isPack}
                   <Plus size={14} strokeWidth={2} />创建实例
                 {:else}

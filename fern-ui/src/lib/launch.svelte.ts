@@ -1,31 +1,26 @@
 /**
- * 启动与文件补全的状态。
+ * 游戏进程的状态。
  *
- * 界面上只有一颗启动键，所以这里也只暴露一件事的状态：现在忙不忙、忙到
- * 哪一步、进度多少。文档里说启动是英雄交互——那它的进度就该长在那颗按钮
- * 身上，而不是另起一个进度条区域。
+ * 这个 store 曾经什么都管：下载进度、启动阶段、日志、崩溃。于是它成了「同一
+ * 时刻只有一件事」的隐含前提——装模组也往同一条流里发进度，把启动的进度盖掉，
+ * 而因为它的 `busy` 没被立起来，那份进度谁也没显示。「点一下没反应，过一会
+ * 自己好了」就是这么来的。
  *
- * 进度分两段说：`label` 是人话（在做什么），`detail` 是机器数（多少字节、
- * 多快）。人话给所有人看，机器数用等宽，看不看都不影响操作。
+ * 现在它只管一件事：**游戏跑没跑**。那是一个状态，不是一件耗时的事——它没有
+ * 进度，也不会「完成」。补全和下载是作业，进度归 [`jobs`](./jobs.svelte.ts)。
  *
- * 后端只有一条事件流（`launcher-event`）：下载、启动阶段、游戏日志、退出、
- * 崩溃全在里面。分成两条通道听起来更整齐，但它们说的是同一件事——「启动器
- * 现在怎么样了」——界面也就该在一个地方回答。
+ * `busy` 剩下的意思很窄：我点的这一下还没回来。它不是进度，只是防止同一颗
+ * 按钮被连点两次——真正的进度由后端宣告的作业说。
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { inTauri } from './instances.svelte'
+import { instances, inTauri } from './instances.svelte'
+import { contributes, PRIORITY, type Presence } from './island.svelte'
+import { jobs } from './jobs.svelte'
+import { nav } from './nav.svelte'
 import { prefs } from './prefs.svelte'
-
-/** 类型标签是 snake_case，数据字段是 camelCase——后端一条规则，这里照抄。 */
-type DownloadEvent =
-  | { type: 'status'; message: string }
-  | { type: 'task_started'; totalFiles: number; totalBytes: number }
-  | { type: 'file_done'; path: string; bytes: number }
-  | { type: 'progress'; doneBytes: number; speedBps: number }
-  | { type: 'task_finished'; failed: string[] }
 
 export type LaunchStage =
   | 'resolving_version'
@@ -58,57 +53,44 @@ export interface GameLogLine {
 }
 
 type LauncherEvent =
-  | { type: 'download'; payload: DownloadEvent }
   | { type: 'launch_stage'; payload: { instanceId: string; stage: LaunchStage } }
   | { type: 'game_log'; payload: { instanceId: string; level: LogLevel; message: string } }
   | { type: 'game_exited'; payload: { instanceId: string; exitCode: number | null } }
   | { type: 'game_crashed'; payload: CrashReport }
-
-/** 每个阶段说一句人话。机器名字（`resolving_version`）不该出现在界面上。 */
-const STAGE_LABEL: Record<LaunchStage, string> = {
-  resolving_version: '读取版本信息',
-  checking_files: '检查游戏文件',
-  preparing_java: '准备 Java',
-  building_command: '组装启动命令',
-  starting_process: '启动游戏',
-  running: '游戏运行中',
-  exited: '游戏已退出',
-}
+  | { type: string; payload: unknown }
 
 /** 日志留最近这么多行。再多也没人往上翻，只会让界面越跑越慢。 */
 const LOG_LIMIT = 800
 
-export function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
-}
+/**
+ * 作业的标题要给人看，而调用方手里只有 id。
+ *
+ * 名字在这里查而不是让每个调用点传进来：调用点已经有 id 了，再多要一个名字
+ * 只是把同一件事说两遍，而且总有一处会忘。
+ */
+const nameOf = (instanceId: string) =>
+  instances.list.find((item) => item.id === instanceId)?.name ?? '实例'
 
 class LaunchStore {
+  /** 我点的这一下还没回来。不是进度——进度是作业的事。 */
   busy = $state(false)
-  label = $state('')
-  detail = $state('')
-  /** -1 表示进度未知，按钮画成不定量的样子而不是停在 0%。 */
-  progress = $state(-1)
-  error = $state('')
-
-  /** 游戏窗口已经开出来了。这之后启动键不该再显示进度。 */
+  /** 游戏窗口已经开出来了。 */
   running = $state(false)
+  error = $state('')
   /** 崩了才有值。正常退出不该在界面上留下任何痕迹。 */
   crash = $state<CrashReport | null>(null)
   log = $state<GameLogLine[]>([])
   /**
    * 这一轮忙的是哪个实例。
    *
-   * 实例详情页的日志 tab 要靠它判断这段日志是不是自己的——把 A 实例的崩溃
-   * 栈显示在 B 的页面里，比不显示更糟。
+   * 实例详情页的日志 tab 要靠它判断这段日志是不是自己的——把 A 实例的崩溃栈
+   * 显示在 B 的页面里，比不显示更糟。
    */
   instanceId = $state('')
+  /** 正在跑的是哪个实例，用来在岛上叫出它的名字。 */
+  runningName = $state('')
 
-  #totalBytes = 0
   #unlisten: UnlistenFn | undefined
-  #resetTimer: ReturnType<typeof setTimeout> | undefined
 
   async connect() {
     if (!inTauri() || this.#unlisten) return
@@ -120,133 +102,107 @@ class LaunchStore {
   disconnect() {
     this.#unlisten?.()
     this.#unlisten = undefined
-    clearTimeout(this.#resetTimer)
   }
 
   #onEvent(event: LauncherEvent) {
     switch (event.type) {
-      case 'download':
-        this.#onDownload(event.payload)
-        break
       case 'launch_stage':
-        this.#onStage(event.payload.stage)
+        this.#onStage((event.payload as { stage: LaunchStage }).stage)
         break
       case 'game_log':
-        this.#onLog(event.payload)
+        this.#onLog(event.payload as GameLogLine)
         break
       case 'game_exited':
         this.running = false
-        this.busy = false
-        this.label = ''
-        this.detail = ''
-        this.progress = -1
+        this.runningName = ''
         break
       case 'game_crashed':
-        this.crash = event.payload
+        this.crash = event.payload as CrashReport
         break
     }
   }
 
   #onStage(stage: LaunchStage) {
-    if (stage === 'running') {
-      this.running = true
-      // 窗口开出来了，进度条就该功成身退——它描述的是「还要多久能玩上」。
-      this.#finish('游戏运行中')
-      // 这一刻才最小化，不是点启动那一刻：补全可能要几分钟，中途把启动器
-      // 收走，用户就看不到进度了。
-      if (prefs.minimizeOnLaunch && inTauri()) {
-        void getCurrentWindow().minimize()
-      }
-      return
+    if (stage !== 'running') return
+    this.running = true
+    // 这一刻才最小化，不是点启动那一刻：补全可能要几分钟，中途把启动器收走，
+    // 用户就看不到进度了。
+    if (prefs.minimizeOnLaunch && inTauri()) {
+      void getCurrentWindow().minimize()
     }
-    if (stage === 'exited') return
-    this.label = STAGE_LABEL[stage] ?? ''
   }
 
-  #onLog(line: { level: LogLevel; message: string }) {
+  #onLog(line: GameLogLine) {
     this.log.push({ level: line.level, message: line.message })
     if (this.log.length > LOG_LIMIT) {
       this.log = this.log.slice(-LOG_LIMIT)
     }
   }
 
-  #onDownload(event: DownloadEvent) {
-    if (event.type === 'status') {
-      this.label = event.message
-    }
-    if (event.type === 'task_started') {
-      this.#totalBytes = event.totalBytes
-      this.label = '补全游戏文件'
-      this.detail = `${event.totalFiles} 个文件`
-      this.progress = event.totalBytes > 0 ? 0 : -1
-    }
-    if (event.type === 'progress') {
-      if (this.#totalBytes > 0) {
-        this.progress = Math.min(99, (event.doneBytes / this.#totalBytes) * 100)
-      }
-      this.detail = `${formatBytes(event.doneBytes)} / ${formatBytes(this.#totalBytes)} · ${formatBytes(event.speedBps)}/s`
-    }
-    if (event.type === 'task_finished') {
-      this.detail = event.failed.length > 0 ? `${event.failed.length} 个文件需要重试` : ''
-    }
-  }
-
-  #begin(instanceId: string, label: string) {
-    clearTimeout(this.#resetTimer)
+  #begin(instanceId: string) {
     this.instanceId = instanceId
     this.busy = true
     this.error = ''
     this.crash = null
     this.log = []
-    this.running = false
-    this.label = label
-    this.detail = ''
-    this.progress = -1
-    this.#totalBytes = 0
-  }
-
-  #finish(label: string) {
-    clearTimeout(this.#resetTimer)
-    this.progress = 100
-    this.label = label
-    this.detail = ''
-    this.#resetTimer = setTimeout(() => {
-      this.busy = false
-      this.label = ''
-      this.progress = -1
-    }, 1400)
-  }
-
-  #fail(error: unknown) {
-    this.error = String(error)
-    this.busy = false
-    this.label = ''
-    this.detail = ''
-    this.progress = -1
   }
 
   async launch(instanceId: string, playerName: string) {
-    if (this.busy) return
-    this.#begin(instanceId, '读取版本信息')
-    if (!inTauri()) return this.#preview()
+    if (this.busy || this.running) return
+    this.#begin(instanceId)
+    const name = nameOf(instanceId)
     try {
-      await invoke<{ processId: number }>('launch_instance', { instanceId, playerName })
+      if (!inTauri()) {
+        await jobs.rehearse(`启动 ${name}`, [instanceId])
+        this.error = '浏览器预览，无法真正启动'
+        return
+      }
+      this.runningName = name
+      // 标题和 subjects 由这一侧给：作业挂在谁身上是界面的知识，后端只负责
+      // 宣告它的存在和进展，不负责编一个显示用的名字。
+      await invoke<{ processId: number }>('launch_instance', {
+        instanceId,
+        playerName,
+        title: `启动 ${name}`,
+        subjects: [instanceId],
+      })
       // 到这里只是进程起来了。真正的「跑起来了」由 launch_stage 事件说，
       // 那才是窗口已经开出来的时刻。
     } catch (error) {
-      this.#fail(error)
+      this.runningName = ''
+      this.error = String(error)
+    } finally {
+      this.busy = false
     }
   }
 
-  async repair(instanceId: string) {
+  /**
+   * 把这个实例补齐到能启动的状态。
+   *
+   * 建实例之后立刻跑一次，而不是留到第一次点启动——上一版建完只是把选择记在
+   * 一个 json 里，装 Forge 要等到你第一次点「启动」的那一刻才开始，而装 Forge
+   * 要在本地跑一个第三方安装器，可能好几分钟。用户以为自己只是点了启动。
+   *
+   * `title` 决定岛上怎么称呼这件事：刚建完叫「准备」，事后手动跑叫「校验」，
+   * 做的是同一件事，但对用户来说不是同一个时刻。
+   */
+  async repair(instanceId: string, title = `校验 ${nameOf(instanceId)}`) {
     if (this.busy) return
-    this.#begin(instanceId, '校验游戏文件')
-    if (!inTauri()) return this.#preview()
+    this.#begin(instanceId)
     try {
-      await invoke('prepare_instance', { instanceId })
-      this.#finish('文件已完整')
+      if (!inTauri()) {
+        await jobs.rehearse(title, [instanceId])
+        return
+      }
+      await invoke('prepare_instance', {
+        instanceId,
+        title,
+        subjects: [instanceId],
+      })
     } catch (error) {
-      this.#fail(error)
+      this.error = String(error)
+    } finally {
+      this.busy = false
     }
   }
 
@@ -257,19 +213,27 @@ class LaunchStore {
   dismissCrash() {
     this.crash = null
   }
-
-  /** 浏览器预览没有后端，走一段假进度，只为让布局在两种状态下都看得到。 */
-  #preview() {
-    this.progress = 0
-    this.detail = '浏览器预览'
-    const timer = setInterval(() => {
-      this.progress = Math.min(99, this.progress + 11)
-      if (this.progress >= 99) {
-        clearInterval(timer)
-        this.#finish('浏览器预览 · 无法真正启动')
-      }
-    }, 260)
-  }
 }
 
 export const launch = new LaunchStore()
+
+/**
+ * 岛上关于游戏的那一句。
+ *
+ * 游戏在跑是**状态**不是作业：它没有进度，也不会「完成」。所以它只报告自己
+ * 还活着，不带任何百分比。
+ */
+contributes((): Presence[] =>
+  launch.running
+    ? [
+        {
+          id: 'game',
+          priority: PRIORITY.live,
+          tone: 'live',
+          label: launch.runningName || '运行中',
+          rows: [{ id: 'game', label: launch.runningName || '游戏运行中', detail: '运行中' }],
+          actions: [{ label: '查看日志', run: () => nav.show('log') }],
+        },
+      ]
+    : [],
+)

@@ -20,6 +20,7 @@
   import ModList from '../components/ModList.svelte'
   import SaveList from '../components/SaveList.svelte'
   import { instances, type Instance } from '../lib/instances.svelte'
+  import { jobs } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
@@ -41,6 +42,8 @@
 
   const tab = $derived(tabs.some((item) => item.id === nav.tab) ? nav.tab : 'overview')
   const isCurrent = $derived(instances.current?.id === instance.id)
+  /** 这个实例上现在有什么在跑。走开再回来它还在——作业不属于这个组件。 */
+  const job = $derived(jobs.forSubject(instance.id))
   /** 这段日志是不是这个实例的。别的实例的崩溃栈显示在这里比不显示更糟。 */
   const ownLog = $derived(launch.instanceId === instance.id ? launch.log : [])
 
@@ -69,13 +72,15 @@
       <div class="acts">
         <button
           class="btn btn--primary"
-          disabled={launch.busy || launch.running}
+          disabled={launch.busy || launch.running || job !== undefined}
           onclick={() => void launch.launch(instance.id, prefs.playerName)}
         >
           {#if launch.running}
             运行中
+          {:else if job}
+            {job.stage || job.title}
           {:else if launch.busy}
-            {launch.label || '准备中'}
+            准备中
           {:else}
             <Play size={15} fill="currentColor" strokeWidth={0} />启动
           {/if}
