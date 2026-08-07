@@ -54,7 +54,14 @@ pub enum LoaderKind {
 #[serde(rename_all = "camelCase")]
 pub struct LoaderProfile {
     pub kind: LoaderKind,
+    /// 加载器自己的版本号，界面上显示的那个（`0.16.5`）。
     pub version: String,
+    /// 加载器生成的那份版本描述的 id（`fabric-loader-0.16.5-1.21.1`）。
+    ///
+    /// 和上面分开存：命名规则是上游的约定，不是我们能保证的东西，而启动时
+    /// 要读的是这个 id 对应的文件。装完之后以 profile 里写的为准。
+    #[serde(default)]
+    pub version_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

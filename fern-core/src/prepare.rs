@@ -11,7 +11,7 @@ use fern_meta::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, LauncherEvent, java, runtime, settings::source_order};
+use crate::{DataPaths, LauncherEvent, java, loader, runtime, settings::source_order, version};
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -43,11 +43,12 @@ pub async fn prepare_instance(
 ) -> Result<PrepareResult> {
     let events = &crate::event::download_bridge(events);
     paths.ensure_exists()?;
-    let profile = crate::list_instances(paths)?
+    let mut profile = crate::list_instances(paths)?
         .into_iter()
         .find(|profile| profile.id.as_str() == instance_id)
         .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))?;
-    let version_id = profile.game_version.as_str();
+    let version_id = profile.game_version.clone();
+    let version_id = version_id.as_str();
     let downloader = DownloadClient::new(source_order(), 64);
 
     let _ = events.send(DownloadEvent::Status {
@@ -81,8 +82,6 @@ pub async fn prepare_instance(
             "version metadata checksum mismatch for {version_id}"
         ));
     }
-    let metadata: VersionMetadata =
-        serde_json::from_slice(&version_bytes).context("parse version metadata")?;
     let version_root = paths.versions.join(version_id);
     write_atomic(
         &version_root.join(format!("{version_id}.json")),
@@ -90,8 +89,32 @@ pub async fn prepare_instance(
     )
     .await?;
 
+    // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
+    // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
+    // 另一份，会出现「文件明明下好了却说缺」这种最难查的问题。
+    if profile.loader != crate::LoaderKind::Vanilla
+        && let Some(loader) = profile.loader_profile.clone()
+    {
+        {
+            let installed =
+                loader::install(paths, profile.loader, version_id, &loader.version, events).await?;
+            // 建实例时还不知道上游会给哪个 id，装完才知道；记回实例文件，
+            // 之后启动就不必再猜命名规则。
+            if loader.version_id != installed {
+                let mut updated = loader.clone();
+                updated.version_id = installed;
+                profile.loader_profile = Some(updated);
+                crate::write_instance_profile(paths, &profile)?;
+            }
+        }
+    }
+    let effective_id = crate::effective_version_id(&profile);
+    let metadata: VersionMetadata = version::resolve(paths, &effective_id)
+        .with_context(|| format!("读取 {effective_id} 的版本描述"))?;
+
     let context = current_rule_context();
     let mut tasks = Vec::new();
+    // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。
     if let Some(client) = metadata
         .downloads
         .as_ref()
@@ -164,9 +187,9 @@ pub async fn prepare_instance(
     tasks.retain(|task| unique.insert(task.path.clone()));
     let result = PrepareResult {
         instance_id: instance_id.to_owned(),
-        version_id: version_id.to_owned(),
+        version_id: effective_id.clone(),
         total_files: tasks.len() as u64,
-        total_bytes: tasks.iter().map(|task| task.size).sum(),
+        total_bytes: tasks.iter().filter_map(|task| task.size).sum(),
     };
     let _ = events.send(DownloadEvent::Status {
         message: "开始补全文件".to_owned(),
@@ -176,7 +199,7 @@ pub async fn prepare_instance(
     // Java 也是这个实例缺的文件之一，补全就该把它补上。放在这里而不是启动
     // 时：启动那一步不该再有几百兆的下载，而补全本来就是「跑一遍直到齐活」。
     let requirement = java::requirement(
-        version_id,
+        &profile.game_version,
         profile.loader,
         metadata
             .java_version
@@ -206,7 +229,9 @@ fn append_library_tasks(
         return Ok(());
     }
     let Some(downloads) = &library.downloads else {
-        return Ok(());
+        // 第三方 Maven（Fabric、Forge）只给一个仓库前缀，路径和文件名都要
+        // 从坐标推出来，也没有 sha1 可校验。
+        return append_maven_task(tasks, root, library);
     };
     if let Some(artifact) = &downloads.artifact {
         let relative = artifact
@@ -239,6 +264,32 @@ fn append_library_tasks(
         .ok_or_else(|| anyhow!("library {} has no native path", library.name))?;
     tasks.push(task_from_info(root.join(relative), native)?);
     Ok(())
+}
+
+/// 只有 `url` 前缀的库。
+fn append_maven_task(tasks: &mut Vec<DownloadTask>, root: &Path, library: &Library) -> Result<()> {
+    let Some(repository) = library.url.as_deref() else {
+        // 既没有 downloads 也没有 url：这一条不指向任何可下载的东西。加载器
+        // 的元数据里确实会出现这种占位条目，跳过而不是让整轮补全失败。
+        return Ok(());
+    };
+    let Some(relative) = fern_meta::maven_path(&library.name) else {
+        return Err(anyhow!("库坐标 {} 无法推出路径", library.name));
+    };
+    let url = format!("{}{relative}", ensure_trailing_slash(repository));
+    tasks.push(DownloadTask::unverified(
+        fern_download::safe_join(root, Path::new(&relative))?,
+        &url,
+    )?);
+    Ok(())
+}
+
+fn ensure_trailing_slash(url: &str) -> String {
+    if url.ends_with('/') {
+        url.to_owned()
+    } else {
+        format!("{url}/")
+    }
 }
 
 fn current_rule_context() -> RuleContext {
@@ -283,6 +334,75 @@ mod tests {
             url: "https://libraries.minecraft.net/example.jar".to_owned(),
             path: Some(path.to_owned()),
         }
+    }
+
+    #[test]
+    fn libraries_with_only_a_repository_url_get_their_path_from_the_coordinate() {
+        let library = Library {
+            name: "net.fabricmc:fabric-loader:0.16.5".to_owned(),
+            url: Some("https://maven.fabricmc.net/".to_owned()),
+            ..Library::default()
+        };
+        let mut tasks = Vec::new();
+        append_library_tasks(
+            &mut tasks,
+            Path::new("libraries"),
+            &library,
+            &RuleContext::linux_x64(),
+        )
+        .expect("build library tasks");
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].path,
+            Path::new("libraries/net/fabricmc/fabric-loader/0.16.5/fabric-loader-0.16.5.jar")
+        );
+        assert_eq!(
+            tasks[0].url.as_str(),
+            "https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.16.5/fabric-loader-0.16.5.jar"
+        );
+        // 拿不到 sha1 就得说拿不到，不能假装校验过。
+        assert!(tasks[0].sha1.is_none());
+    }
+
+    #[test]
+    fn a_repository_url_without_a_trailing_slash_still_works() {
+        let library = Library {
+            name: "net.fabricmc:tiny-mappings-parser:0.3.0".to_owned(),
+            url: Some("https://maven.fabricmc.net".to_owned()),
+            ..Library::default()
+        };
+        let mut tasks = Vec::new();
+        append_library_tasks(
+            &mut tasks,
+            Path::new("libraries"),
+            &library,
+            &RuleContext::linux_x64(),
+        )
+        .expect("build library tasks");
+        assert!(
+            tasks[0]
+                .url
+                .as_str()
+                .contains("/net/fabricmc/tiny-mappings-parser/")
+        );
+    }
+
+    #[test]
+    fn a_library_that_points_at_nothing_is_skipped_not_fatal() {
+        let library = Library {
+            name: "org.example:placeholder:1.0".to_owned(),
+            ..Library::default()
+        };
+        let mut tasks = Vec::new();
+        append_library_tasks(
+            &mut tasks,
+            Path::new("libraries"),
+            &library,
+            &RuleContext::linux_x64(),
+        )
+        .expect("placeholder entries must not fail the whole prepare");
+        assert!(tasks.is_empty());
     }
 
     #[test]

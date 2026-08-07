@@ -37,8 +37,10 @@ pub enum DownloadEvent {
 pub struct DownloadTask {
     pub path: PathBuf,
     pub url: Url,
-    pub sha1: String,
-    pub size: u64,
+    /// 官方元数据每个文件都有 sha1，所以这是常态。第三方 Maven（Fabric、
+    /// Forge 的库）只给一个 URL，那时候只能认「下下来了」。
+    pub sha1: Option<String>,
+    pub size: Option<u64>,
 }
 
 impl DownloadTask {
@@ -51,9 +53,30 @@ impl DownloadTask {
         Ok(Self {
             path: path.into(),
             url: Url::parse(url).context("invalid download URL")?,
-            sha1: sha1.into().to_ascii_lowercase(),
-            size,
+            sha1: Some(sha1.into().to_ascii_lowercase()),
+            size: Some(size),
         })
+    }
+
+    /// 没有校验和的文件。
+    ///
+    /// 这是退让，不是常态：拿不到 sha1 就没法判断磁盘上那份是不是完整的，
+    /// 「校验文件」对它只能退化成「在不在」。所以只在元数据确实不给的时候用。
+    pub fn unverified(path: impl Into<PathBuf>, url: &str) -> Result<Self> {
+        Ok(Self {
+            path: path.into(),
+            url: Url::parse(url).context("invalid download URL")?,
+            sha1: None,
+            size: None,
+        })
+    }
+
+    /// 这一份已经落盘的能不能算数。
+    pub async fn is_satisfied(&self) -> Result<bool> {
+        match (&self.sha1, self.size) {
+            (Some(sha1), Some(size)) => verify_file(&self.path, sha1, size).await,
+            _ => Ok(tokio::fs::try_exists(&self.path).await?),
+        }
     }
 }
 
@@ -84,14 +107,21 @@ impl DownloadSource for BmclapiSource {
             "launchermeta.mojang.com" => "bmclapi2.bangbang93.com",
             "piston-data.mojang.com" => "bmclapi2.bangbang93.com",
             "resources.download.minecraft.net" => "bmclapi2.bangbang93.com",
+            "meta.fabricmc.net" => "bmclapi2.bangbang93.com",
+            "maven.fabricmc.net" => "bmclapi2.bangbang93.com",
             _ => return official.clone(),
         };
         let mut rewritten = official.clone();
         let _ = rewritten.set_host(Some(replacement));
-        if host == "libraries.minecraft.net" {
-            rewritten.set_path(&format!("/maven{}", official.path()));
-        } else if host == "resources.download.minecraft.net" {
-            rewritten.set_path(&format!("/assets{}", official.path()));
+        // 各条线在镜像上挂在不同的前缀下。
+        match host {
+            "libraries.minecraft.net" => rewritten.set_path(&format!("/maven{}", official.path())),
+            "resources.download.minecraft.net" => {
+                rewritten.set_path(&format!("/assets{}", official.path()))
+            }
+            "meta.fabricmc.net" => rewritten.set_path(&format!("/fabric-meta{}", official.path())),
+            "maven.fabricmc.net" => rewritten.set_path(&format!("/maven{}", official.path())),
+            _ => {}
         }
         rewritten
     }
@@ -286,7 +316,7 @@ impl DownloadClient {
         tasks: Vec<DownloadTask>,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<()> {
-        let total_bytes = tasks.iter().map(|task| task.size).sum();
+        let total_bytes = tasks.iter().filter_map(|task| task.size).sum();
         let _ = events.send(DownloadEvent::TaskStarted {
             total_files: tasks.len() as u64,
             total_bytes,
@@ -314,7 +344,7 @@ impl DownloadClient {
                 Ok((task, Ok(()))) => {
                     let _ = events.send(DownloadEvent::FileDone {
                         path: task.path.display().to_string(),
-                        bytes: task.size,
+                        bytes: task.size.unwrap_or(0),
                     });
                 }
                 Ok((task, Err(_))) => failed.push(task.path.display().to_string()),
@@ -347,8 +377,8 @@ impl DownloadClient {
 
         // 校验通过即跳过，所以补全天然幂等：「修复文件」就是同一个入口再跑
         // 一遍，不需要单独的一套代码。
-        if verify_file(&task.path, &task.sha1, task.size).await? {
-            downloaded_bytes.fetch_add(task.size, Ordering::Relaxed);
+        if task.is_satisfied().await? {
+            downloaded_bytes.fetch_add(task.size.unwrap_or(0), Ordering::Relaxed);
             emit_progress(downloaded_bytes, started, last_emit, events, true);
             return Ok(());
         }
@@ -412,13 +442,14 @@ impl DownloadClient {
     ) -> Result<bool> {
         // 断点续传：大文件断在半路时，已经落盘的那几十兆没有理由重下。
         // sha1 是整个文件的，所以续传时要先把已有的字节喂进 hasher。
-        let resume_from = if task.size >= RESUME_THRESHOLD {
-            match tokio::fs::metadata(temporary).await {
-                Ok(metadata) if metadata.len() > 0 && metadata.len() < task.size => metadata.len(),
+        // 不知道总大小就没法判断落盘的那截是「断了一半」还是「已经下完」，
+        // 续传的前提不成立，老实从头下。
+        let resume_from = match task.size {
+            Some(size) if size >= RESUME_THRESHOLD => match tokio::fs::metadata(temporary).await {
+                Ok(metadata) if metadata.len() > 0 && metadata.len() < size => metadata.len(),
                 _ => 0,
-            }
-        } else {
-            0
+            },
+            _ => 0,
         };
 
         let mut request = self.client.get(url.clone());
@@ -478,7 +509,12 @@ impl DownloadClient {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        if received == task.size && actual.eq_ignore_ascii_case(&task.sha1) {
+        let size_ok = task.size.is_none_or(|size| received == size);
+        let sha1_ok = task
+            .sha1
+            .as_deref()
+            .is_none_or(|sha1| actual.eq_ignore_ascii_case(sha1));
+        if size_ok && sha1_ok {
             if tokio::fs::try_exists(&task.path).await? {
                 tokio::fs::remove_file(&task.path).await?;
             }
@@ -562,6 +598,30 @@ mod tests {
             .expect("remove test directory");
     }
 
+    #[tokio::test]
+    async fn an_unverified_task_only_asks_whether_the_file_is_there() {
+        let root = std::env::temp_dir().join(format!("fern-unverified-{}", std::process::id()));
+        tokio::fs::create_dir_all(&root).await.expect("create root");
+        let path = root.join("loader.jar");
+
+        let task = DownloadTask::unverified(&path, "https://maven.example.invalid/loader.jar")
+            .expect("build task");
+        assert!(!task.is_satisfied().await.expect("check missing"));
+
+        tokio::fs::write(&path, b"anything")
+            .await
+            .expect("write file");
+        assert!(task.is_satisfied().await.expect("check present"));
+
+        // 有校验和的仍然按内容判断，不因为这条改动松掉。
+        let verified =
+            DownloadTask::new(&path, "https://maven.example.invalid/loader.jar", "00", 8)
+                .expect("build task");
+        assert!(!verified.is_satisfied().await.expect("check content"));
+
+        tokio::fs::remove_dir_all(root).await.expect("remove root");
+    }
+
     #[test]
     fn rejects_paths_that_escape_the_data_root() {
         assert!(safe_join(Path::new("/fern"), Path::new("assets/client.jar")).is_ok());
@@ -639,5 +699,15 @@ mod tests {
         let mirror = source.rewrite(&official);
         assert_eq!(mirror.host_str(), Some("bmclapi2.bangbang93.com"));
         assert_eq!(mirror.path(), "/maven/com/mojang/test.jar");
+
+        let fabric = source
+            .rewrite(&Url::parse("https://meta.fabricmc.net/v2/versions/loader/1.21.1").unwrap());
+        assert_eq!(fabric.host_str(), Some("bmclapi2.bangbang93.com"));
+        assert_eq!(fabric.path(), "/fabric-meta/v2/versions/loader/1.21.1");
+
+        // 没镜像的域名原样放行，别把请求送到一个不存在的路径上。
+        let quilt = source.rewrite(&Url::parse("https://meta.quiltmc.org/v3/versions").unwrap());
+        assert_eq!(quilt.host_str(), Some("meta.quiltmc.org"));
+        assert_eq!(quilt.path(), "/v3/versions");
     }
 }

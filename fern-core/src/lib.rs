@@ -11,14 +11,16 @@ mod gamelog;
 mod instance;
 mod java;
 mod launch;
+mod loader;
 mod prepare;
 mod runtime;
 mod settings;
 mod tuning;
+mod version;
 
 pub use catalog::{
-    InstanceRuntime, VersionOption, create_instance, instance_runtime, list_instances,
-    list_versions, update_instance_settings,
+    InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, instance_runtime,
+    list_instances, list_versions, update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
 pub use data::DataPaths;
@@ -36,6 +38,10 @@ pub use java::{
 pub use launch::{
     Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,
 };
+pub use loader::{
+    LoaderVersion, display_name as loader_display_name, installable as installable_loaders,
+    latest_version as latest_loader_version, list_versions as list_loader_versions,
+};
 pub use prepare::{PrepareResult, prepare_instance};
 pub use runtime::{ensure_java, remove as remove_runtime};
 pub use settings::{
@@ -43,6 +49,7 @@ pub use settings::{
     current as current_settings, load as load_settings, save as save_settings,
 };
 pub use tuning::{ModsProfile, heap_megabytes, mods_profile, physical_memory_bytes};
+pub use version::{effective_id as effective_version_id, resolve as resolve_version};
 
 /// Marker for the Pearl integration boundary.
 ///

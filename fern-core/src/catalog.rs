@@ -66,6 +66,20 @@ pub fn create_instance(
     name: &str,
     game_version: &str,
 ) -> Result<InstanceProfile> {
+    create_instance_with_loader(paths, name, game_version, crate::LoaderKind::Vanilla, None)
+}
+
+/// 建实例，可以带一个加载器。
+///
+/// 这里只把选择记下来，不下载任何东西：加载器的 profile 在补全阶段装，和
+/// 游戏文件走同一条进度。建实例这一步应该是瞬间完成的。
+pub fn create_instance_with_loader(
+    paths: &DataPaths,
+    name: &str,
+    game_version: &str,
+    loader: crate::LoaderKind,
+    loader_version: Option<&str>,
+) -> Result<InstanceProfile> {
     let name = name.trim();
     let game_version = game_version.trim();
     if name.is_empty() || name.len() > 64 {
@@ -79,7 +93,19 @@ pub fn create_instance(
         .context("create launcher data directories")?;
     let base = slug_for(name);
     let id = unique_id(paths, &base)?;
-    let profile = InstanceProfile::vanilla(InstanceId::parse(&id)?, name, game_version);
+    let mut profile = InstanceProfile::vanilla(InstanceId::parse(&id)?, name, game_version);
+    if loader != crate::LoaderKind::Vanilla {
+        let version = loader_version
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow!("选了 {loader:?} 就必须给出加载器版本"))?;
+        profile.loader = loader;
+        // version_id 留空：装完之后才知道上游给的是哪个 id，那时候再补。
+        profile.loader_profile = Some(crate::LoaderProfile {
+            kind: loader,
+            version,
+            version_id: String::new(),
+        });
+    }
     let instance_root = paths.instance_root(&id);
     fs::create_dir_all(instance_root.join(".minecraft")).context("create game directory")?;
     let bytes = serde_json::to_vec_pretty(&profile).context("serialize instance profile")?;
@@ -133,13 +159,19 @@ pub fn update_instance_settings(
 ) -> Result<InstanceProfile> {
     let mut profile = load_profile(paths, instance_id)?;
     profile.settings = settings;
-    let bytes = serde_json::to_vec_pretty(&profile).context("serialize instance profile")?;
-    let path = paths.instance_config(instance_id);
-    // 先写临时文件再改名：写到一半断电不该让实例彻底打不开。
+    write_instance_profile(paths, &profile)?;
+    Ok(profile)
+}
+
+/// 把实例文件整份写回去。先写临时文件再改名——写到一半断电不该让实例
+/// 彻底打不开。
+pub fn write_instance_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(profile).context("serialize instance profile")?;
+    let path = paths.instance_config(profile.id.as_str());
     let temporary = path.with_extension("json.part");
     fs::write(&temporary, bytes).context("write instance profile")?;
     fs::rename(&temporary, &path).context("replace instance profile")?;
-    Ok(profile)
+    Ok(())
 }
 
 fn load_profile(paths: &DataPaths, instance_id: &str) -> Result<InstanceProfile> {

@@ -20,6 +20,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths, LaunchStage, LauncherEvent, crash, gamelog, gamelog::LogParser, java, tuning,
+    version,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,14 +167,17 @@ pub async fn launch_instance(
         .into_iter()
         .find(|profile| profile.id.as_str() == instance_id)
         .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))?;
-    let version_id = profile.game_version.clone();
-    let version_root = paths.versions.join(&version_id);
-    let metadata_path = version_root.join(format!("{version_id}.json"));
-    let metadata_bytes = tokio::fs::read(&metadata_path)
-        .await
-        .with_context(|| format!("read prepared metadata {}", metadata_path.display()))?;
-    let metadata: VersionMetadata =
-        serde_json::from_slice(&metadata_bytes).context("parse prepared version metadata")?;
+    // 装了加载器时，要启动的是加载器生成的那份 JSON，它用 inheritsFrom 指回
+    // 原版。合并在 version 模块里做一次，补全和启动用的必须是同一份——两边
+    // 各算各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
+    let version_id = version::effective_id(&profile);
+    let metadata = version::resolve(paths, &version_id)
+        .with_context(|| format!("读取 {version_id} 的版本描述"))?;
+    // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。
+    let client_jar = paths
+        .versions
+        .join(&profile.game_version)
+        .join(format!("{}.jar", profile.game_version));
     let main_class = metadata
         .main_class
         .clone()
@@ -186,7 +190,6 @@ pub async fn launch_instance(
     let classpath =
         collect_classpath_and_extract_natives(paths, &metadata, &context, &natives_directory)
             .await?;
-    let client_jar = version_root.join(format!("{version_id}.jar"));
     if !tokio::fs::try_exists(&client_jar).await? {
         return Err(anyhow!("client jar is missing: {}", client_jar.display()));
     }
@@ -252,13 +255,13 @@ pub async fn launch_instance(
     {
         jvm_arguments.push(logging.argument.clone());
     }
-    jvm_arguments.extend(platform_arguments(&version_id, &jvm_arguments));
+    jvm_arguments.extend(platform_arguments(&profile.game_version, &jvm_arguments));
     let required_java_major = metadata
         .java_version
         .as_ref()
         .map(|version| version.major_version);
     stage(LaunchStage::PreparingJava);
-    let requirement = java::requirement(&version_id, profile.loader, required_java_major);
+    let requirement = java::requirement(&profile.game_version, profile.loader, required_java_major);
     let runtime = resolve_java_runtime(paths, &profile, &requirement)?;
     if runtime.major < requirement.minimum {
         return Err(anyhow!(
@@ -369,7 +372,9 @@ pub async fn launch_instance(
     let wait_events = events.clone();
     let wait_instance = instance_id.to_owned();
     let wait_directory = plan.working_directory.clone();
+    let wait_running = running.clone();
     std::thread::spawn(move || {
+        let running = wait_running;
         let exit_code = match child.wait() {
             Ok(status) => {
                 let code = status
@@ -384,6 +389,10 @@ pub async fn launch_instance(
             }
         };
 
+        // 抢在十五秒兜底之前把标记占掉：进程已经没了，再报一次「跑起来了」
+        // 是在说一件不成立的事。实测就是这么出现的——退出之后又冒出一条
+        // Running。
+        running.store(true, Ordering::SeqCst);
         let _ = wait_events.send(LauncherEvent::LaunchStage {
             instance_id: wait_instance.clone(),
             stage: LaunchStage::Exited,
@@ -611,6 +620,15 @@ async fn collect_classpath_and_extract_natives(
             continue;
         }
         let Some(downloads) = &library.downloads else {
+            // 只给了仓库前缀的库（加载器的那些）——路径由坐标推出来，补全时
+            // 就是按同一个坐标下的。指向不了任何文件的占位条目跳过。
+            if library.url.is_some() {
+                if let Some(relative) = fern_meta::maven_path(&library.name) {
+                    classpath.push(paths.libraries.join(relative));
+                } else {
+                    return Err(anyhow!("库坐标 {} 无法推出路径", library.name));
+                }
+            }
             continue;
         };
         if let Some(artifact) = &downloads.artifact {

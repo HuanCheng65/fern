@@ -232,6 +232,56 @@ impl Rule {
     }
 }
 
+/// Maven 坐标推落盘路径。
+///
+/// `com.mojang:brigadier:1.0.18` → `com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar`
+///
+/// 官方元数据每个库都带完整的 `downloads.artifact.path`，用不上这个函数；
+/// 需要它的是第三方 Maven——Forge 和 Fabric 的库常常只给一个 `url` 前缀，
+/// 路径只能由坐标推出来。
+///
+/// 支持 `group:artifact:version[:classifier][@extension]`。坐标是从网上拿来
+/// 的，会被直接拼进本地路径，所以任何一段里出现分隔符或 `..` 都判为非法——
+/// 一个 `..:x:1` 就能把 jar 写到数据目录外面去。
+pub fn maven_path(coordinate: &str) -> Option<String> {
+    let (coordinate, extension) = match coordinate.split_once('@') {
+        Some((head, extension)) => (head, extension),
+        None => (coordinate, "jar"),
+    };
+    let mut parts = coordinate.split(':');
+    let group = parts.next()?;
+    let artifact = parts.next()?;
+    let version = parts.next()?;
+    let classifier = parts.next().filter(|value| !value.is_empty());
+    if parts.next().is_some() {
+        return None;
+    }
+
+    // artifact / version / classifier / extension 原样进路径，`..` 是真的上跳。
+    let plain = |value: &str| {
+        !value.is_empty() && value != ".." && !value.contains('/') && !value.contains('\\')
+    };
+    // group 的点会变成斜杠，所以要逐段看：`..` 这样的整段会拆成空段（点之间
+    // 没有内容），空段只会拼出 `//`，但那已经不是一个能对上仓库布局的路径了。
+    let group_ok = !group.contains('/')
+        && !group.contains('\\')
+        && !group.is_empty()
+        && group.split('.').all(|segment| !segment.is_empty());
+    if !group_ok || !plain(artifact) || !plain(version) || !plain(extension) {
+        return None;
+    }
+    if classifier.is_some_and(|value| !plain(value)) {
+        return None;
+    }
+
+    let directory = group.replace('.', "/");
+    let file = match classifier {
+        Some(classifier) => format!("{artifact}-{version}-{classifier}.{extension}"),
+        None => format!("{artifact}-{version}.{extension}"),
+    };
+    Some(format!("{directory}/{artifact}/{version}/{file}"))
+}
+
 /// `1.20.4` → `(1, 20, 4)`。快照、预发布这类比不了的返回 `None`。
 ///
 /// 版本号是启动协议的一部分：哪一代 LWJGL、哪一版 log4j、要哪个 Java，全靠
@@ -374,6 +424,38 @@ mod tests {
             name: name.to_owned(),
             ..Library::default()
         }
+    }
+
+    #[test]
+    fn maven_coordinates_become_repository_paths() {
+        assert_eq!(
+            maven_path("com.mojang:brigadier:1.0.18").as_deref(),
+            Some("com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar")
+        );
+        assert_eq!(
+            maven_path("org.lwjgl:lwjgl:3.3.3:natives-macos").as_deref(),
+            Some("org/lwjgl/lwjgl/3.3.3/lwjgl-3.3.3-natives-macos.jar")
+        );
+        // Forge 的 installer 用 @zip 指定扩展名。
+        assert_eq!(
+            maven_path("net.minecraftforge:forge:1.20.1-47.2.0:installer@zip").as_deref(),
+            Some("net/minecraftforge/forge/1.20.1-47.2.0/forge-1.20.1-47.2.0-installer.zip")
+        );
+    }
+
+    #[test]
+    fn coordinates_cannot_be_used_to_escape_the_libraries_directory() {
+        // 坐标是从网上拿来的，会被直接拼进本地路径。
+        assert!(maven_path("..:evil:1.0").is_none());
+        assert!(maven_path("com.example:..:1.0").is_none());
+        assert!(maven_path("com.example:evil:../../etc").is_none());
+        assert!(maven_path("com/example:evil:1.0").is_none());
+        assert!(maven_path("com.example:evil:1.0@../sh").is_none());
+        // 空段拼出来是 `com///evil`，对不上任何仓库布局，一样判非法。
+        assert!(maven_path("com...:evil:1.0").is_none());
+        assert!(maven_path(":evil:1.0").is_none());
+        assert!(maven_path("nonsense").is_none());
+        assert!(maven_path("a:b:c:d:e").is_none());
     }
 
     #[test]
