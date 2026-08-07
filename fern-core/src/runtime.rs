@@ -235,43 +235,19 @@ async fn create_link(path: &Path, target: &str) -> Result<()> {
     Ok(())
 }
 
-/// 已经下载好的运行时。设置页要能看见启动器自己占了多少地方。
-pub fn installed(paths: &DataPaths) -> Vec<JavaRuntime> {
-    java::discover(Some(paths))
-        .into_iter()
-        .filter(|runtime| runtime.managed)
-        .collect()
-}
-
-/// 删掉一份下载来的运行时。系统自带的不归我们管，拒绝。
-pub fn remove(paths: &DataPaths, component: &str) -> Result<()> {
-    let target = fern_download::safe_join(&paths.runtimes, Path::new(component))?;
-    if !target.starts_with(&paths.runtimes) || !target.is_dir() {
-        return Err(anyhow!("{component} 不是一份由 Fern 下载的运行时"));
+/// 删掉一份下载来的运行时。
+///
+/// 只接受 `runtimes/` 里面的目录，而且是 canonicalize 之后再比——否则一条
+/// 软链接或者一个 `..` 就能让「删掉一份 Java」变成删掉别的东西。系统自带的
+/// Java 不归我们管，也拒绝。
+pub fn remove(paths: &DataPaths, home: &Path) -> Result<()> {
+    let runtimes = std::fs::canonicalize(&paths.runtimes)
+        .with_context(|| format!("读取 {}", paths.runtimes.display()))?;
+    let home = std::fs::canonicalize(home).with_context(|| format!("读取 {}", home.display()))?;
+    if home == runtimes || !home.starts_with(&runtimes) {
+        return Err(anyhow!("{} 不是一份由 Fern 下载的运行时", home.display()));
     }
-    std::fs::remove_dir_all(&target).with_context(|| format!("删除 {}", target.display()))
-}
-
-/// 这一份运行时占了多少字节。
-pub fn disk_usage(root: &Path) -> u64 {
-    let mut total = 0;
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(directory) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.is_dir() {
-                stack.push(entry.path());
-            } else if metadata.is_file() {
-                total += metadata.len();
-            }
-        }
-    }
-    total
+    std::fs::remove_dir_all(&home).with_context(|| format!("删除 {}", home.display()))
 }
 
 #[cfg(test)]
@@ -329,9 +305,24 @@ mod tests {
     }
 
     #[test]
-    fn removal_refuses_paths_outside_the_runtimes_directory() {
-        let paths = DataPaths::new("/tmp/fern-runtime-guard");
-        assert!(remove(&paths, "../instances").is_err());
-        assert!(remove(&paths, "not-installed").is_err());
+    fn removal_refuses_anything_outside_the_runtimes_directory() {
+        let root = std::env::temp_dir().join(format!("fern-runtime-guard-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+        paths.ensure_exists().expect("create layout");
+
+        let installed = paths.runtimes.join("java-runtime-delta");
+        std::fs::create_dir_all(installed.join("bin")).expect("create runtime");
+
+        // 系统自带的、别处的、以及 runtimes 目录自己，都不能删。
+        assert!(remove(&paths, Path::new("/usr/lib/jvm")).is_err());
+        assert!(remove(&paths, &paths.instances).is_err());
+        assert!(remove(&paths, &paths.runtimes).is_err());
+        // 绕一圈回到外面也不行——canonicalize 之后才比。
+        assert!(remove(&paths, &paths.runtimes.join("../instances")).is_err());
+
+        assert!(remove(&paths, &installed).is_ok());
+        assert!(!installed.exists());
+
+        std::fs::remove_dir_all(root).expect("remove test root");
     }
 }

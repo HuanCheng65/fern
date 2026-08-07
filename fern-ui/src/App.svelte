@@ -17,6 +17,7 @@
   import CommandPalette, { type PaletteAction } from './components/CommandPalette.svelte'
   import CreateInstance from './components/CreateInstance.svelte'
   import CrashReport from './components/CrashReport.svelte'
+  import InstanceSettings from './components/InstanceSettings.svelte'
   import WindowFrame from './components/WindowFrame.svelte'
   import LaunchScene from './scenes/Launch.svelte'
   import InstancesScene from './scenes/Instances.svelte'
@@ -45,6 +46,7 @@
   let settingsOpen = $state(false)
   let paletteOpen = $state(false)
   let createOpen = $state(false)
+  let instanceSettingsOpen = $state(false)
   let setupOpen = $state(false)
   /** 设置在磁盘上，读完才知道该不该出向导。读完之前只铺背景。 */
   let ready = $state(false)
@@ -52,7 +54,7 @@
   /** 镜头往哪边走，决定新场景从哪一侧滑进来。 */
   let direction = $state(1)
 
-  const overlayOpen = $derived(paletteOpen || createOpen)
+  const overlayOpen = $derived(paletteOpen || createOpen || instanceSettingsOpen)
   /** 背景用当前实例的名字当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.name ?? 'Fern')
 
@@ -238,6 +240,7 @@
             <InstancesScene
               oncreate={() => (createOpen = true)}
               onopenDirectory={() => void openDirectory()}
+              onconfigure={() => (instanceSettingsOpen = true)}
             />
           {:else if scene === 'supply'}
             <Placeholder
@@ -284,6 +287,14 @@
       report={launch.crash}
       onclose={() => launch.dismissCrash()}
       onopenLogs={() => void invoke('open_logs_directory')}
+    />
+  {/if}
+
+  {#if instanceSettingsOpen && instances.current}
+    <InstanceSettings
+      instanceId={instances.current.id}
+      instanceName={instances.current.name}
+      onclose={() => (instanceSettingsOpen = false)}
     />
   {/if}
 

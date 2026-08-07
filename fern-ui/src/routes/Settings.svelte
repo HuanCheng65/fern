@@ -34,6 +34,10 @@
   let section = $state<SectionId>('appearance')
   let paths = $state({ root: '', logs: '' })
   let pathError = $state('')
+  let runtimes = $state<
+    { path: string; home: string; major: number; version: string; vendor: string; managed: boolean }[]
+  >([])
+  let runtimeError = $state('')
   let themeCode = $state('')
   let copied = $state(false)
   let importError = $state('')
@@ -46,7 +50,27 @@
     void invoke<{ root: string; logs: string }>('data_paths')
       .then((value) => (paths = value))
       .catch((error) => (pathError = String(error)))
+    void loadRuntimes()
   })
+
+  async function loadRuntimes() {
+    if (!inTauri()) return
+    try {
+      runtimes = await invoke('list_java_runtimes')
+      runtimeError = ''
+    } catch (error) {
+      runtimeError = String(error)
+    }
+  }
+
+  async function removeRuntime(home: string) {
+    try {
+      await invoke('remove_java_runtime', { home })
+      await loadRuntimes()
+    } catch (error) {
+      runtimeError = String(error)
+    }
+  }
 
   function change<T>(apply: (value: T) => void) {
     return (value: T) => {
@@ -267,6 +291,32 @@
             </button>
           </div>
           {#if pathError}<div class="alert">{pathError}</div>{/if}
+          <!-- Java 平时是隐形的；能看见的唯一理由是它占了地方，要能删。 -->
+          <div class="row stack">
+            <span class="label">Java 运行时</span>
+            {#if runtimes.length === 0}
+              <p class="t-quiet">还没有找到任何 Java。第一次启动游戏时会自动下载。</p>
+            {:else}
+              <ul class="runtimes">
+                {#each runtimes as item (item.path)}
+                  <li>
+                    <span class="rt-name">
+                      Java {item.major}
+                      <small class="t-quiet">
+                        {item.vendor || '未知发行版'} · {item.managed ? 'Fern 下载' : '系统自带'}
+                      </small>
+                    </span>
+                    {#if item.managed}
+                      <button class="btn btn--link" onclick={() => void removeRuntime(item.home)}>
+                        删除
+                      </button>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            {#if runtimeError}<div class="alert">{runtimeError}</div>{/if}
+          </div>
           <div class="row">
             <span class="label">版本</span>
             <span class="t-mono value">Fern 0.1.0</span>
@@ -278,6 +328,29 @@
 </section>
 
 <style>
+  .runtimes {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .runtimes li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    padding: var(--s2) 0;
+  }
+
+  .rt-name {
+    display: grid;
+    gap: 1px;
+    color: var(--ink-2);
+    font-size: var(--t-body);
+  }
+
   .settings {
     position: relative;
     z-index: 1;

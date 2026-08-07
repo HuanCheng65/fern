@@ -8,7 +8,7 @@
    * 左右两栏都不套卡片：内容直接坐在背景上，靠留白和一条发丝线分组。
    * 玻璃和影子只留给浮层。
    */
-  import { FolderOpen, Play, Plus, RefreshCw } from 'lucide-svelte'
+  import { FolderOpen, Play, Plus, RefreshCw, SlidersHorizontal } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
@@ -17,9 +17,10 @@
   interface Props {
     oncreate: () => void
     onopenDirectory: () => void
+    onconfigure: () => void
   }
 
-  let { oncreate, onopenDirectory }: Props = $props()
+  let { oncreate, onopenDirectory, onconfigure }: Props = $props()
 
   const current = $derived(instances.current)
 </script>
@@ -87,6 +88,9 @@
             onclick={() => void launch.repair(current.id)}
           >
             <RefreshCw size={15} strokeWidth={1.8} />校验文件
+          </button>
+          <button class="btn btn--ghost" onclick={onconfigure}>
+            <SlidersHorizontal size={15} strokeWidth={1.8} />设置
           </button>
         </div>
 

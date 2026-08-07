@@ -87,6 +87,79 @@ pub fn create_instance(
     Ok(profile)
 }
 
+/// 一个实例在这台机器上会得到什么。
+///
+/// 实例设置那一屏要能回答「不改的话会怎样」——「自动」这两个字本身不解释
+/// 任何事情，只有把自动算出来的结果摆出来，用户才知道要不要动它。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceRuntime {
+    /// 不手动指定时会分配的堆，单位 MB。
+    pub automatic_memory_mb: u32,
+    pub physical_memory_mb: u32,
+    /// 这个版本能接受的 Java 区间。
+    pub requirement: crate::JavaRequirement,
+    /// 现在会选中的那一个。为空说明得先下一个。
+    pub java: Option<crate::JavaRuntime>,
+    pub mods_count: u32,
+}
+
+/// 不联网就能算出来的那部分。版本要求取自已经落盘的元数据，没补全过的实例
+/// 拿不到——那时候按版本号推，够用来填一个默认值。
+pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<InstanceRuntime> {
+    let profile = load_profile(paths, instance_id)?;
+    let declared = read_prepared_metadata(paths, &profile.game_version)
+        .and_then(|metadata| metadata.java_version.map(|version| version.major_version));
+    let requirement = crate::java_requirement(&profile.game_version, profile.loader, declared);
+    let game_directory = paths.game_directory(instance_id);
+    let mods = crate::mods_profile(&game_directory);
+    let physical = crate::physical_memory_bytes();
+
+    Ok(InstanceRuntime {
+        automatic_memory_mb: crate::heap_megabytes(physical, mods, None),
+        physical_memory_mb: physical.map_or(0, |bytes| (bytes / (1024 * 1024)) as u32),
+        requirement,
+        java: crate::select_java(&crate::discover_java(Some(paths)), &requirement),
+        mods_count: mods.count,
+    })
+}
+
+/// 改实例设置。整份换掉而不是逐字段打补丁：设置面板本来就是一次性提交
+/// 一整屏，逐字段的接口只会在两端各埋一半的默认值。
+pub fn update_instance_settings(
+    paths: &DataPaths,
+    instance_id: &str,
+    settings: crate::InstanceSettings,
+) -> Result<InstanceProfile> {
+    let mut profile = load_profile(paths, instance_id)?;
+    profile.settings = settings;
+    let bytes = serde_json::to_vec_pretty(&profile).context("serialize instance profile")?;
+    let path = paths.instance_config(instance_id);
+    // 先写临时文件再改名：写到一半断电不该让实例彻底打不开。
+    let temporary = path.with_extension("json.part");
+    fs::write(&temporary, bytes).context("write instance profile")?;
+    fs::rename(&temporary, &path).context("replace instance profile")?;
+    Ok(profile)
+}
+
+fn load_profile(paths: &DataPaths, instance_id: &str) -> Result<InstanceProfile> {
+    list_instances(paths)?
+        .into_iter()
+        .find(|profile| profile.id.as_str() == instance_id)
+        .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))
+}
+
+fn read_prepared_metadata(
+    paths: &DataPaths,
+    version_id: &str,
+) -> Option<fern_meta::VersionMetadata> {
+    let path = paths
+        .versions
+        .join(version_id)
+        .join(format!("{version_id}.json"));
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
 pub async fn list_versions() -> Result<Vec<VersionOption>> {
     let client = DownloadClient::new(source_order(), 4);
     let bytes = client
@@ -139,6 +212,47 @@ fn unique_id(paths: &DataPaths, base: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_survive_a_round_trip_through_disk() {
+        let root = std::env::temp_dir().join(format!("fern-settings-rt-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+        let profile = create_instance(&paths, "Moss", "1.21.1").expect("create instance");
+
+        let updated = update_instance_settings(
+            &paths,
+            profile.id.as_str(),
+            crate::InstanceSettings {
+                java_path: Some("/usr/lib/jvm/java-21/bin/java".into()),
+                max_memory_mb: Some(6144),
+                resolution: None,
+            },
+        )
+        .expect("update settings");
+        assert_eq!(updated.settings.max_memory_mb, Some(6144));
+
+        let reread = list_instances(&paths).expect("list instances");
+        assert_eq!(reread[0].settings.max_memory_mb, Some(6144));
+        // 其余字段不该被顺手改掉。
+        assert_eq!(reread[0].name, "Moss");
+        assert_eq!(reread[0].game_version, "1.21.1");
+
+        fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn runtime_preview_answers_what_happens_if_nothing_is_changed() {
+        let root = std::env::temp_dir().join(format!("fern-runtime-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+        let profile = create_instance(&paths, "Moss", "1.21.1").expect("create instance");
+
+        let runtime = instance_runtime(&paths, profile.id.as_str()).expect("runtime preview");
+        assert_eq!(runtime.requirement.minimum, 21);
+        assert!(runtime.automatic_memory_mb >= 2048);
+        assert_eq!(runtime.mods_count, 0);
+
+        fs::remove_dir_all(root).expect("remove test data");
+    }
 
     #[test]
     fn creates_and_lists_instance_profiles_from_disk() {

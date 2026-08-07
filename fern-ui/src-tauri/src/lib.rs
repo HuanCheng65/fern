@@ -164,11 +164,38 @@ async fn launch_instance(
     result
 }
 
+/// 这个实例在这台机器上会得到什么：自动算出来的内存、会选中的 Java。
+///
+/// 设置面板要能回答「不改的话会怎样」——光写「自动」两个字什么都没解释。
+#[tauri::command]
+fn instance_runtime(instance_id: String) -> Result<fern_core::InstanceRuntime, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::instance_runtime(&paths, &instance_id).map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn update_instance_settings(
+    instance_id: String,
+    settings: fern_core::InstanceSettings,
+) -> Result<fern_core::InstanceProfile, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::update_instance_settings(&paths, &instance_id, settings)
+        .map_err(|error| format!("{error:#}"))
+}
+
 /// 这台机器上的 Java。设置页要能看见 Fern 到底会用哪一个。
 #[tauri::command]
 fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
     let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
     Ok(fern_core::discover_java(Some(&paths)))
+}
+
+/// 删掉一份 Fern 自己下载的运行时。核心那边会拒绝 `runtimes/` 以外的路径。
+#[tauri::command]
+fn remove_java_runtime(home: String) -> Result<(), String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    fern_core::remove_runtime(&paths, std::path::Path::new(&home))
+        .map_err(|error| format!("{error:#}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -190,6 +217,9 @@ pub fn run() {
             offline_account,
             detect_java,
             list_java_runtimes,
+            remove_java_runtime,
+            instance_runtime,
+            update_instance_settings,
             get_settings,
             save_settings,
             open_instance_directory,
