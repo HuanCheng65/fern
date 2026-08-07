@@ -1,0 +1,180 @@
+/**
+ * 设置的目录。
+ *
+ * 这里是每一项设置的**标题、说明和位置**的唯一出处：设置页从这张表渲染那一
+ * 行的标签，命令面板从同一张表把它变成一个可以被搜到的位置。
+ *
+ * 之所以不是「一张给面板用的清单加一份写在标记里的正文」——那需要每加一项
+ * 设置就在两个地方各写一遍同样的话，而两份说明迟早会说得不一样。让标记不再
+ * 持有这份信息，也就没有副本可以漂移。
+ *
+ * 加一项设置：这里加一条，标记里 `<SettingRow id="…">` 用一次那个 id。id
+ * 写错会当场报错，不会变成一条搜不到却没人发现的设置。
+ *
+ * 自动发现走不通：面板要在设置页没打开的时候就搜得到，而 DOM 里的东西只有
+ * 挂载了才存在，恰恰是不需要搜的时候才有。
+ */
+
+import { nav } from './nav.svelte'
+import { provides, type Subject } from './palette.svelte'
+
+export interface SettingsSection {
+  id: string
+  label: string
+}
+
+export interface SettingsRow {
+  /** `分区/行`。既是地址，也是标记里那个 `data-setting`。 */
+  id: string
+  label: string
+  /** 说明。只在没有它就会用错的地方写。 */
+  note?: string
+  /**
+   * 界面上没写、但人会拿来搜的词。
+   *
+   * 「GC」「RAM」这类：标题里写的是中文全称，而记得它的人多半用缩写去找。
+   */
+  keywords?: string
+  /** 标题在上、控件在下。控件比一行放得下的宽时用。 */
+  stack?: boolean
+}
+
+/**
+ * 分区按「你为了什么来这一页」切，不按功能模块切（见 docs/UI_DESIGN.md 十三）。
+ */
+export const SETTINGS_SECTIONS: SettingsSection[] = [
+  { id: 'appearance', label: '外观' },
+  { id: 'account', label: '账户' },
+  { id: 'game', label: '游戏' },
+  { id: 'java', label: 'Java' },
+  { id: 'download', label: '下载' },
+  { id: 'data', label: '数据' },
+  { id: 'about', label: '关于' },
+]
+
+export const SETTINGS_ROWS: SettingsRow[] = [
+  { id: 'appearance/accent', label: '强调色', keywords: 'accent color 颜色 主题色' },
+  { id: 'appearance/swatch', label: '颜色', keywords: 'color 色板' },
+  { id: 'appearance/density', label: '界面密度', keywords: 'density 紧凑 宽松' },
+  { id: 'appearance/radius', label: '圆角', keywords: 'radius corner 直角 圆润' },
+  {
+    id: 'appearance/motion',
+    label: '动效',
+    note: '关闭后同时停用背景粒子与指针视差。窗口失焦时始终暂停。',
+    keywords: 'motion animation 动画 粒子',
+  },
+  {
+    id: 'appearance/code',
+    label: '主题码',
+    note: '包含以上全部外观选择。他人粘贴后点击应用即可复现。',
+    keywords: 'theme code 分享 导入 导出',
+    stack: true,
+  },
+  { id: 'appearance/reset', label: '恢复默认外观', keywords: 'reset default' },
+
+  {
+    id: 'account/list',
+    label: '账户',
+    note: '可保存多个身份，点击名称切换。令牌存储于系统钥匙串，不写入任何文件。',
+    keywords: 'account login 登录 微软 离线 外置',
+    stack: true,
+  },
+
+  {
+    id: 'game/memory',
+    label: '游戏内存上限',
+    keywords: 'memory ram xmx heap 堆 内存',
+    stack: true,
+  },
+  {
+    id: 'game/gc',
+    label: '垃圾回收器',
+    note: 'ZGC 停顿更短，但占用更多内存与 CPU。实例可单独覆盖。',
+    keywords: 'gc g1 zgc garbage collector',
+  },
+  {
+    id: 'game/window',
+    label: '游戏窗口',
+    note: '未指定时沿用游戏自身记录的尺寸。',
+    keywords: 'window resolution 分辨率 尺寸 全屏',
+    stack: true,
+  },
+  {
+    id: 'game/jvm',
+    label: '额外 JVM 参数',
+    note: '置于 Fern 内置参数之后，同名参数以此处为准。以空格分隔，不解析引号。',
+    keywords: 'jvm arguments flags 参数',
+    stack: true,
+  },
+  {
+    id: 'game/minimize',
+    label: '启动后最小化',
+    note: '在游戏窗口出现后最小化 Fern，而非点击启动时。',
+    keywords: 'minimize 最小化 隐藏',
+  },
+  {
+    id: 'java/runtimes',
+    label: '运行时',
+    note: '按大版本列出。缺失的版本会在首次启动相应实例时自动下载，也可在此处提前安装。',
+    keywords: 'java jdk jre runtime 运行时',
+    stack: true,
+  },
+  {
+    id: 'java/add',
+    label: '手动添加',
+    note: '扫描不到的安装位置。填写 JDK/JRE 根目录或其中的 java 可执行文件。',
+    keywords: 'java path 路径 添加',
+    stack: true,
+  },
+  { id: 'java/rescan', label: '重新扫描', keywords: 'rescan refresh 刷新' },
+
+  { id: 'download/source', label: '下载源', keywords: 'download source mirror bmclapi 镜像 官方源' },
+
+  { id: 'data/root', label: '数据目录', keywords: 'data directory 路径 目录', stack: true },
+  { id: 'data/logs', label: '日志目录', keywords: 'log directory 日志', stack: true },
+
+  { id: 'about/version', label: '版本', keywords: 'version about 关于' },
+]
+
+const byId = new Map(SETTINGS_ROWS.map((row) => [row.id, row]))
+
+/**
+ * 取一行的定义。找不到就抛——一个写错的 id 应该当场停下，而不是渲染出一行
+ * 没有标题、而且永远搜不到的设置。
+ */
+export function settingsRow(id: string): SettingsRow {
+  const row = byId.get(id)
+  if (!row) throw new Error(`设置目录里没有 ${id}`)
+  return row
+}
+
+const sectionLabel = (id: string) =>
+  SETTINGS_SECTIONS.find((section) => section.id === id.split('/')[0])?.label ?? '设置'
+
+/**
+ * 分区和每一行都是可寻址的位置。
+ *
+ * 七节之后，能直接搜到「圆角」比记得它在「外观」里更省时间——而后者本来就
+ * 是要靠记的。
+ */
+provides(() => [
+  ...SETTINGS_SECTIONS.map(
+    (section): Subject => ({
+      type: 'place',
+      id: `settings/${section.id}`,
+      title: `设置 · ${section.label}`,
+      run: () => nav.show('settings', section.id),
+    }),
+  ),
+  ...SETTINGS_ROWS.map(
+    (row): Subject => ({
+      type: 'place',
+      id: `settings/${row.id}`,
+      title: row.label,
+      // 说明和别名一起进 hint：面板搜的是 `title + hint`，所以「GC」和
+      // 「停顿更短」都命中得了，而界面上只显示前半句。
+      hint: `设置 · ${sectionLabel(row.id)}${row.keywords ? ` · ${row.keywords}` : ''}`,
+      run: () => nav.show('settings', row.id),
+    }),
+  ),
+])

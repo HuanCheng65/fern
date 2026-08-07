@@ -36,22 +36,6 @@ export const SCENES: { id: SceneId; label: string }[] = [
 
 const isScene = (value: string): value is SceneId => SCENES.some((item) => item.id === value)
 
-/**
- * 设置里的分区。
- *
- * 放在导航这一层而不是设置组件里，因为它们是**可寻址的位置**：命令面板要能
- * 把人直接送到「外观」那一节，靠的就是这张表。加一节设置它自动可搜，不必
- * 另行注册——这才是「导航结构和命令面板同构，一处定义两处使用」兑现的样子。
- */
-export const SETTINGS_SECTIONS: { id: string; label: string }[] = [
-  { id: 'appearance', label: '外观' },
-  { id: 'account', label: '账户' },
-  { id: 'game', label: '游戏' },
-  { id: 'java', label: 'Java' },
-  { id: 'download', label: '下载' },
-  { id: 'data', label: '数据' },
-  { id: 'about', label: '关于' },
-]
 
 /** 同时只开一个。浮层之间不叠罗汉——叠起来就没人知道 Esc 关的是哪一层。 */
 export type OverlayId = '' | 'settings' | 'palette' | 'island' | 'log'
@@ -241,9 +225,10 @@ class NavStore {
 export const nav = new NavStore()
 
 /**
- * 路由表本身就是一批对象。
+ * 路由表本身就是一批对象：凡是能被寻址的地方都自动可搜。
  *
- * 场景、设置的每一节——凡是能被寻址的位置都自动可搜，不必逐条注册。
+ * 设置的分区和每一行由设置页自己贡献（lib/settings-catalog.ts）——它们的
+ * 标题就在那张表里，让导航层再抄一份没有意义。
  */
 provides(() => [
   ...SCENES.filter((item) => item.id !== nav.scene).map((item) => ({
@@ -251,12 +236,6 @@ provides(() => [
     id: item.id,
     title: item.label,
     run: () => nav.go(item.id),
-  })),
-  ...SETTINGS_SECTIONS.map((item) => ({
-    type: 'place' as const,
-    id: `settings/${item.id}`,
-    title: `设置 · ${item.label}`,
-    run: () => nav.show('settings', item.id),
   })),
 ])
 

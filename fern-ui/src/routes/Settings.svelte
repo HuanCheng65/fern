@@ -26,11 +26,12 @@
   import { invoke } from '@tauri-apps/api/core'
   import { Check, Copy, FolderOpen, X } from 'lucide-svelte'
   import AccountList from '../components/AccountList.svelte'
+  import SettingRow from '../components/SettingRow.svelte'
   import Choice from '../components/Choice.svelte'
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { accounts } from '../lib/accounts.svelte'
-  import { SETTINGS_SECTIONS } from '../lib/nav.svelte'
+  import { SETTINGS_SECTIONS } from '../lib/settings-catalog'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
@@ -51,13 +52,32 @@
 
   let { at = '', onback }: Props = $props()
 
+  /**
+   * 从命令面板直接落到某一行时，把它滚进视野并亮一下。
+   *
+   * `at` 可以是「分区」也可以是「分区/行」——前者是「打开设置的这一节」，
+   * 后者是「我要找的那一项在这里」，后一句说完就该消失，所以是一段会退掉的
+   * 底色而不是一个选中态。
+   */
+  let focused = $state('')
+
   const sections = SETTINGS_SECTIONS
 
   let section = $state<SectionId>('appearance')
   // 外面指定了落点就跟着走。设置已经开着时也生效——命令面板搜到一个设置项，
-  // 该把人直接带到那一节，而不是在第一屏放下就不管了。
+  // 该把人直接带到那一行，而不是在第一屏放下就不管了。
   $effect(() => {
-    if (sections.some((item) => item.id === at)) section = at as SectionId
+    const [wanted, row] = at.split('/')
+    if (!sections.some((item) => item.id === wanted)) return
+    section = wanted as SectionId
+    if (!row) return
+    focused = at
+    // 等这一节渲染出来再找它。分区是刚刚才切过去的，这一帧里它还不在 DOM 里。
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-setting="${at}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
   })
   let paths = $state({ root: '', logs: '' })
   let pathError = $state('')
@@ -259,8 +279,7 @@
     {/snippet}
 
     {#if section === 'appearance'}
-          <div class="row">
-            <span class="label">强调色</span>
+          <SettingRow id="appearance/accent" found={focused === 'appearance/accent'}>
             <Choice
               label="强调色来源"
               value={theme.accentMode}
@@ -270,11 +289,10 @@
                 { value: 'locked', label: '锁定' },
               ]}
             />
-          </div>
+          </SettingRow>
 
           {#if theme.accentMode === 'locked'}
-            <div class="row swatch-row">
-              <span class="label">颜色</span>
+            <SettingRow id="appearance/swatch" found={focused === 'appearance/swatch'}>
               <div class="swatches">
                 {#each ACCENT_PRESETS as preset (preset.key)}
                   <button
@@ -299,11 +317,10 @@
                   />
                 </label>
               </div>
-            </div>
+            </SettingRow>
           {/if}
 
-          <div class="row">
-            <span class="label">界面密度</span>
+          <SettingRow id="appearance/density" found={focused === 'appearance/density'}>
             <Choice
               label="界面密度"
               value={theme.density}
@@ -314,10 +331,9 @@
                 { value: 'roomy', label: '宽松' },
               ]}
             />
-          </div>
+          </SettingRow>
 
-          <div class="row">
-            <span class="label">圆角</span>
+          <SettingRow id="appearance/radius" found={focused === 'appearance/radius'}>
             <Choice
               label="圆角"
               value={theme.radius}
@@ -328,13 +344,9 @@
                 { value: 'round', label: '圆润' },
               ]}
             />
-          </div>
+          </SettingRow>
 
-          <div class="row">
-            <span class="label">
-              动效
-              <small>关闭后同时停用背景粒子与指针视差。窗口失焦时始终暂停。</small>
-            </span>
+          <SettingRow id="appearance/motion" found={focused === 'appearance/motion'}>
             <Choice
               label="动效"
               value={theme.motion}
@@ -345,13 +357,9 @@
                 { value: 'off', label: '关闭' },
               ]}
             />
-          </div>
+          </SettingRow>
 
-          <div class="row stack">
-            <span class="label">
-              主题码
-              <small>包含以上全部外观选择。他人粘贴后点击应用即可复现。</small>
-            </span>
+          <SettingRow id="appearance/code" found={focused === 'appearance/code'}>
             <div class="code-row">
               <input class="input selectable t-mono" bind:value={themeCode} spellcheck="false" />
               <button class="btn btn--icon" aria-label="复制" title="复制" onclick={() => void copyCode()}>
@@ -360,10 +368,9 @@
               <button class="btn btn--ghost" onclick={applyCode}>应用</button>
             </div>
             {#if importError}<p class="err">{importError}</p>{/if}
-          </div>
+          </SettingRow>
 
-          <div class="row">
-            <span class="label">恢复默认外观</span>
+          <SettingRow id="appearance/reset" found={focused === 'appearance/reset'}>
             <button
               class="btn btn--ghost"
               onclick={() => {
@@ -373,31 +380,19 @@
             >
               恢复
             </button>
-          </div>
+          </SettingRow>
         {:else if section === 'account'}
-          <div class="row stack">
-            <span class="label">
-              账户
-              <small>可保存多个身份，点击名称切换。令牌存储于系统钥匙串，不写入任何文件。</small>
-            </span>
+          <SettingRow id="account/list" found={focused === 'account/list'}>
             <AccountList />
-          </div>
+          </SettingRow>
         {:else if section === 'game'}
           <!--
             这一节是所有实例的起点，不是它们的替代品。放在这里的判据只有一条：
             它是不是「一般情况下该是什么样」——只对某一个实例成立的东西属于
             实例设置。
           -->
-          <div class="row stack">
-            <span class="label">
-              游戏内存上限
-              <small>
-                自动分配的堆与实例中手动指定的值均以此为上限。
-                {#if budget.physicalMb}
-                  本机内存共 {gigabytes(budget.physicalMb)} GB，默认上限为其一半。
-                {/if}
-              </small>
-            </span>
+          <SettingRow id="game/memory" found={focused === 'game/memory'}>
+            {#snippet note()}自动分配的堆与实例中手动指定的值均以此为上限。 {#if budget.physicalMb} 本机内存共 {gigabytes(budget.physicalMb)} GB，默认上限为其一半。 {/if}{/snippet}
             <div class="slider-row">
               <input
                 class="slider"
@@ -420,13 +415,9 @@
                 恢复默认
               </button>
             </div>
-          </div>
+          </SettingRow>
 
-          <div class="row">
-            <span class="label">
-              垃圾回收器
-              <small>ZGC 停顿更短，但占用更多内存与 CPU。实例可单独覆盖。</small>
-            </span>
+          <SettingRow id="game/gc" found={focused === 'game/gc'}>
             <Choice
               label="垃圾回收器"
               value={prefs.game.garbageCollector ?? 'g1'}
@@ -436,13 +427,9 @@
                 { value: 'z', label: 'ZGC' },
               ]}
             />
-          </div>
+          </SettingRow>
 
-          <div class="row stack">
-            <span class="label">
-              游戏窗口
-              <small>未指定时沿用游戏自身记录的尺寸。</small>
-            </span>
+          <SettingRow id="game/window" found={focused === 'game/window'}>
             <div class="slider-row">
               <Choice
                 label="游戏窗口"
@@ -472,15 +459,9 @@
                 />
               {/if}
             </div>
-          </div>
+          </SettingRow>
 
-          <div class="row stack">
-            <span class="label">
-              额外 JVM 参数
-              <small>
-                置于 Fern 内置参数之后，同名参数以此处为准。以空格分隔，不解析引号。
-              </small>
-            </span>
+          <SettingRow id="game/jvm" found={focused === 'game/jvm'}>
             <input
               class="input t-mono"
               value={prefs.game.jvmArguments}
@@ -488,13 +469,9 @@
               placeholder="-XX:+UseStringDeduplication"
               oninput={(event) => prefs.setGame({ jvmArguments: event.currentTarget.value })}
             />
-          </div>
+          </SettingRow>
 
-          <div class="row">
-            <span class="label">
-              启动后最小化
-              <small>在游戏窗口出现后最小化 Fern，而非点击启动时。</small>
-            </span>
+          <SettingRow id="game/minimize" found={focused === 'game/minimize'}>
             <Choice
               label="启动后最小化"
               value={prefs.minimizeOnLaunch ? 'on' : 'off'}
@@ -504,15 +481,9 @@
                 { value: 'on', label: '最小化' },
               ]}
             />
-          </div>
+          </SettingRow>
         {:else if section === 'java'}
-          <div class="row stack">
-            <span class="label">
-              运行时
-              <small>
-                按大版本列出。缺失的版本会在首次启动相应实例时自动下载，也可在此处提前安装。
-              </small>
-            </span>
+          <SettingRow id="java/runtimes" found={focused === 'java/runtimes'}>
 
             {#if groups.length === 0}
               <p class="t-quiet">尚未扫描到任何 Java，也没有实例需要它。</p>
@@ -565,13 +536,9 @@
                 </li>
               {/each}
             </ul>
-          </div>
+          </SettingRow>
 
-          <div class="row stack">
-            <span class="label">
-              手动添加
-              <small>扫描不到的安装位置。填写 JDK/JRE 根目录或其中的 java 可执行文件。</small>
-            </span>
+          <SettingRow id="java/add" found={focused === 'java/add'}>
             <div class="code-row">
               <input
                 class="input t-mono"
@@ -582,22 +549,16 @@
               />
               <button class="btn btn--ghost" onclick={() => void addJavaPath()}>添加</button>
             </div>
-          </div>
+          </SettingRow>
 
-          <div class="row">
-            <span class="label">重新扫描</span>
+          <SettingRow id="java/rescan" found={focused === 'java/rescan'}>
             <button class="btn btn--ghost" onclick={() => void loadRuntimes()}>扫描</button>
-          </div>
+          </SettingRow>
 
           {#if runtimeError}<div class="alert">{runtimeError}</div>{/if}
         {:else if section === 'download'}
-          <div class="row">
-            <span class="label">
-              下载源
-              <small
-                >根据系统区域建议使用 {sourceName[suggestedSource()]}。当前源失败时将自动切换到另一个源。</small
-              >
-            </span>
+          <SettingRow id="download/source" found={focused === 'download/source'}>
+            {#snippet note()}根据系统区域建议使用 {sourceName[suggestedSource()]}。当前源失败时将自动切换到另一个源。{/snippet}
             <Choice
               label="下载源"
               value={prefs.downloadSource}
@@ -607,25 +568,22 @@
                 { value: 'bmclapi', label: 'BMCLAPI' },
               ]}
             />
-          </div>
+          </SettingRow>
         {:else if section === 'data'}
-          <div class="row stack">
-            <span class="label">数据目录</span>
+          <SettingRow id="data/root" found={focused === 'data/root'}>
             <p class="path t-mono selectable">{paths.root || '—'}</p>
-          </div>
-          <div class="row stack">
-            <span class="label">日志目录</span>
+          </SettingRow>
+          <SettingRow id="data/logs" found={focused === 'data/logs'}>
             <p class="path t-mono selectable">{paths.logs || '—'}</p>
             <button class="btn btn--ghost open" onclick={() => void openLogs()}>
               <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
             </button>
-          </div>
+          </SettingRow>
           {#if pathError}<div class="alert">{pathError}</div>{/if}
         {:else}
-          <div class="row">
-            <span class="label">版本</span>
+          <SettingRow id="about/version" found={focused === 'about/version'}>
             <span class="t-mono value">Fern 0.1.0</span>
-          </div>
+          </SettingRow>
         {/if}
   </Form>
 </div>
@@ -712,49 +670,6 @@
 
 
 
-
-  /* 每一行是「一个名字，一个控件」。说明文字只在没有它就会用错的地方出现。 */
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s5);
-    padding: var(--s4) 0;
-    box-shadow: inset 0 -1px 0 var(--hairline-2);
-  }
-
-  .row.stack {
-    display: grid;
-    justify-items: stretch;
-    gap: var(--s3);
-  }
-
-  .row:last-child {
-    box-shadow: none;
-  }
-
-  .label {
-    display: grid;
-    gap: 4px;
-    font-size: var(--t-body);
-    color: var(--ink);
-  }
-
-  .label small {
-    max-width: 46ch;
-    color: var(--ink-3);
-    font-size: var(--t-small);
-    line-height: 1.55;
-  }
-
-  .row :global(.choice) {
-    flex: none;
-    width: 210px;
-  }
-
-  .swatch-row {
-    align-items: center;
-  }
 
   .swatches {
     display: flex;
@@ -853,16 +768,6 @@
   }
 
   @media (max-width: 720px) {
-    .row {
-      flex-direction: column;
-      align-items: stretch;
-      gap: var(--s3);
-    }
-
-    .row :global(.choice) {
-      width: 100%;
-    }
-
     .swatches {
       justify-content: flex-start;
     }
