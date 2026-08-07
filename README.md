@@ -43,3 +43,16 @@ artifacts:
 
 Create a `v*` tag for a versioned package run, or start the workflow from the
 Actions page while iterating on a branch.
+
+## License
+
+Fern is free software under the [GNU General Public License v3.0](LICENSE) or
+any later version. Copyright © Astral Studio.
+
+Under section 7(e) of that license, an additional term applies: a modified
+version must not carry the Fern name, wordmark, or icon. Rename your fork.
+The licence covers the code, not the identity — a re-skinned build passing as
+Fern is how launcher users get shipped adware and token stealers.
+
+Fern is not an official Minecraft product. It is not approved by or associated
+with Mojang Studios or Microsoft.
