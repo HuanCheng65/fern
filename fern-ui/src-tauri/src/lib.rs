@@ -261,6 +261,38 @@ fn yggdrasil_logout() -> Result<(), String> {
     fern_core::clear_session().map_err(|error| format!("{error:#}"))
 }
 
+/// 微软正版登录。
+///
+/// device code flow：先要一个八位码，把它发给界面显示，然后一直轮询直到
+/// 用户在浏览器里点完。整个过程里密码和令牌都不经过 webview——界面拿到的
+/// 只有那个念给人听的八位码。
+#[tauri::command]
+async fn microsoft_login(app: tauri::AppHandle) -> Result<fern_core::AccountView, String> {
+    let challenge = fern_core::begin_microsoft_login()
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    // DeviceCodeChallenge 序列化时会跳过 device_code，只带 user_code 出去。
+    let _ = app.emit("microsoft-device-code", &challenge);
+
+    let session = fern_core::finish_microsoft_login(&challenge)
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    fern_core::store_microsoft_session(&session).map_err(|error| format!("{error:#}"))?;
+    Ok(fern_core::AccountView::from(&session))
+}
+
+#[tauri::command]
+fn microsoft_session() -> Result<Option<fern_core::AccountView>, String> {
+    fern_core::load_microsoft_session()
+        .map(|session| session.as_ref().map(fern_core::AccountView::from))
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[tauri::command]
+fn microsoft_logout() -> Result<(), String> {
+    fern_core::clear_microsoft_session().map_err(|error| format!("{error:#}"))
+}
+
 /// 这台机器上的 Java。设置页要能看见 Fern 到底会用哪一个。
 #[tauri::command]
 fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
@@ -296,6 +328,9 @@ pub fn run() {
             installable_loaders,
             offline_account,
             detect_java,
+            microsoft_login,
+            microsoft_session,
+            microsoft_logout,
             yggdrasil_login,
             yggdrasil_session,
             yggdrasil_logout,

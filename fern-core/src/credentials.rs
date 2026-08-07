@@ -17,6 +17,8 @@ const SERVICE: &str = "fern-launcher";
 const YGGDRASIL_ENTRY: &str = "yggdrasil-session";
 /// 这台机器的标识，不是秘密，但和令牌绑在一起才有意义，放在同一处。
 const CLIENT_TOKEN_ENTRY: &str = "client-token";
+/// 微软账号的 refresh token。文档 §3.1 明写「禁止明文落盘」。
+const MICROSOFT_ENTRY: &str = "microsoft-session";
 
 fn entry(key: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, key).map_err(unavailable)
@@ -55,6 +57,30 @@ pub fn load_session() -> Result<Option<YggdrasilSession>> {
 /// 退出登录。没有条目也算成功——目的是「之后读不到」，那已经成立了。
 pub fn clear_session() -> Result<()> {
     match entry(YGGDRASIL_ENTRY)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(unavailable(error)),
+    }
+}
+
+/// 存一次微软登录。
+pub fn store_microsoft_session(session: &crate::microsoft::MicrosoftSession) -> Result<()> {
+    let json = serde_json::to_string(session).context("序列化微软登录信息")?;
+    entry(MICROSOFT_ENTRY)?
+        .set_password(&json)
+        .map_err(unavailable)
+}
+
+pub fn load_microsoft_session() -> Result<Option<crate::microsoft::MicrosoftSession>> {
+    let entry = entry(MICROSOFT_ENTRY)?;
+    match entry.get_password() {
+        Ok(json) => Ok(serde_json::from_str(&json).ok()),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(unavailable(error)),
+    }
+}
+
+pub fn clear_microsoft_session() -> Result<()> {
+    match entry(MICROSOFT_ENTRY)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(unavailable(error)),
     }

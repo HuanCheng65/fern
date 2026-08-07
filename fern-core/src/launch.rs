@@ -448,8 +448,12 @@ async fn resolve_account(
     player_name: &str,
     events: &UnboundedSender<LauncherEvent>,
 ) -> Result<(Credentials, Vec<String>)> {
-    if crate::current_settings().account.kind != crate::AccountKind::Authlib {
-        return Ok((offline_credentials_checked(player_name)?, Vec::new()));
+    match crate::current_settings().account.kind {
+        crate::AccountKind::Offline => {
+            return Ok((offline_credentials_checked(player_name)?, Vec::new()));
+        }
+        crate::AccountKind::Microsoft => return Ok((microsoft_credentials().await?, Vec::new())),
+        crate::AccountKind::Authlib => {}
     }
 
     let stored =
@@ -477,6 +481,24 @@ async fn resolve_account(
         },
         crate::auth::jvm_arguments(&injector, &session.api_root, &prefetched),
     ))
+}
+
+/// 正版账号。令牌过期就静默刷新——启动前刷一次，比让玩家进服时被踢好。
+async fn microsoft_credentials() -> Result<Credentials> {
+    let stored = crate::load_microsoft_session()?
+        .ok_or_else(|| anyhow!("还没有登录微软账号，去设置里登录一次"))?;
+    let session = crate::refresh_microsoft_session(&stored)
+        .await
+        .context("微软令牌刷新失败，需要重新登录")?;
+    if session != stored {
+        crate::store_microsoft_session(&session)?;
+    }
+    Ok(Credentials {
+        player_name: session.player_name,
+        uuid: session.uuid,
+        access_token: session.access_token,
+        user_type: "msa".to_owned(),
+    })
 }
 
 /// 离线名字的规则是 Minecraft 自己的：3-16 位 ASCII。外置登录的名字由皮肤站

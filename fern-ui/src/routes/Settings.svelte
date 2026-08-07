@@ -11,6 +11,7 @@
    */
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { listen } from '@tauri-apps/api/event'
   import { ArrowLeft, Check, Copy, FolderOpen } from 'lucide-svelte'
   import Choice from '../components/Choice.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
@@ -39,12 +40,18 @@
   >([])
   let runtimeError = $state('')
 
-  interface YggdrasilSession {
-    apiRoot: string
+  interface AccountView {
+    kind: string
+    apiRoot: string | null
     playerName: string
     uuid: string
   }
-  let session = $state<YggdrasilSession | null>(null)
+  let session = $state<AccountView | null>(null)
+  let msa = $state<AccountView | null>(null)
+  /** 正版登录要用户去浏览器输的那八位码。 */
+  let deviceCode = $state<{ userCode: string; verificationUri: string } | null>(null)
+  let msaBusy = $state(false)
+  let msaError = $state('')
   let apiRoot = $state('https://littleskin.cn/api/yggdrasil')
   let username = $state('')
   let password = $state('')
@@ -63,7 +70,10 @@
       .then((value) => (paths = value))
       .catch((error) => (pathError = String(error)))
     void loadRuntimes()
-    void invoke<YggdrasilSession | null>('yggdrasil_session')
+    void invoke<AccountView | null>('microsoft_session')
+      .then((value) => (msa = value))
+      .catch(() => {})
+    void invoke<AccountView | null>('yggdrasil_session')
       .then((value) => (session = value))
       .catch(() => {
         // 钥匙串用不了的时候这里会失败，但那句话该在用户真的去登录时再说，
@@ -79,7 +89,7 @@
     loggingIn = true
     loginError = ''
     try {
-      session = await invoke<YggdrasilSession>('yggdrasil_login', {
+      session = await invoke<AccountView>('yggdrasil_login', {
         apiRoot: apiRoot.trim(),
         username: username.trim(),
         password,
@@ -90,6 +100,35 @@
       loginError = String(error)
     } finally {
       loggingIn = false
+    }
+  }
+
+  async function microsoftLogin() {
+    msaBusy = true
+    msaError = ''
+    deviceCode = null
+    // 八位码由后端在拿到之后推过来——它要显示的那一刻，登录还在等用户。
+    const stop = await listen<{ userCode: string; verificationUri: string }>(
+      'microsoft-device-code',
+      ({ payload }) => (deviceCode = payload),
+    )
+    try {
+      msa = await invoke<AccountView>('microsoft_login')
+      deviceCode = null
+    } catch (error) {
+      msaError = String(error)
+    } finally {
+      stop()
+      msaBusy = false
+    }
+  }
+
+  async function microsoftLogout() {
+    try {
+      await invoke('microsoft_logout')
+      msa = null
+    } catch (error) {
+      msaError = String(error)
     }
   }
 
@@ -291,18 +330,56 @@
           <div class="row stack">
             <span class="label">
               登录方式
-              <small>微软正版登录还没有接入，它要等 Azure 的应用白名单审批。</small>
             </span>
             <Choice
               label="登录方式"
-              value={prefs.accountKind === 'authlib' ? 'authlib' : 'offline'}
+              value={prefs.accountKind}
               onchange={(next) => prefs.setAccount(next, prefs.playerName)}
               options={[
                 { value: 'offline', label: '离线模式' },
+                { value: 'microsoft', label: '微软账户' },
                 { value: 'authlib', label: '外置登录' },
               ]}
             />
           </div>
+
+          {#if prefs.accountKind === 'microsoft'}
+            {#if msa}
+              <div class="row">
+                <span class="label">已登录<small class="t-mono">{msa.uuid}</small></span>
+                <span class="value">{msa.playerName}</span>
+              </div>
+              <div class="row">
+                <span class="label">退出登录<small>令牌会从系统钥匙串里删掉。</small></span>
+                <button class="btn btn--ghost" onclick={() => void microsoftLogout()}>退出</button>
+              </div>
+            {:else if deviceCode}
+              <!-- 登录码是这一屏此刻唯一要做的事，所以给它整行和最大的字号。 -->
+              <div class="row stack">
+                <span class="label">
+                  在浏览器里输入这个码
+                  <small>密码只在微软的页面上输入，不经过 Fern。</small>
+                </span>
+                <p class="code t-mono selectable">{deviceCode.userCode}</p>
+                <p class="t-mono path selectable">{deviceCode.verificationUri}</p>
+              </div>
+            {:else}
+              <div class="row">
+                <span class="label">
+                  微软账户
+                  <small>会打开一个八位码，去浏览器里输入即可，不用在这里填密码。</small>
+                </span>
+                <button
+                  class="btn btn--primary"
+                  disabled={msaBusy}
+                  onclick={() => void microsoftLogin()}
+                >
+                  {msaBusy ? '等待中' : '登录'}
+                </button>
+              </div>
+            {/if}
+            {#if msaError}<div class="alert">{msaError}</div>{/if}
+          {/if}
 
           {#if prefs.accountKind === 'authlib'}
             {#if session}
@@ -358,7 +435,7 @@
               </div>
             {/if}
             {#if loginError}<div class="alert">{loginError}</div>{/if}
-          {:else}
+          {:else if prefs.accountKind === 'offline'}
             <div class="row stack">
               <span class="label">
                 玩家名称
@@ -442,6 +519,15 @@
 </section>
 
 <style>
+  /* 八位码是这一刻唯一要读的东西，字号给到位。 */
+  .code {
+    margin: var(--s2) 0 0;
+    color: var(--ink);
+    font-size: var(--t-h1);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+  }
+
   .runtimes {
     display: grid;
     gap: 1px;

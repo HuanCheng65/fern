@@ -14,6 +14,7 @@ mod instance;
 mod java;
 mod launch;
 mod loader;
+mod microsoft;
 mod prepare;
 mod runtime;
 mod settings;
@@ -29,7 +30,10 @@ pub use catalog::{
     list_instances, list_versions, update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
-pub use credentials::{clear_session, client_token, load_session, store_session};
+pub use credentials::{
+    clear_microsoft_session, clear_session, client_token, load_microsoft_session, load_session,
+    store_microsoft_session, store_session,
+};
 pub use data::DataPaths;
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;
@@ -49,6 +53,10 @@ pub use loader::{
     LoaderOption, LoaderVersion, display_name as loader_display_name,
     installable as installable_loaders, latest_version as latest_loader_version,
     list_versions as list_loader_versions,
+};
+pub use microsoft::{
+    DeviceCodeChallenge, MicrosoftSession, begin_login as begin_microsoft_login,
+    ensure_fresh as refresh_microsoft_session, finish_login as finish_microsoft_login,
 };
 pub use prepare::{PrepareResult, prepare_instance};
 pub use runtime::{ensure_java, remove as remove_runtime};

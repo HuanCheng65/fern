@@ -45,7 +45,10 @@ pub struct YggdrasilSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountView {
-    pub api_root: String,
+    /// `authlib` 或 `microsoft`。界面按它决定显示什么。
+    pub kind: String,
+    /// 只有外置登录有站点地址。
+    pub api_root: Option<String>,
     pub uuid: String,
     pub player_name: String,
 }
@@ -53,7 +56,19 @@ pub struct AccountView {
 impl From<&YggdrasilSession> for AccountView {
     fn from(session: &YggdrasilSession) -> Self {
         Self {
-            api_root: session.api_root.clone(),
+            kind: "authlib".to_owned(),
+            api_root: Some(session.api_root.clone()),
+            uuid: session.uuid.clone(),
+            player_name: session.player_name.clone(),
+        }
+    }
+}
+
+impl From<&crate::microsoft::MicrosoftSession> for AccountView {
+    fn from(session: &crate::microsoft::MicrosoftSession) -> Self {
+        Self {
+            kind: "microsoft".to_owned(),
+            api_root: None,
             uuid: session.uuid.clone(),
             player_name: session.player_name.clone(),
         }
@@ -345,6 +360,19 @@ mod tests {
         assert!(json.contains("Steve"));
         assert!(!json.contains("super-secret-token"));
         assert!(!json.contains("machine-token"));
+
+        // 正版账号同理：令牌一个都不能出现在交给界面的那份里。
+        let msa = crate::microsoft::MicrosoftSession {
+            refresh_token: "long-lived-refresh".to_owned(),
+            access_token: "minecraft-access".to_owned(),
+            uuid: "abc".to_owned(),
+            player_name: "Alex".to_owned(),
+            expires_at: 0,
+        };
+        let json = serde_json::to_string(&AccountView::from(&msa)).expect("serialize");
+        assert!(json.contains("Alex"));
+        assert!(!json.contains("long-lived-refresh"));
+        assert!(!json.contains("minecraft-access"));
     }
 
     #[test]

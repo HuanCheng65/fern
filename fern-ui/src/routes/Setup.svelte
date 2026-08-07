@@ -103,7 +103,7 @@
   }
 
   const ACCOUNTS: { kind: AccountKind; title: string; note: string; ready: boolean }[] = [
-    { kind: 'microsoft', title: '微软账户', note: '正版登录，联机、皮肤与成就', ready: false },
+    { kind: 'microsoft', title: '微软账户', note: '正版登录，联机、皮肤与成就', ready: true },
     { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 皮肤站', ready: true },
     { kind: 'offline', title: '离线模式', note: '只在本地世界和离线服务器游玩', ready: true },
   ]
@@ -151,6 +151,8 @@
              三个框、要联网、还可能失败，那不该是第一印象的一部分。 -->
         {#if accountKind === 'authlib'}
           <p class="note">选好了。继续走完，之后在设置里登录皮肤站账号。</p>
+        {:else if accountKind === 'microsoft'}
+          <p class="note">选好了。继续走完，之后在设置里扫码登录。</p>
         {/if}
 
         {#if accountKind === 'offline'}
