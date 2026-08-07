@@ -16,6 +16,7 @@ mod launch;
 mod loader;
 mod microsoft;
 mod prepare;
+mod rules;
 mod runtime;
 mod settings;
 mod tuning;

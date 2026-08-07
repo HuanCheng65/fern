@@ -24,4 +24,7 @@ zip.workspace = true
 
 # 只为读一个数：物理内存。Linux 有 /proc，macOS 有 sysctl，Windows 两样都没有。
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
+windows-sys = { version = "0.59", features = [
+    "Wdk_System_SystemServices",
+    "Win32_System_SystemInformation",
+] }

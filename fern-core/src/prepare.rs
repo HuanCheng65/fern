@@ -11,7 +11,9 @@ use fern_meta::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, LauncherEvent, java, loader, runtime, settings::source_order, version};
+use crate::{
+    DataPaths, LauncherEvent, java, loader, rules, runtime, settings::source_order, version,
+};
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -118,7 +120,7 @@ pub async fn prepare_instance(
     let metadata: VersionMetadata = version::resolve(paths, &effective_id)
         .with_context(|| format!("读取 {effective_id} 的版本描述"))?;
 
-    let context = current_rule_context();
+    let context = rules::context(rules::Features::default());
     let mut tasks = Vec::new();
     // 远古版本下完还要再摆一份，见 materialize_legacy_assets。
     let mut legacy_assets: Option<(String, AssetObjectIndex)> = None;
@@ -358,22 +360,6 @@ fn ensure_trailing_slash(url: &str) -> String {
         url.to_owned()
     } else {
         format!("{url}/")
-    }
-}
-
-fn current_rule_context() -> RuleContext {
-    RuleContext {
-        os_name: if cfg!(target_os = "windows") {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "osx"
-        } else {
-            "linux"
-        }
-        .to_owned(),
-        os_arch: std::env::consts::ARCH.to_owned(),
-        os_version: String::new(),
-        features: HashMap::new(),
     }
 }
 

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    DataPaths, LaunchStage, LauncherEvent, crash, gamelog, gamelog::LogParser, java, tuning,
+    DataPaths, LaunchStage, LauncherEvent, crash, gamelog, gamelog::LogParser, java, rules, tuning,
     version,
 };
 
@@ -175,7 +175,10 @@ pub async fn launch_instance(
         .ok_or_else(|| anyhow!("version {version_id} has no main class"))?;
 
     stage(LaunchStage::CheckingFiles);
-    let context = current_rule_context(profile.settings.resolution.is_some());
+    let context = rules::context(rules::Features {
+        custom_resolution: profile.settings.resolution.is_some(),
+        ..rules::Features::default()
+    });
     let natives_directory = paths.game_directory(instance_id).join("natives");
     tokio::fs::create_dir_all(&natives_directory).await?;
     let classpath =
@@ -793,22 +796,6 @@ async fn extract_native_jar(path: &Path, destination: &Path, library: &Library) 
     })
     .await??;
     Ok(())
-}
-
-fn current_rule_context(has_custom_resolution: bool) -> RuleContext {
-    RuleContext {
-        os_name: if cfg!(target_os = "windows") {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "osx"
-        } else {
-            "linux"
-        }
-        .to_owned(),
-        os_arch: std::env::consts::ARCH.to_owned(),
-        os_version: String::new(),
-        features: HashMap::from([("has_custom_resolution".to_owned(), has_custom_resolution)]),
-    }
 }
 
 impl LaunchPlan {
