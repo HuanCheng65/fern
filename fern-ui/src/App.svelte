@@ -3,11 +3,11 @@
    * 外壳。
    *
    * 这里只做四件事：把背景铺上、把顶栏和当前场景排好、接住全局快捷键、
-   * 管浮层的开关。场景自己的内容全部在 scenes/ 下，数据全部在 lib/ 的
+   * 把浮层挂上去。场景自己的内容全部在 scenes/ 下，数据全部在 lib/ 的
    * store 里——外壳不认识实例，也不认识下载。
    *
-   * 导航是横向舞台（见 docs/UI_DESIGN.md 四）：五个场景左右排开，切换时
-   * 镜头横向平移。转场压在 200ms 以内是硬指标。
+   * 导航状态全部在 lib/nav.svelte.ts：场景层横向平移，场景内最多向内推一级，
+   * 浮层盖在两者之上。外壳只负责把这三层画出来。
    */
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
@@ -26,69 +26,36 @@
   import SupplyScene from './scenes/Supply.svelte'
   import Setup from './routes/Setup.svelte'
   import Settings from './routes/Settings.svelte'
-  import { frame, frameless, selfRounded } from './lib/frame.svelte'
+  import { frame, frameless, platform, selfRounded } from './lib/frame.svelte'
   import { flush, hydrate } from './lib/persist'
   import { instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
+  import { nav, SCENES } from './lib/nav.svelte'
   import { prefs } from './lib/prefs.svelte'
   import { theme } from './lib/theme.svelte'
   import './styles/tokens.css'
 
-  type SceneId = 'launch' | 'instances' | 'supply' | 'multiplayer' | 'wardrobe'
-
-  const scenes: { id: SceneId; label: string }[] = [
-    { id: 'launch', label: '启动' },
-    { id: 'instances', label: '实例' },
-    { id: 'supply', label: '补给' },
-    { id: 'multiplayer', label: '联机' },
-    { id: 'wardrobe', label: '衣柜' },
-  ]
-
-  let scene = $state<SceneId>('launch')
-  let settingsOpen = $state(false)
-  let paletteOpen = $state(false)
-  let createOpen = $state(false)
-  let instanceSettingsOpen = $state(false)
-  let logOpen = $state(false)
   let setupOpen = $state(false)
   /** 设置在磁盘上，读完才知道该不该出向导。读完之前只铺背景。 */
   let ready = $state(false)
-  let isMac = $state(false)
-  /** 镜头往哪边走，决定新场景从哪一侧滑进来。 */
-  let direction = $state(1)
+  /** 实例的详细设置。第二步会并进实例详情页的 tab，先留在浮层里。 */
+  let instanceSettingsOpen = $state(false)
 
-  const overlayOpen = $derived(paletteOpen || createOpen || instanceSettingsOpen || logOpen)
-  /** 背景用当前实例的名字当种子——首页的背景就是这个实例自己的封面。 */
+  const isMac = platform === 'macos'
+  /** 背景用当前实例的封面当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.cover ?? 'Fern')
-
-  function goScene(id: SceneId) {
-    const from = scenes.findIndex((item) => item.id === scene)
-    const to = scenes.findIndex((item) => item.id === id)
-    direction = to >= from ? 1 : -1
-    scene = id
-    settingsOpen = false
-    location.hash = `#/${id}`
-  }
-
-  function step(delta: number) {
-    const index = scenes.findIndex((item) => item.id === scene)
-    goScene(scenes[(index + delta + scenes.length) % scenes.length]!.id)
-  }
-
-  function openSettings() {
-    settingsOpen = true
-    location.hash = '#/settings'
-  }
-
-  function closeSettings() {
-    settingsOpen = false
-    location.hash = `#/${scene}`
-  }
+  /** 顶栏的面包屑只要一个词。目前只有实例场景有纵深。 */
+  const detailLabel = $derived(
+    nav.scene === 'instances' && nav.detail
+      ? (instances.list.find((item) => item.id === nav.detail)?.name ?? '')
+      : '',
+  )
+  const away = $derived(nav.overlay !== '')
 
   async function openDirectory() {
     const current = instances.current
     if (!current) {
-      createOpen = true
+      nav.show('create')
       return
     }
     try {
@@ -98,6 +65,10 @@
     }
   }
 
+  /**
+   * 命令面板是这套路由的键盘化身：每一条都是一次跳转或一个动作，和导航结构
+   * 同构。
+   */
   const actions = $derived<PaletteAction[]>([
     ...(instances.current
       ? [
@@ -119,7 +90,7 @@
           },
         ]
       : []),
-    { id: 'create', title: '新建实例', run: () => (createOpen = true) },
+    { id: 'create', title: '新建实例', run: () => nav.show('create') },
     // 日志平时不该占地方，但出事的时候必须找得到——所以放在命令面板里，
     // 而且只在真的有内容时才列出来。
     ...(launch.log.length > 0
@@ -128,62 +99,50 @@
             id: 'log',
             title: '查看游戏日志',
             hint: `${launch.log.length} 行`,
-            run: () => (logOpen = true),
+            run: () => nav.show('log'),
           },
         ]
       : []),
-    ...scenes
-      .filter((item) => item.id !== scene)
-      .map((item) => ({
-        id: `go-${item.id}`,
-        title: `前往 ${item.label}`,
-        run: () => goScene(item.id),
-      })),
-    { id: 'settings', title: '打开设置', keys: isMac ? '⌘ ,' : 'Ctrl ,', run: openSettings },
+    ...SCENES.filter((item) => item.id !== nav.scene).map((item) => ({
+      id: `go-${item.id}`,
+      title: `前往 ${item.label}`,
+      run: () => nav.go(item.id),
+    })),
+    { id: 'settings', title: '打开设置', keys: isMac ? '⌘ ,' : 'Ctrl ,', run: () => nav.show('settings') },
   ])
-
-  function readHash() {
-    const raw = location.hash.replace(/^#\/?/, '')
-    if (raw === 'settings') {
-      settingsOpen = true
-      return
-    }
-    settingsOpen = false
-    if (scenes.some((item) => item.id === raw)) scene = raw as SceneId
-  }
 
   function onKeydown(event: KeyboardEvent) {
     const mod = event.metaKey || event.ctrlKey
     if (setupOpen) return
     if (mod && event.key.toLowerCase() === 'k') {
       event.preventDefault()
-      paletteOpen = !paletteOpen
+      nav.toggle('palette')
       return
     }
     if (mod && event.key === ',') {
       event.preventDefault()
-      openSettings()
+      nav.toggle('settings')
       return
     }
     if (event.key === 'Escape') {
-      if (paletteOpen) paletteOpen = false
-      else if (createOpen) createOpen = false
-      else if (settingsOpen) closeSettings()
+      // 由外向内关：先收浮层，再收实例设置，最后才退出详情。
+      if (nav.overlay) nav.dismiss()
+      else if (instanceSettingsOpen) instanceSettingsOpen = false
+      else nav.back()
       return
     }
     // 左右方向键就是镜头。输入框里除外——那时候方向键属于光标。
     const tag = (event.target as HTMLElement | null)?.tagName
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
-    if (overlayOpen || settingsOpen) return
-    if (event.key === 'ArrowRight') step(1)
-    if (event.key === 'ArrowLeft') step(-1)
+    if (nav.overlay || instanceSettingsOpen) return
+    if (event.key === 'ArrowRight') nav.step(1)
+    if (event.key === 'ArrowLeft') nav.step(-1)
   }
 
   onMount(() => {
-    isMac = /Mac/i.test(navigator.userAgent)
     // 无边框时顶栏要给右上角的窗口按钮让出位置，用一个变量统一控制。
     document.body.classList.toggle('frameless', frameless())
-    readHash()
+    const disconnectNav = nav.connect()
     void hydrate().then(() => {
       theme.hydrate()
       prefs.hydrate()
@@ -194,12 +153,11 @@
     void launch.connect()
     // 写盘是防抖的：改完设置立刻切走或关窗，别把最后那一下丢了。
     const saveNow = () => void flush()
-    window.addEventListener('hashchange', readHash)
     window.addEventListener('keydown', onKeydown)
     window.addEventListener('blur', saveNow)
     window.addEventListener('pagehide', saveNow)
     return () => {
-      window.removeEventListener('hashchange', readHash)
+      disconnectNav()
       window.removeEventListener('keydown', onKeydown)
       window.removeEventListener('blur', saveNow)
       window.removeEventListener('pagehide', saveNow)
@@ -208,7 +166,7 @@
   })
 
   const enter = $derived({
-    x: direction * 26,
+    x: nav.direction * 26,
     duration: Math.round(190 * theme.motionScale),
     opacity: 0,
   })
@@ -217,12 +175,7 @@
 <svelte:head><title>Fern</title></svelte:head>
 
 <div class="shell" class:rounded={selfRounded() && !frame.maximized}>
-  <Backdrop
-    {seed}
-    particles={theme.particles}
-    parallax={theme.parallax}
-    away={overlayOpen || settingsOpen}
-  />
+  <Backdrop {seed} particles={theme.particles} parallax={theme.parallax} {away} />
 
   {#if !ready}
     <!-- 背景已经在画了，这里只是等一次读盘，不额外放加载动画。 -->
@@ -230,56 +183,52 @@
     <Setup
       ondone={(create) => {
         setupOpen = false
-        goScene('launch')
-        if (create) createOpen = true
+        nav.go('launch')
+        if (create) nav.show('create')
       }}
     />
-  {:else if settingsOpen}
-    <Settings onback={closeSettings} />
   {:else}
-    <TopBar
-      {scenes}
-      {isMac}
-      active={scene}
-      onselect={(id) => goScene(id as SceneId)}
-      oncommand={() => (paletteOpen = true)}
-      onsettings={openSettings}
-    />
+    <TopBar {detailLabel} />
 
     <main class="stage">
-      {#key scene}
+      {#key nav.scene}
         <div class="scene" in:fly={enter}>
-          {#if scene === 'launch'}
+          {#if nav.scene === 'launch'}
             <LaunchScene
-              onswitch={() => (paletteOpen = true)}
-              oncreate={() => (createOpen = true)}
+              onswitch={() => nav.show('palette')}
+              oncreate={() => nav.show('create')}
               onopenDirectory={() => void openDirectory()}
             />
-          {:else if scene === 'instances'}
+          {:else if nav.scene === 'instances'}
             <InstancesScene
-              oncreate={() => (createOpen = true)}
+              oncreate={() => nav.show('create')}
               onopenDirectory={() => void openDirectory()}
               onconfigure={() => (instanceSettingsOpen = true)}
             />
-          {:else if scene === 'supply'}
-            <SupplyScene onback={() => goScene('launch')} />
-          {:else if scene === 'multiplayer'}
+          {:else if nav.scene === 'supply'}
+            <SupplyScene onback={() => nav.go('launch')} />
+          {:else if nav.scene === 'multiplayer'}
             <Placeholder
               seed="multiplayer"
               title="联机尚未开放"
               note="房间、好友与服务器列表将在此处提供。"
-              onback={() => goScene('launch')}
+              onback={() => nav.go('launch')}
             />
           {:else}
             <Placeholder
               seed="wardrobe"
               title="衣柜尚未开放"
               note="皮肤与披风的预览与切换将在此处提供。"
-              onback={() => goScene('launch')}
+              onback={() => nav.go('launch')}
             />
           {/if}
         </div>
       {/key}
+
+      <!-- 设置盖在舞台上，顶栏留在上面：它是浮层，不是第六个场景。 -->
+      {#if nav.overlay === 'settings'}
+        <Settings onback={() => nav.dismiss()} />
+      {/if}
     </main>
   {/if}
 
@@ -291,8 +240,8 @@
     {/if}
   {/if}
 
-  {#if paletteOpen}
-    <CommandPalette {actions} onclose={() => (paletteOpen = false)} />
+  {#if nav.overlay === 'palette'}
+    <CommandPalette {actions} onclose={() => nav.dismiss()} />
   {/if}
 
   <!-- 崩溃报告压在所有浮层之上：它是用户此刻唯一需要处理的事。 -->
@@ -312,12 +261,12 @@
     />
   {/if}
 
-  {#if logOpen}
-    <GameLog onclose={() => (logOpen = false)} />
+  {#if nav.overlay === 'log'}
+    <GameLog onclose={() => nav.dismiss()} />
   {/if}
 
-  {#if createOpen}
-    <CreateInstance onclose={() => (createOpen = false)} oncreated={() => goScene('launch')} />
+  {#if nav.overlay === 'create'}
+    <CreateInstance onclose={() => nav.dismiss()} oncreated={() => nav.go('launch')} />
   {/if}
 </div>
 

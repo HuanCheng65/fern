@@ -2,6 +2,10 @@
   /**
    * 设置。
    *
+   * 它是浮层不是场景（见 lib/nav.svelte.ts）：工具属性的东西不该占掉五个
+   * 场景位之一——那五个词在概念上都是「玩」的组成部分。所以这里是一块盖在
+   * 舞台上的覆盖面板，顶栏留在上面，随时可以点任意场景词离开。
+   *
    * 只放真的接着东西的开关。上一版里「启动后保持在后台」「并发任务 64 个
    * 文件」这类项要么点了没反应，要么根本是写死的说明文字——设置页里的
    * 假开关比没有这一页更伤，因为它会让人以为自己已经配置过了。
@@ -12,7 +16,7 @@
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
-  import { ArrowLeft, Check, Copy, FolderOpen } from 'lucide-svelte'
+  import { Check, Copy, FolderOpen, X } from 'lucide-svelte'
   import Choice from '../components/Choice.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
@@ -195,9 +199,11 @@
 
 <section class="settings scroll">
   <div class="inner">
-    <header data-tauri-drag-region="deep">
-      <button class="btn btn--link back" onclick={onback}><ArrowLeft size={14} />返回</button>
+    <header>
       <h1 class="t-h1">设置</h1>
+      <button class="btn btn--icon close" aria-label="关闭设置" onclick={onback}>
+        <X size={16} />
+      </button>
     </header>
 
     <div class="layout">
@@ -566,12 +572,17 @@
     font-size: var(--t-body);
   }
 
+  /*
+   * 盖在舞台上，不盖顶栏——场景词要一直在肌肉记忆的位置上。底色压暗到能读，
+   * 但仍然透出背景的色彩，不做成一块不透明的板子。
+   */
   .settings {
-    position: relative;
-    z-index: 1;
-    flex: 1;
-    min-height: 0;
+    position: absolute;
+    inset: 0;
+    z-index: 5;
     padding: 0 var(--pad-x) var(--s8);
+    background: var(--panel);
+    backdrop-filter: blur(26px) saturate(1.3);
   }
 
   .inner {
@@ -580,20 +591,16 @@
   }
 
   header {
-    display: grid;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
     gap: var(--s3);
-    /* 顶栏那一条留给窗口按钮和拖拽，返回键不要挤进去。 */
-    padding: calc(var(--top) + var(--s4)) calc(var(--frame-controls)) var(--s6) 0;
+    padding: var(--s5) 0 var(--s6);
   }
 
-  .back {
-    justify-self: start;
-    gap: 6px;
-    color: var(--ink-3);
-  }
-
-  .back:hover {
-    color: var(--ink);
+  .close {
+    flex: none;
+    margin-top: 2px;
   }
 
   .layout {
