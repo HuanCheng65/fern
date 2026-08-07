@@ -14,9 +14,6 @@ flate2.workspace = true
 fern-download.workspace = true
 fern-meta.workspace = true
 keyring.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
 md-5.workspace = true
 pearl-core.workspace = true
 reqwest.workspace = true
@@ -27,7 +24,11 @@ tar.workspace = true
 tokio.workspace = true
 zip.workspace = true
 
-# 只为读一个数：物理内存。Linux 有 /proc，macOS 有 sysctl，Windows 两样都没有。
+# 只为设置游戏进程的 nice 值。Windows 那边用 std 的 creation_flags，不需要它。
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+# 物理内存、系统版本号、注册表里登记的 Java——三样都没有跨平台的读法。
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Wdk_System_SystemServices",

@@ -69,6 +69,12 @@ jobs:
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # 平台专属依赖段写错位置时，跨平台的依赖会被一起圈进去：本平台照常编译，
+      # 另一个平台上「unresolved import」刷屏。依赖解析不用编译，几秒就能拦住，
+      # 不必等十几分钟的打包任务。
+      - name: Check dependency resolution across platforms
+        run: python3 .github/check-platform-deps.py
+
   package:
     name: Package ${{ matrix.name }}
     needs: quality
