@@ -147,7 +147,7 @@ class LaunchStore {
     this.log = []
   }
 
-  async launch(instanceId: string, playerName: string) {
+  async launch(instanceId: string) {
     if (this.busy || this.running) return
     this.#begin(instanceId)
     const name = nameOf(instanceId)
@@ -162,7 +162,6 @@ class LaunchStore {
       // 宣告它的存在和进展，不负责编一个显示用的名字。
       await invoke<{ processId: number }>('launch_instance', {
         instanceId,
-        playerName,
         title: `启动 ${name}`,
         subjects: [instanceId],
       })

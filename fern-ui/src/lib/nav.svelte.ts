@@ -52,6 +52,14 @@ class NavStore {
   tab = $state('')
   params = $state<Params>({})
   overlay = $state<OverlayId>('')
+  /**
+   * 浮层里要落在哪一段（设置的哪一节）。
+   *
+   * 浮层不进地址，所以这不是路由的一部分——它是「打开的时候看这里」，
+   * 用完就不再有意义。顶栏的头像和命令面板都靠它把人直接送到目的地，
+   * 而不是送到设置的第一屏再让人自己找。
+   */
+  focus = $state('')
 
   /** 镜头往哪边走，决定新场景从哪一侧滑进来。 */
   direction = $state(1)
@@ -90,6 +98,7 @@ class NavStore {
     this.tab = ''
     this.params = params
     this.overlay = ''
+    this.focus = ''
     this.commit()
   }
 
@@ -100,6 +109,7 @@ class NavStore {
     this.tab = ''
     this.params = params
     this.overlay = ''
+    this.focus = ''
     this.commit()
   }
 
@@ -111,6 +121,7 @@ class NavStore {
     this.tab = ''
     this.params = params
     this.overlay = ''
+    this.focus = ''
     this.commit()
   }
 
@@ -150,16 +161,19 @@ class NavStore {
     this.go(next.id)
   }
 
-  show(overlay: OverlayId) {
+  show(overlay: OverlayId, focus = '') {
     this.overlay = overlay
+    this.focus = focus
   }
 
-  toggle(overlay: OverlayId) {
+  toggle(overlay: OverlayId, focus = '') {
     this.overlay = this.overlay === overlay ? '' : overlay
+    this.focus = this.overlay ? focus : ''
   }
 
   dismiss() {
     this.overlay = ''
+    this.focus = ''
   }
 
   /** 地址栏是可以被手改和被外部链接改的，当外部输入读。 */

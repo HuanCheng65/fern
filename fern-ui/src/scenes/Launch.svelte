@@ -52,7 +52,7 @@
         <button
           class="btn btn--primary go"
           class:busy={working}
-          onclick={() => void launch.launch(current.id, prefs.playerName)}
+          onclick={() => void launch.launch(current.id)}
           disabled={working || launch.running}
         >
           <span

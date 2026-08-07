@@ -73,7 +73,7 @@
         <button
           class="btn btn--primary"
           disabled={launch.busy || launch.running || job !== undefined}
-          onclick={() => void launch.launch(instance.id, prefs.playerName)}
+          onclick={() => void launch.launch(instance.id)}
         >
           {#if launch.running}
             运行中

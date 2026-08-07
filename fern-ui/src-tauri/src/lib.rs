@@ -284,11 +284,6 @@ fn parse_loader(loader: Option<&str>) -> Result<fern_core::LoaderKind, String> {
         .map_err(|_| format!("不认识的加载器：{loader}"))
 }
 
-#[tauri::command]
-fn offline_account(player_name: String) -> fern_core::Credentials {
-    fern_core::offline_credentials(player_name)
-}
-
 /// Settings live in `settings.json` under the data root, not in webview
 /// storage: they survive a cleared webview, and the user can open, back up, or
 /// share the file.
@@ -413,7 +408,6 @@ async fn prepare_instance(
 async fn launch_instance(
     app: tauri::AppHandle,
     instance_id: String,
-    player_name: String,
     title: String,
     subjects: Vec<String>,
 ) -> Result<fern_core::LaunchResult, String> {
@@ -426,7 +420,7 @@ async fn launch_instance(
         .await
         .map_err(|error| format!("{error:#}"));
     let result = match prepared {
-        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &player_name, &events, &job)
+        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &events, &job)
             .await
             .map_err(|error| format!("{error:#}")),
         Err(error) => Err(error),
@@ -681,40 +675,74 @@ async fn update_instance_settings(
     .await?
 }
 
-/// 外置登录。密码只在这一次调用里存在，登录成功后进系统钥匙串的是令牌。
+/// 名册。这里面没有任何令牌，只有「谁是谁」。
 #[tauri::command]
-async fn yggdrasil_login(
-    api_root: String,
-    username: String,
-    password: String,
-) -> Result<fern_core::AccountView, String> {
-    let client_token =
-        off_thread(|| fern_core::client_token().map_err(|error| format!("{error:#}"))).await??;
-    let session = fern_core::authenticate(&api_root, &username, &password, &client_token)
-        .await
-        .map_err(|error| format!("{error:#}"))?;
-    // 只把界面用得着的那部分交出去，令牌留在这一侧。
-    let view = fern_core::AccountView::from(&session);
-    off_thread(move || fern_core::store_session(&session).map_err(|error| format!("{error:#}")))
-        .await??;
-    Ok(view)
+async fn list_accounts() -> Result<Vec<fern_core::AccountRecord>, String> {
+    off_thread(|| Ok(fern_core::list_accounts(&paths()?))).await?
 }
 
-/// 当前登录的是谁。没登录过返回 null——那是正常状态，不是错误。
 #[tauri::command]
-async fn yggdrasil_session() -> Result<Option<fern_core::AccountView>, String> {
-    // 钥匙串是一次 IPC，对方还可能弹窗问你要不要放行——绝不能在主线程上等。
-    off_thread(|| {
-        fern_core::load_session()
-            .map(|session| session.as_ref().map(fern_core::AccountView::from))
+async fn active_account() -> Result<Option<fern_core::AccountRecord>, String> {
+    off_thread(|| Ok(fern_core::active_account(&paths()?))).await?
+}
+
+#[tauri::command]
+async fn set_active_account(id: String) -> Result<(), String> {
+    off_thread(move || {
+        fern_core::set_active_account(&paths()?, &id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 加一个离线账户。名字就是身份——UUID 由它算出来。
+#[tauri::command]
+async fn add_offline_account(player_name: String) -> Result<fern_core::AccountRecord, String> {
+    off_thread(move || {
+        fern_core::add_offline_account(&paths()?, &player_name)
             .map_err(|error| format!("{error:#}"))
     })
     .await?
 }
 
 #[tauri::command]
-async fn yggdrasil_logout() -> Result<(), String> {
-    off_thread(|| fern_core::clear_session().map_err(|error| format!("{error:#}"))).await?
+async fn rename_offline_account(
+    id: String,
+    player_name: String,
+) -> Result<fern_core::AccountRecord, String> {
+    off_thread(move || {
+        fern_core::rename_offline_account(&paths()?, &id, &player_name)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 移除一个账户，连同它在钥匙串里的令牌。
+#[tauri::command]
+async fn remove_account(id: String) -> Result<(), String> {
+    off_thread(move || {
+        fern_core::remove_account(&paths()?, &id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 外置登录。密码只在这一次调用里存在，登录成功后进系统钥匙串的是令牌。
+#[tauri::command]
+async fn yggdrasil_login(
+    api_root: String,
+    username: String,
+    password: String,
+) -> Result<fern_core::AccountRecord, String> {
+    let client_token =
+        off_thread(|| fern_core::client_token().map_err(|error| format!("{error:#}"))).await??;
+    let session = fern_core::authenticate(&api_root, &username, &password, &client_token)
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    // 交给界面的是名册里那一条，令牌留在这一侧。
+    off_thread(move || {
+        fern_core::adopt_account(&paths()?, fern_core::Secret::Yggdrasil(session))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 微软正版登录。
@@ -723,7 +751,7 @@ async fn yggdrasil_logout() -> Result<(), String> {
 /// 用户在浏览器里点完。整个过程里密码和令牌都不经过 webview——界面拿到的
 /// 只有那个念给人听的八位码。
 #[tauri::command]
-async fn microsoft_login(app: tauri::AppHandle) -> Result<fern_core::AccountView, String> {
+async fn microsoft_login(app: tauri::AppHandle) -> Result<fern_core::AccountRecord, String> {
     let challenge = fern_core::begin_microsoft_login()
         .await
         .map_err(|error| format!("{error:#}"))?;
@@ -733,28 +761,11 @@ async fn microsoft_login(app: tauri::AppHandle) -> Result<fern_core::AccountView
     let session = fern_core::finish_microsoft_login(&challenge)
         .await
         .map_err(|error| format!("{error:#}"))?;
-    let view = fern_core::AccountView::from(&session);
     off_thread(move || {
-        fern_core::store_microsoft_session(&session).map_err(|error| format!("{error:#}"))
-    })
-    .await??;
-    Ok(view)
-}
-
-#[tauri::command]
-async fn microsoft_session() -> Result<Option<fern_core::AccountView>, String> {
-    off_thread(|| {
-        fern_core::load_microsoft_session()
-            .map(|session| session.as_ref().map(fern_core::AccountView::from))
+        fern_core::adopt_account(&paths()?, fern_core::Secret::Microsoft(session))
             .map_err(|error| format!("{error:#}"))
     })
     .await?
-}
-
-#[tauri::command]
-async fn microsoft_logout() -> Result<(), String> {
-    off_thread(|| fern_core::clear_microsoft_session().map_err(|error| format!("{error:#}")))
-        .await?
 }
 
 /// 这台机器上的 Java。设置页要能看见 Fern 到底会用哪一个。
@@ -800,14 +811,15 @@ pub fn run() {
             create_instance,
             list_loader_versions,
             installable_loaders,
-            offline_account,
             detect_java,
+            list_accounts,
+            active_account,
+            set_active_account,
+            add_offline_account,
+            rename_offline_account,
+            remove_account,
             microsoft_login,
-            microsoft_session,
-            microsoft_logout,
             yggdrasil_login,
-            yggdrasil_session,
-            yggdrasil_logout,
             list_java_runtimes,
             remove_java_runtime,
             instance_runtime,

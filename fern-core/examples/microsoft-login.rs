@@ -35,10 +35,14 @@ async fn main() -> anyhow::Result<()> {
             println!();
             println!("登录成功：{} / {}", session.player_name, session.uuid);
             println!("白名单已经生效，正版登录可用。");
-            // 存进钥匙串，界面那边就能直接看到已登录。
-            match fern_core::store_microsoft_session(&session) {
-                Ok(()) => println!("令牌已存入系统钥匙串。"),
-                Err(error) => println!("令牌没能存进钥匙串：{error:#}"),
+            // 记进名册，界面那边就能直接看到已登录。
+            match fern_core::DataPaths::for_current_user()
+                .map_err(anyhow::Error::from)
+                .and_then(|paths| {
+                    fern_core::adopt_account(&paths, fern_core::Secret::Microsoft(session))
+                }) {
+                Ok(record) => println!("已加入账户名册（{}）。", record.id),
+                Err(error) => println!("没能记进名册：{error:#}"),
             }
         }
         Err(error) => {

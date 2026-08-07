@@ -16,7 +16,8 @@
   import { ArrowLeft, ArrowRight, Check, Plus } from 'lucide-svelte'
   import Mark from '../components/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
-  import { prefs, suggestedSource, type AccountKind, type DownloadSource } from '../lib/prefs.svelte'
+  import { prefs, suggestedSource, type DownloadSource } from '../lib/prefs.svelte'
+  import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
   interface Props {
@@ -31,8 +32,9 @@
   let index = $state(0)
   let direction = $state(1)
 
-  let accountKind = $state<AccountKind>(prefs.accountKind)
-  let playerName = $state(prefs.playerName)
+  // 只在这一屏里活着：账户类型不再是一个偏好，选它只是决定这一步问什么。
+  let accountKind = $state<AccountKind>('offline')
+  let playerName = $state('')
   let nameError = $state('')
 
   let source = $state<DownloadSource>(suggestedSource())
@@ -82,14 +84,27 @@
     }
   }
 
-  function submitAccount() {
-    if (accountKind !== 'offline') return
+  /**
+   * 离线那一支在这里就把账户建出来；另外两支只往下走。
+   *
+   * 登录要填三个框、要联网、还可能失败，那不该是第一印象的一部分——所以向导
+   * 只问「先用哪种」，真正的登录留给设置页那份名单。
+   */
+  async function submitAccount() {
+    if (accountKind !== 'offline') {
+      go(1)
+      return
+    }
     const value = playerName.trim()
     if (!/^[A-Za-z0-9_]{3,16}$/.test(value)) {
       nameError = '3–16 位字母、数字或下划线'
       return
     }
-    prefs.setAccount('offline', value)
+    await accounts.addOffline(value)
+    if (accounts.error) {
+      nameError = accounts.error
+      return
+    }
     go(1)
   }
 
@@ -175,7 +190,7 @@
               autocomplete="nickname"
               placeholder="Steve"
               oninput={() => (nameError = '')}
-              onkeydown={(event) => event.key === 'Enter' && submitAccount()}
+              onkeydown={(event) => event.key === 'Enter' && void submitAccount()}
             />
             {#if nameError}<p class="err">{nameError}</p>{/if}
           </div>
@@ -183,7 +198,7 @@
 
         <div class="actions">
           <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
-          <button class="btn btn--primary" onclick={submitAccount}>继续<ArrowRight size={15} /></button>
+          <button class="btn btn--primary" onclick={() => void submitAccount()}>继续<ArrowRight size={15} /></button>
         </div>
       {:else if step === 'source'}
         <h1 class="title">让下载快一点。</h1>

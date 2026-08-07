@@ -21,7 +21,7 @@
   import Mark from './Mark.svelte'
   import { platform } from '../lib/frame.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
-  import { prefs } from '../lib/prefs.svelte'
+  import { accounts } from '../lib/accounts.svelte'
 
   interface Props {
     /** 当前详情的名字。顶栏不认识实例，只认识一个要显示的词。 */
@@ -48,7 +48,7 @@
     if (detailLabel) held = detailLabel
   })
   const isMac = $derived(platform === 'macos')
-  const initials = $derived((prefs.playerName || 'FERN').slice(0, 2).toUpperCase())
+  const initials = $derived((accounts.playerName || 'FERN').slice(0, 2).toUpperCase())
 
   $effect(() => {
     const el = buttons[nav.index]
@@ -130,8 +130,8 @@
 
     <button
       class="avatar"
-      onclick={() => nav.show('settings')}
-      title={prefs.playerName || '设置账户'}
+      onclick={() => nav.show('settings', 'account')}
+      title={accounts.playerName || '添加账户'}
     >
       {initials}
     </button>

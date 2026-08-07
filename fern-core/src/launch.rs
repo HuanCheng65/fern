@@ -143,7 +143,6 @@ pub struct LaunchResult {
 pub async fn launch_instance(
     paths: &DataPaths,
     instance_id: &str,
-    player_name: &str,
     events: &UnboundedSender<LauncherEvent>,
     job: &crate::Job,
 ) -> Result<LaunchResult> {
@@ -190,8 +189,8 @@ pub async fn launch_instance(
         return Err(anyhow!("client jar is missing: {}", client_jar.display()));
     }
 
-    // 用哪个账号是全局设置，不是每个实例各自一份——玩家只有一个身份。
-    let mut account = Account::current(player_name)?;
+    // 名册里当前那一个。哪个实例用哪个账号，见 accounts.rs。
+    let mut account = Account::active(paths)?;
     account.ensure_fresh(paths, &job.downloads()).await?;
     let credentials = account.launch_credentials()?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);

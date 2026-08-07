@@ -33,19 +33,15 @@ pub enum SourcePreference {
     Bmclapi,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AccountKind {
-    #[default]
-    Offline,
-    Microsoft,
-    Authlib,
-}
-
+/// 单账户时代留下的那一段。
+///
+/// 账户已经搬去 `accounts.json`（见 accounts.rs），这里只剩下**读**——第一次
+/// 找不到名册时靠它把老用户的登录搬过去。字段留着是因为删了就迁不动了；
+/// 没有任何地方再写它。
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AccountSettings {
-    pub kind: AccountKind,
+    pub kind: crate::accounts::AccountKind,
     pub player_name: String,
 }
 

@@ -15,21 +15,24 @@
    */
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
-  import { listen } from '@tauri-apps/api/event'
   import { Check, Copy, FolderOpen, X } from 'lucide-svelte'
+  import AccountList from '../components/AccountList.svelte'
   import Choice from '../components/Choice.svelte'
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
+  import { accounts } from '../lib/accounts.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
+  type SectionId = 'appearance' | 'account' | 'download' | 'data'
+
   interface Props {
+    /** 打开时落在哪一节。空串就是第一节。 */
+    at?: string
     onback: () => void
   }
 
-  let { onback }: Props = $props()
-
-  type SectionId = 'appearance' | 'account' | 'download' | 'data'
+  let { at = '', onback }: Props = $props()
 
   const sections: { id: SectionId; label: string }[] = [
     { id: 'appearance', label: '外观' },
@@ -39,6 +42,11 @@
   ]
 
   let section = $state<SectionId>('appearance')
+  // 外面指定了落点就跟着走。设置已经开着时也生效——命令面板搜到一个设置项，
+  // 该把人直接带到那一节，而不是在第一屏放下就不管了。
+  $effect(() => {
+    if (sections.some((item) => item.id === at)) section = at as SectionId
+  })
   let paths = $state({ root: '', logs: '' })
   let pathError = $state('')
   let runtimes = $state<
@@ -46,23 +54,6 @@
   >([])
   let runtimeError = $state('')
 
-  interface AccountView {
-    kind: string
-    apiRoot: string | null
-    playerName: string
-    uuid: string
-  }
-  let session = $state<AccountView | null>(null)
-  let msa = $state<AccountView | null>(null)
-  /** 正版登录要用户去浏览器输的那八位码。 */
-  let deviceCode = $state<{ userCode: string; verificationUri: string } | null>(null)
-  let msaBusy = $state(false)
-  let msaError = $state('')
-  let apiRoot = $state('https://littleskin.cn/api/yggdrasil')
-  let username = $state('')
-  let password = $state('')
-  let loggingIn = $state(false)
-  let loginError = $state('')
   let themeCode = $state('')
   let copied = $state(false)
   let importError = $state('')
@@ -76,76 +67,12 @@
       .then((value) => (paths = value))
       .catch((error) => (pathError = String(error)))
     void loadRuntimes()
-    void invoke<AccountView | null>('microsoft_session')
-      .then((value) => (msa = value))
-      .catch(() => {})
-    void invoke<AccountView | null>('yggdrasil_session')
-      .then((value) => (session = value))
-      .catch(() => {
-        // 钥匙串用不了的时候这里会失败，但那句话该在用户真的去登录时再说，
-        // 打开设置页就先弹一条报错是噪音。
-      })
+    void accounts.load()
   })
 
-  async function login() {
-    if (!apiRoot.trim() || !username.trim() || !password) {
-      loginError = '请填写皮肤站地址、邮箱和密码'
-      return
-    }
-    loggingIn = true
-    loginError = ''
-    try {
-      session = await invoke<AccountView>('yggdrasil_login', {
-        apiRoot: apiRoot.trim(),
-        username: username.trim(),
-        password,
-      })
-      // 拿到令牌就把密码从内存里去掉，它已经没有用处了。
-      password = ''
-    } catch (error) {
-      loginError = String(error)
-    } finally {
-      loggingIn = false
-    }
-  }
 
-  async function microsoftLogin() {
-    msaBusy = true
-    msaError = ''
-    deviceCode = null
-    // 八位码由后端在拿到之后推过来——它要显示的那一刻，登录还在等用户。
-    const stop = await listen<{ userCode: string; verificationUri: string }>(
-      'microsoft-device-code',
-      ({ payload }) => (deviceCode = payload),
-    )
-    try {
-      msa = await invoke<AccountView>('microsoft_login')
-      deviceCode = null
-    } catch (error) {
-      msaError = String(error)
-    } finally {
-      stop()
-      msaBusy = false
-    }
-  }
 
-  async function microsoftLogout() {
-    try {
-      await invoke('microsoft_logout')
-      msa = null
-    } catch (error) {
-      msaError = String(error)
-    }
-  }
 
-  async function logout() {
-    try {
-      await invoke('yggdrasil_logout')
-      session = null
-    } catch (error) {
-      loginError = String(error)
-    }
-  }
 
   async function loadRuntimes() {
     if (!inTauri()) return
@@ -333,128 +260,11 @@
         {:else if section === 'account'}
           <div class="row stack">
             <span class="label">
-              登录方式
+              账户
+              <small>可以同时留着多个身份，点名字切换。令牌存在系统钥匙串里，不写进任何文件。</small>
             </span>
-            <Choice
-              label="登录方式"
-              value={prefs.accountKind}
-              onchange={(next) => prefs.setAccount(next, prefs.playerName)}
-              options={[
-                { value: 'offline', label: '离线模式' },
-                { value: 'microsoft', label: '微软账户' },
-                { value: 'authlib', label: '外置登录' },
-              ]}
-            />
+            <AccountList />
           </div>
-
-          {#if prefs.accountKind === 'microsoft'}
-            {#if msa}
-              <div class="row">
-                <span class="label">已登录<small class="t-mono">{msa.uuid}</small></span>
-                <span class="value">{msa.playerName}</span>
-              </div>
-              <div class="row">
-                <span class="label">退出登录<small>令牌将从系统钥匙串中移除。</small></span>
-                <button class="btn btn--ghost" onclick={() => void microsoftLogout()}>退出</button>
-              </div>
-            {:else if deviceCode}
-              <!-- 登录码是这一屏此刻唯一要做的事，所以给它整行和最大的字号。 -->
-              <div class="row stack">
-                <span class="label">
-                  在浏览器中输入以下代码
-                  <small>密码仅在微软页面输入，不经过 Fern。</small>
-                </span>
-                <p class="code t-mono selectable">{deviceCode.userCode}</p>
-                <p class="t-mono path selectable">{deviceCode.verificationUri}</p>
-              </div>
-            {:else}
-              <div class="row">
-                <span class="label">
-                  微软账户
-                  <small>获取登录码后在浏览器中完成验证，无需在此输入密码。</small>
-                </span>
-                <button
-                  class="btn btn--primary"
-                  disabled={msaBusy}
-                  onclick={() => void microsoftLogin()}
-                >
-                  {msaBusy ? '等待中' : '登录'}
-                </button>
-              </div>
-            {/if}
-            {#if msaError}<div class="alert">{msaError}</div>{/if}
-          {/if}
-
-          {#if prefs.accountKind === 'authlib'}
-            {#if session}
-              <div class="row">
-                <span class="label">
-                  已登录
-                  <small class="t-mono">{session.apiRoot}</small>
-                </span>
-                <span class="value">{session.playerName}</span>
-              </div>
-              <div class="row">
-                <span class="label">退出登录<small>令牌将从系统钥匙串中移除。</small></span>
-                <button class="btn btn--ghost" onclick={() => void logout()}>退出</button>
-              </div>
-            {:else}
-              <div class="row stack">
-                <span class="label">
-                  皮肤站地址
-                  <small>Yggdrasil API 根地址，可在皮肤站的「在启动器中使用」页面获取。</small>
-                </span>
-                <input
-                  class="input"
-                  bind:value={apiRoot}
-                  spellcheck="false"
-                  placeholder="https://littleskin.cn/api/yggdrasil"
-                />
-              </div>
-              <div class="row stack">
-                <span class="label">邮箱</span>
-                <input class="input" bind:value={username} spellcheck="false" />
-              </div>
-              <div class="row stack">
-                <span class="label">
-                  密码
-                  <small>仅用于换取令牌，不会保存。令牌存入系统钥匙串。</small>
-                </span>
-                <input
-                  class="input"
-                  type="password"
-                  bind:value={password}
-                  onkeydown={(event) => event.key === 'Enter' && void login()}
-                />
-              </div>
-              <div class="row">
-                <span class="label"></span>
-                <button
-                  class="btn btn--primary"
-                  disabled={loggingIn}
-                  onclick={() => void login()}
-                >
-                  {loggingIn ? '登录中' : '登录'}
-                </button>
-              </div>
-            {/if}
-            {#if loginError}<div class="alert">{loginError}</div>{/if}
-          {:else if prefs.accountKind === 'offline'}
-            <div class="row stack">
-              <span class="label">
-                玩家名称
-                <small>用于离线启动，将据此生成固定的离线 UUID。</small>
-              </span>
-              <input
-                class="input name"
-                value={prefs.playerName}
-                maxlength="16"
-                spellcheck="false"
-                placeholder="Steve"
-                oninput={(event) => prefs.setPlayerName(event.currentTarget.value)}
-              />
-            </div>
-          {/if}
         {:else if section === 'download'}
           <div class="row">
             <span class="label">
@@ -536,15 +346,6 @@
 </div>
 
 <style>
-  /* 八位码是这一刻唯一要读的东西，字号给到位。 */
-  .code {
-    margin: var(--s2) 0 0;
-    color: var(--ink);
-    font-size: var(--t-h1);
-    font-weight: 600;
-    letter-spacing: 0.14em;
-  }
-
   .runtimes {
     display: grid;
     gap: 1px;
@@ -693,10 +494,6 @@
 
   .code-row .input {
     font-size: var(--t-small);
-  }
-
-  .name {
-    max-width: 260px;
   }
 
   .path {

@@ -23,17 +23,30 @@ use anyhow::{Context, Result, anyhow};
 use fern_download::DownloadEvent;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{AccountKind, Credentials, DataPaths, auth, launch::offline_credentials, microsoft};
+use crate::{
+    Credentials, DataPaths,
+    accounts::{self, AccountKind, AccountRecord, Secret},
+    auth,
+    launch::offline_credentials,
+    microsoft,
+};
 
 /// 这次启动用谁的身份。
+///
+/// 每一种在线账户都带着自己的账户 id：刷新出来的新令牌要存回**它自己**那一条，
+/// 而现在名册里可能同时有三个微软账户。
 #[derive(Debug, Clone)]
 pub enum Account {
     /// 离线模式。UUID 由名字推出来，和原版服务器的离线算法一致。
     Offline { player_name: String },
     /// 微软正版。
-    Microsoft(microsoft::MicrosoftSession),
+    Microsoft {
+        id: String,
+        session: microsoft::MicrosoftSession,
+    },
     /// 外置登录。`injector` 在 `ensure_fresh` 之后才有值。
     Yggdrasil {
+        id: String,
         session: auth::YggdrasilSession,
         injector: Option<PathBuf>,
         prefetched: String,
@@ -41,28 +54,43 @@ pub enum Account {
 }
 
 impl Account {
-    /// 按当前设置取出账户。
+    /// 名册里当前那一个。
+    pub fn active(paths: &DataPaths) -> Result<Self> {
+        let record =
+            accounts::active(paths).ok_or_else(|| anyhow!("还没有账户，请在设置中添加一个"))?;
+        Self::load(&record)
+    }
+
+    /// 名册里指定的那一条。
     ///
-    /// `player_name` 只有离线模式用得上——正版和外置登录的名字由服务端决定，
-    /// 轮不到本地填。
-    pub fn current(player_name: &str) -> Result<Self> {
-        match crate::current_settings().account.kind {
+    /// 记录说的是「这个账户是谁」，钥匙串说的是「凭什么是他」。两边对不上——
+    /// 有记录没令牌——是一种真实且必须说清楚的状态：钥匙串没解锁、或者用户在
+    /// 系统的密码管理器里手动删过。
+    pub fn load(record: &AccountRecord) -> Result<Self> {
+        match record.kind {
             AccountKind::Offline => Ok(Self::Offline {
-                player_name: player_name.to_owned(),
+                player_name: record.player_name.clone(),
             }),
-            AccountKind::Microsoft => {
-                let session = crate::load_microsoft_session()?
-                    .ok_or_else(|| anyhow!("尚未登录微软账户，请在设置中登录"))?;
-                Ok(Self::Microsoft(session))
-            }
-            AccountKind::Authlib => {
-                let session = crate::load_session()?
-                    .ok_or_else(|| anyhow!("尚未登录外置账户，请在设置中登录"))?;
-                Ok(Self::Yggdrasil {
-                    session,
-                    injector: None,
-                    prefetched: String::new(),
-                })
+            kind => {
+                let missing = || {
+                    anyhow!(
+                        "{} 的登录信息已经不在钥匙串里了，请重新登录",
+                        record.player_name
+                    )
+                };
+                match (kind, accounts::secret(&record.id)?.ok_or_else(missing)?) {
+                    (AccountKind::Microsoft, Secret::Microsoft(session)) => Ok(Self::Microsoft {
+                        id: record.id.clone(),
+                        session,
+                    }),
+                    (AccountKind::Authlib, Secret::Yggdrasil(session)) => Ok(Self::Yggdrasil {
+                        id: record.id.clone(),
+                        session,
+                        injector: None,
+                        prefetched: String::new(),
+                    }),
+                    _ => Err(missing()),
+                }
             }
         }
     }
@@ -78,17 +106,18 @@ impl Account {
     ) -> Result<()> {
         match self {
             Self::Offline { .. } => Ok(()),
-            Self::Microsoft(session) => {
+            Self::Microsoft { id, session } => {
                 let fresh = microsoft::ensure_fresh(session)
                     .await
                     .context("微软令牌刷新失败，请重新登录")?;
                 if &fresh != session {
-                    crate::store_microsoft_session(&fresh)?;
+                    crate::store_secret(id, &Secret::Microsoft(fresh.clone()))?;
                     *session = fresh;
                 }
                 Ok(())
             }
             Self::Yggdrasil {
+                id,
                 session,
                 injector,
                 prefetched,
@@ -97,7 +126,7 @@ impl Account {
                     .await
                     .context("外置登录令牌刷新失败，请重新登录")?;
                 if &fresh != session {
-                    crate::store_session(&fresh)?;
+                    crate::store_secret(id, &Secret::Yggdrasil(fresh.clone()))?;
                     *session = fresh;
                 }
                 *injector = Some(auth::ensure_injector(paths, events).await?);
@@ -125,7 +154,7 @@ impl Account {
                 }
                 Ok(offline_credentials(player_name))
             }
-            Self::Microsoft(session) => Ok(Credentials {
+            Self::Microsoft { session, .. } => Ok(Credentials {
                 player_name: session.player_name.clone(),
                 uuid: session.uuid.clone(),
                 access_token: session.access_token.clone(),
@@ -152,6 +181,7 @@ impl Account {
                 session,
                 injector: Some(injector),
                 prefetched,
+                ..
             } => auth::jvm_arguments(injector, &session.api_root, prefetched),
             // 没跑过 ensure_fresh 就没有 injector，那时候一个参数都不该给：
             // 给了一半（有 prefetched 没有 agent）比一个都不给更难查。
@@ -194,6 +224,7 @@ mod tests {
 
         // 皮肤站的角色名可以是中文、可以超过 16 位，我们不该拦。
         let remote = Account::Yggdrasil {
+            id: "a".to_owned(),
             session: auth::YggdrasilSession {
                 player_name: "一个很长的中文角色名字".to_owned(),
                 ..yggdrasil()
@@ -209,6 +240,7 @@ mod tests {
         // 还没 ensure_fresh 过：给一半参数（有 prefetched 没有 agent）比一个
         // 都不给更难查——游戏会正常启动，但皮肤站根本没接上。
         let account = Account::Yggdrasil {
+            id: "a".to_owned(),
             session: yggdrasil(),
             injector: None,
             prefetched: "eyJ9".to_owned(),
@@ -216,6 +248,7 @@ mod tests {
         assert!(account.extra_jvm_args().is_empty());
 
         let ready = Account::Yggdrasil {
+            id: "a".to_owned(),
             session: yggdrasil(),
             injector: Some(PathBuf::from("/fern/authlib-injector.jar")),
             prefetched: "eyJ9".to_owned(),
@@ -235,13 +268,16 @@ mod tests {
             .is_empty()
         );
         assert!(
-            Account::Microsoft(microsoft::MicrosoftSession {
-                refresh_token: "r".to_owned(),
-                access_token: "a".to_owned(),
-                uuid: "u".to_owned(),
-                player_name: "Alex".to_owned(),
-                expires_at: 0,
-            })
+            Account::Microsoft {
+                id: "a".to_owned(),
+                session: microsoft::MicrosoftSession {
+                    refresh_token: "r".to_owned(),
+                    access_token: "a".to_owned(),
+                    uuid: "u".to_owned(),
+                    player_name: "Alex".to_owned(),
+                    expires_at: 0,
+                }
+            }
             .extra_jvm_args()
             .is_empty()
         );
@@ -251,16 +287,20 @@ mod tests {
     fn online_accounts_report_themselves_as_msa() {
         // 老版本的参数模板按 user_type 分支；离线必须是 legacy，联机的两种
         // 都是 msa——authlib-injector 接管之后游戏看到的也是正常在线会话。
-        let msa = Account::Microsoft(microsoft::MicrosoftSession {
-            refresh_token: "r".to_owned(),
-            access_token: "a".to_owned(),
-            uuid: "u".to_owned(),
-            player_name: "Alex".to_owned(),
-            expires_at: 0,
-        });
+        let msa = Account::Microsoft {
+            id: "a".to_owned(),
+            session: microsoft::MicrosoftSession {
+                refresh_token: "r".to_owned(),
+                access_token: "a".to_owned(),
+                uuid: "u".to_owned(),
+                player_name: "Alex".to_owned(),
+                expires_at: 0,
+            },
+        };
         assert_eq!(msa.launch_credentials().unwrap().user_type, "msa");
 
         let ygg = Account::Yggdrasil {
+            id: "a".to_owned(),
             session: yggdrasil(),
             injector: None,
             prefetched: String::new(),

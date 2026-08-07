@@ -4,6 +4,7 @@
 //! download, Java, account, and process events into UI-facing values.
 
 mod account;
+mod accounts;
 mod auth;
 mod catalog;
 mod crash;
@@ -32,8 +33,14 @@ mod tuning;
 mod version;
 
 pub use account::Account;
+pub use accounts::{
+    AccountKind, AccountRecord, Roster, Secret, active as active_account,
+    add_offline as add_offline_account, adopt_session as adopt_account, list as list_accounts,
+    remove as remove_account, rename_offline as rename_offline_account,
+    set_active as set_active_account,
+};
 pub use auth::{
-    AccountView, YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
+    YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
     prefetched as prefetched_metadata,
 };
 pub use catalog::{
@@ -42,10 +49,7 @@ pub use catalog::{
     rename_instance, touch_played, update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
-pub use credentials::{
-    clear_microsoft_session, clear_session, client_token, load_microsoft_session, load_session,
-    store_microsoft_session, store_session,
-};
+pub use credentials::{client_token, store_secret};
 pub use data::DataPaths;
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;
@@ -89,8 +93,8 @@ pub use prepare::{PrepareResult, prepare_instance};
 pub use runtime::{ensure_java, remove as remove_runtime};
 pub use saves::{SaveEntry, list as list_saves};
 pub use settings::{
-    AccountKind, AccountSettings, DownloadSettings, Settings, SourcePreference,
-    current as current_settings, load as load_settings, save as save_settings,
+    AccountSettings, DownloadSettings, Settings, SourcePreference, current as current_settings,
+    load as load_settings, save as save_settings,
 };
 pub use tuning::{ModsProfile, heap_megabytes, mods_profile, physical_memory_bytes};
 pub use version::{effective_id as effective_version_id, resolve as resolve_version};

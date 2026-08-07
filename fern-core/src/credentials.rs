@@ -13,12 +13,43 @@ use anyhow::{Context, Result};
 use crate::auth::YggdrasilSession;
 
 const SERVICE: &str = "fern-launcher";
-/// 一个账号一个条目。现在只支持一个外置账号，键就固定下来。
+/// 单账户时代的两个固定键。只有迁移还会读它们（见 accounts.rs），读得出来
+/// 就搬到 `session-<id>` 并删掉——令牌不该同时躺在两个地方。
 const YGGDRASIL_ENTRY: &str = "yggdrasil-session";
+const MICROSOFT_ENTRY: &str = "microsoft-session";
 /// 这台机器的标识，不是秘密，但和令牌绑在一起才有意义，放在同一处。
 const CLIENT_TOKEN_ENTRY: &str = "client-token";
-/// 微软账号的 refresh token。文档 §3.1 明写「禁止明文落盘」。
-const MICROSOFT_ENTRY: &str = "microsoft-session";
+
+/// 一个账户一条。键里带的是账户 id，不是名字——名字会改，id 不会。
+fn session_entry(id: &str) -> String {
+    format!("session-{id}")
+}
+
+/// 存一个账户的令牌。
+pub fn store_secret(id: &str, secret: &crate::accounts::Secret) -> Result<()> {
+    let json = serde_json::to_string(secret).context("序列化登录信息")?;
+    entry(&session_entry(id))?
+        .set_password(&json)
+        .map_err(unavailable)
+}
+
+/// 读回来。没有条目返回 `None`——离线账户本来就没有，那是正常状态。
+pub fn load_secret(id: &str) -> Result<Option<crate::accounts::Secret>> {
+    let entry = entry(&session_entry(id))?;
+    match entry.get_password() {
+        Ok(json) => Ok(serde_json::from_str(&json).ok()),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(unavailable(error)),
+    }
+}
+
+/// 删掉一个账户的令牌。没有条目也算成功——目的是「之后读不到」，已经成立了。
+pub fn clear_secret(id: &str) -> Result<()> {
+    match entry(&session_entry(id))?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(unavailable(error)),
+    }
+}
 
 fn entry(key: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, key).map_err(unavailable)
@@ -34,14 +65,6 @@ fn unavailable(error: keyring::Error) -> anyhow::Error {
         "无法访问系统钥匙串（{error}）。\
          桌面环境通常是密钥环未解锁；服务器或远程会话可能未安装密钥环服务。"
     )
-}
-
-/// 存一次登录。
-pub fn store_session(session: &YggdrasilSession) -> Result<()> {
-    let json = serde_json::to_string(session).context("序列化登录信息")?;
-    entry(YGGDRASIL_ENTRY)?
-        .set_password(&json)
-        .map_err(unavailable)
 }
 
 /// 读回来。没登录过返回 `None`，而不是错误——那是正常状态。
@@ -60,14 +83,6 @@ pub fn clear_session() -> Result<()> {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(unavailable(error)),
     }
-}
-
-/// 存一次微软登录。
-pub fn store_microsoft_session(session: &crate::microsoft::MicrosoftSession) -> Result<()> {
-    let json = serde_json::to_string(session).context("序列化微软登录信息")?;
-    entry(MICROSOFT_ENTRY)?
-        .set_password(&json)
-        .map_err(unavailable)
 }
 
 pub fn load_microsoft_session() -> Result<Option<crate::microsoft::MicrosoftSession>> {

@@ -79,7 +79,7 @@
             aria-label="启动 {item.name}"
             title="启动"
             disabled={launch.busy || launch.running}
-            onclick={() => void launch.launch(item.id, prefs.playerName)}
+            onclick={() => void launch.launch(item.id)}
           >
             <Play size={14} fill="currentColor" strokeWidth={0} />
           </button>

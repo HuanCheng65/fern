@@ -28,6 +28,7 @@
   import Settings from './routes/Settings.svelte'
   import { frame, frameless, platform, selfRounded } from './lib/frame.svelte'
   import { flush, hydrate } from './lib/persist'
+  import { accounts } from './lib/accounts.svelte'
   import { instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
   import { DURATION, scaled } from './lib/motion'
@@ -60,9 +61,9 @@
   const createInstance = () => nav.enter('instances', 'new')
   const away = $derived(nav.overlay !== '')
 
-  // 联机昵称沿用 Fern 的账户昵称，Pearl 的配置只作为跨启动的兜底。
+  // 联机昵称沿用当前账户的名字，Pearl 的配置只作为跨启动的兜底。
   $effect(() => {
-    if (prefs.playerName.trim()) session.name = prefs.playerName.trim()
+    if (accounts.playerName.trim()) session.name = accounts.playerName.trim()
   })
 
   async function openDirectory() {
@@ -92,7 +93,7 @@
                   id: 'launch',
                   title: '启动当前实例',
                   hint: instances.current.name,
-                  run: () => void launch.launch(instances.current!.id, prefs.playerName),
+                  run: () => void launch.launch(instances.current!.id),
                 },
               ]),
           { id: 'dir', title: '打开游戏目录', run: () => void openDirectory() },
@@ -161,11 +162,18 @@
     // 无边框时顶栏要给右上角的窗口按钮让出位置，用一个变量统一控制。
     document.body.classList.toggle('frameless', frameless())
     const disconnectNav = nav.connect()
-    void hydrate().then(() => {
+    void hydrate().then(async (doc) => {
       theme.hydrate()
       prefs.hydrate()
       setupOpen = !prefs.setupDone
       ready = true
+      // 0.1.0 的玩家名住在 localStorage 里，hydrate 才刚把它搬进 settings.json
+      // ——而账户名册的迁移在那之前就跑过了，只会看到一份空的。补上这一步，
+      // 否则那些用户会带着「已完成设置」但一个账户都没有的状态进来。
+      await accounts.load()
+      if (accounts.list.length === 0 && doc.account.playerName.trim()) {
+        await accounts.addOffline(doc.account.playerName.trim())
+      }
     })
     void instances.load()
     void session.loadName()
@@ -235,7 +243,7 @@
 
       <!-- 设置盖在舞台上，顶栏留在上面：它是浮层，不是第六个场景。 -->
       {#if nav.overlay === 'settings'}
-        <Settings onback={() => nav.dismiss()} />
+        <Settings at={nav.focus} onback={() => nav.dismiss()} />
       {/if}
     </main>
   {/if}

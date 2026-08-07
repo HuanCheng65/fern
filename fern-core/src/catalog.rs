@@ -379,7 +379,7 @@ fn allocate_id(paths: &DataPaths) -> Result<String> {
 
 /// 只要求在这台机器上不重名，所以取模带来的那点偏差无所谓。用随机数而不是
 /// 时间戳：时间戳会泄露创建时刻，系统时钟往回跳一下还会撞。
-fn token() -> Result<String> {
+pub(crate) fn token() -> Result<String> {
     let mut bytes = [0u8; ID_LENGTH];
     getrandom::fill(&mut bytes).context("draw random bytes for the instance id")?;
     Ok(bytes

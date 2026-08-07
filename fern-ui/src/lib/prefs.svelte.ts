@@ -1,9 +1,12 @@
 /**
- * 身份与网络偏好。
+ * 网络与行为偏好。
  *
- * 和外观分开：主题码是拿来分享的，用户名和账户类型不该跟着一起发出去。
- * 这里放的都是「向导问过一次、之后在设置里能改」的东西，落在同一个
- * settings.json 的不同段里（见 lib/persist.ts）。
+ * 和外观分开：主题码是拿来分享的，这些不该跟着一起发出去。这里放的都是
+ * 「向导问过一次、之后在设置里能改」的东西，落在同一个 settings.json 的
+ * 不同段里（见 lib/persist.ts）。
+ *
+ * 身份不在这里——它有自己的名册（lib/accounts.svelte.ts）。之前账户类型和
+ * 玩家名躺在这份偏好里，那正是「只能有一个身份」的根源：偏好天然是单值的。
  *
  * 下载源没有「自动」这一档：文件里写的就是实际会发生的事。区域推荐是向导
  * 第一次替用户按下的那一下，不是一个每次启动都要重新解析的状态。
@@ -11,7 +14,6 @@
 
 import { patch, snapshot } from './persist'
 
-export type AccountKind = 'offline' | 'microsoft' | 'authlib'
 export type DownloadSource = 'official' | 'bmclapi'
 
 /**
@@ -32,8 +34,6 @@ export function suggestedSource(): DownloadSource {
 }
 
 class PrefsStore {
-  accountKind = $state<AccountKind>('offline')
-  playerName = $state('')
   downloadSource = $state<DownloadSource>('official')
   setupDone = $state(false)
   minimizeOnLaunch = $state(false)
@@ -41,24 +41,11 @@ class PrefsStore {
   /** 从磁盘读到的设置装进来。App 启动时调一次。 */
   hydrate() {
     const doc = snapshot()
-    const kind = doc.account.kind
-    this.accountKind =
-      kind === 'microsoft' || kind === 'authlib' || kind === 'offline' ? kind : 'offline'
-    this.playerName = typeof doc.account.playerName === 'string' ? doc.account.playerName : ''
     this.downloadSource = doc.download.source === 'bmclapi' ? 'bmclapi' : 'official'
     this.setupDone = doc.setupDone === true
     this.minimizeOnLaunch = doc.minimizeOnLaunch === true
   }
 
-  setAccount(kind: AccountKind, playerName: string) {
-    this.accountKind = kind
-    this.playerName = playerName
-    patch((doc) => (doc.account = { kind, playerName }))
-  }
-
-  setPlayerName(playerName: string) {
-    this.setAccount(this.accountKind, playerName)
-  }
 
   setDownloadSource(source: DownloadSource) {
     this.downloadSource = source
