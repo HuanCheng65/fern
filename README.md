@@ -21,7 +21,15 @@ pnpm install
 pnpm tauri dev
 ```
 
+Building `fern-ui` needs the platform WebView libraries. On Debian/Ubuntu:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev \
+  libayatana-appindicator3-dev libxdo-dev libssl-dev libdbus-1-dev
+```
+
 The implementation roadmap lives in [docs/launcher-core-dev.md](docs/launcher-core-dev.md).
+Conventions and hard-won gotchas are in [AGENTS.md](AGENTS.md).
 
 ## CI packages
 
@@ -29,6 +37,7 @@ The `Check and package` workflow runs for `main`, pull requests, version tags,
 and manual dispatches. Successful package jobs upload two GitHub Actions
 artifacts:
 
+- `Fern-Linux-x64`: `.deb` and `.AppImage` packages.
 - `Fern-Windows-x64-portable`: a portable `fern-ui.exe` desktop binary.
 - `Fern-macOS-universal`: universal Apple Silicon/Intel `.app` and `.dmg` packages.
 
