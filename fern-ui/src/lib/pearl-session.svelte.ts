@@ -6,6 +6,8 @@
  * 走的是同一条路。
  */
 
+import { contributes, PRIORITY, type Presence } from './island.svelte'
+import { nav } from './nav.svelte'
 import { backend } from './pearl-backend'
 import type { PathState, PeerState, PunchStage, SessionEvent } from './pearl-types'
 
@@ -240,3 +242,53 @@ class Session {
 }
 
 export const session = new Session()
+
+/** 每个人的状态说成一句人话。机器名（`punched`）不该出现在界面上。 */
+const PEER_STATE: Partial<Record<PeerState, string>> = {
+  lan: '局域网直连',
+  direct_ip6: 'IPv6 直连',
+  mapped: '端口映射',
+  punched: '打洞直连',
+  via: '中转',
+  connecting: '连接中',
+  connected: '已连接',
+}
+
+/**
+ * 岛上关于房间的那一句。
+ *
+ * 房间开着是一个**状态**，和游戏在跑同一类：它没有进度，也不会「完成」，所以
+ * 只报告自己还活着。优先级排在游戏后面——游戏是你正在做的事，房间是它的背景。
+ *
+ * 这里是这一层要证明的东西：加一种全新的状态，改的只有这个文件。顶栏、岛的
+ * 组件、作业那一套，一个字都没动。
+ */
+contributes((): Presence[] => {
+  if (session.mode === 'idle') return []
+  const online = session.connected.length
+  const waiting = session.mode === 'hosting' && online === 0
+  return [
+    {
+      id: 'pearl',
+      priority: PRIORITY.room,
+      tone: 'live',
+      label: waiting ? '等待加入' : `${online + 1} 人`,
+      rows: [
+        {
+          id: 'room',
+          label: session.code ? `房间 ${session.code}` : '联机中',
+          detail: session.error ?? (waiting ? '房间已开，还没有人进来' : `${online + 1} 人在线`),
+        },
+        ...session.peers.map((peer) => ({
+          id: peer.id,
+          label: peer.name,
+          detail: PEER_STATE[peer.state] ?? peer.detail ?? '连接中',
+          meta: peer.rttMs === undefined ? '' : `${peer.rttMs} ms`,
+        })),
+      ],
+      // 只放「过去看看」。在一个悬停就出现的面板上放「离开房间」，手一滑就把
+      // 整局联机关了。
+      actions: [{ label: '打开联机', run: () => nav.go('multiplayer') }],
+    },
+  ]
+})

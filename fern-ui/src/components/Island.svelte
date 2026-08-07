@@ -46,25 +46,31 @@
 
   /** 展开后的宽度。够放下一行「补全游戏文件 · 412 MB / 1.1 GB · 8.2 MB/s」。 */
   const PANEL = 320
+  /** 紧凑那一行的高度。表面的高就是它加上面板。 */
+  const HEAD = 32
+  /**
+   * 最多分裂出这么多颗卫星，再多合成一颗带数字的。
+   *
+   * 岛是全应用唯一会动的常驻元素，一排小圆点会立刻把它变成一条状态栏——那正
+   * 是「零状态零挂件」要躲开的东西。数不清的时候人本来也不数，只想知道「还有
+   * 别的」。
+   */
+  const SATELLITES = 2
 
-  const main = $derived(island.main)
-  const satellites = $derived(island.satellites)
+  const all = $derived(island.all)
+  const main = $derived(all[0])
+  const satellites = $derived(all.slice(1, 1 + SATELLITES))
+  const overflow = $derived(Math.max(0, all.length - 1 - SATELLITES))
   const pinned = $derived(nav.overlay === 'island')
 
   let hovering = $state(false)
   let timer: ReturnType<typeof setTimeout> | undefined
 
   const open = $derived(pinned || hovering)
-  /** 展开后列的是全部，不只是主胶囊那一条——面板是全景。 */
-  const rows = $derived(island.all.flatMap((presence) => presence.rows))
-  const actions = $derived(island.all.flatMap((presence) => presence.actions))
 
-  /** 胶囊自己的宽（占位副本撑出来的）和面板的自然高。表面照这两个数去长。 */
+  /** 胶囊自己的宽（占位副本撑出来的）和面板的自然高。表面照这两个数定尺寸。 */
   let pillWidth = $state(0)
   let bodyHeight = $state(0)
-
-  const growLeft = $derived(open ? Math.min(0, pillWidth - PANEL) : 0)
-  const growDown = $derived(open ? -bodyHeight : 0)
 
   function hover(next: boolean) {
     clearTimeout(timer)
@@ -124,56 +130,80 @@
         {@render glyph(item, 11)}
       </span>
     {/each}
+    {#if overflow > 0}
+      <span class="sat more" title="还有 {overflow} 项">+{overflow}</span>
+    {/if}
 
     <div class="pill" class:open bind:clientWidth={pillWidth}>
       <!-- 只为撑出胶囊的宽和高。看不见、不可点、不进无障碍树。 -->
       <span class="spacer" aria-hidden="true">{@render compact(main)}</span>
 
-      <div
-        class="surface {main.tone}"
-        style:left={`${growLeft}px`}
-        style:bottom={`${growDown}px`}
-      >
-        <button
-          class="head"
-          title={main.label}
-          aria-expanded={open}
-          onclick={() => nav.toggle('island')}
+      <!--
+        量到宽度之前不画：表面的尺寸是显式的像素，第一帧还没有测量结果，先
+        画出来只会看到它从 0 弹开一次。
+      -->
+      {#if pillWidth > 0}
+        <div
+          class="surface {main.tone}"
+          style:width={`${open ? PANEL : pillWidth}px`}
+          style:height={`${open ? HEAD + bodyHeight : HEAD}px`}
         >
-          {@render compact(main)}
-        </button>
+          <button
+            class="head"
+            title={main.label}
+            aria-expanded={open}
+            onclick={() => nav.toggle('island')}
+          >
+            {@render compact(main)}
+          </button>
 
-        <div class="body">
-          <!-- offsetHeight 而不是 clientHeight：那道分隔线也得算进去。 -->
-          <div class="inner" bind:offsetHeight={bodyHeight}>
-            {#each rows as row (row.id)}
-              <div class="row">
-                <div class="row-head">
-                  <span class="name">{row.label}</span>
-                  {#if row.dismiss}
-                    <button class="close" aria-label="不再提示" onclick={() => row.dismiss?.()}>
-                      <X size={12} strokeWidth={2.2} />
-                    </button>
+          <div class="body">
+            <!-- offsetHeight 而不是 clientHeight：那些分隔线也得算进去。 -->
+            <div class="inner" bind:offsetHeight={bodyHeight}>
+              <!--
+                按来源分段，而不是把所有行拍平。
+                动作是有归属的：「查看日志」属于那局游戏，「全部清掉」属于那
+                堆失败——混在一排链接里就没人说得清哪个管哪个。
+              -->
+              {#each all as presence (presence.id)}
+                <section class="group">
+                  {#each presence.rows as row (row.id)}
+                    <div class="row">
+                      <div class="row-head">
+                        <span class="name">{row.label}</span>
+                        {#if row.dismiss}
+                          <button
+                            class="close"
+                            aria-label="不再提示"
+                            onclick={() => row.dismiss?.()}
+                          >
+                            <X size={12} strokeWidth={2.2} />
+                          </button>
+                        {/if}
+                      </div>
+                      {#if row.detail}<p class="detail">{row.detail}</p>{/if}
+                      {#if row.meta}<p class="meta t-mono">{row.meta}</p>{/if}
+                      {#if row.fraction !== undefined}
+                        <div class="bar">
+                          <span style:width={`${row.fraction * 100}%`}></span>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+
+                  {#if presence.actions.length > 0}
+                    <div class="acts">
+                      {#each presence.actions as action (action.label)}
+                        <button class="btn btn--link" onclick={action.run}>{action.label}</button>
+                      {/each}
+                    </div>
                   {/if}
-                </div>
-                {#if row.detail}<p class="detail">{row.detail}</p>{/if}
-                {#if row.meta}<p class="meta t-mono">{row.meta}</p>{/if}
-                {#if row.fraction !== undefined}
-                  <div class="bar"><span style:width={`${row.fraction * 100}%`}></span></div>
-                {/if}
-              </div>
-            {/each}
-
-            {#if actions.length > 0}
-              <div class="acts">
-                {#each actions as action (action.label)}
-                  <button class="btn btn--link" onclick={action.run}>{action.label}</button>
-                {/each}
-              </div>
-            {/if}
+                </section>
+              {/each}
+            </div>
           </div>
         </div>
-      </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -202,6 +232,14 @@
     color: var(--danger);
   }
 
+  .more {
+    width: auto;
+    padding: 0 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
   /*
    * 胶囊的占位框。它的尺寸永远是紧凑态的尺寸，从头到尾不变——表面在它之外
    * 生长，所以顶栏的其他东西一个像素都不会被推动。
@@ -225,13 +263,19 @@
   /*
    * 唯一会变尺寸的东西。
    *
-   * 动的是 left 和 bottom 两个长度：向左长到 320，向下长一个面板高。这两个
-   * 属性会触发布局，但这里只有一个小盒子在动，而用 transform 缩放会把里面的
+   * **右上角钉死，宽高是显式的像素。** 上一版是 `inset: 0` 再动 left/bottom
+   * 去补偿，于是展开宽度成了「胶囊宽 - 320」的函数——而胶囊宽是紧凑那行文字
+   * 撑出来的，阶段文案一换（「读取版本信息」→「补全游戏文件」）胶囊瞬间变宽、
+   * 左缘瞬移，带弹簧的 left 再花 340ms 追回来。一个瞬移加一个回弹追它，就是
+   * 那个说不清的过冲。现在展开宽度恒等于 320，和文案彻底无关。
+   *
+   * 动宽高会触发布局，但这里只有一个小盒子在动；用 transform 缩放会把里面的
    * 文字一起拉变形——真正的尺寸变化只能这么做。
    */
   .surface {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
     overflow: hidden;
     background: var(--panel);
     box-shadow: inset 0 0 0 1px var(--panel-line);
@@ -252,8 +296,8 @@
      */
     border-radius: var(--r3);
     transition:
-      left var(--t-slow) var(--spring),
-      bottom var(--t-slow) var(--spring),
+      width var(--t-slow) var(--spring),
+      height var(--t-slow) var(--spring),
       box-shadow var(--t-base) var(--ease);
   }
 
@@ -340,9 +384,15 @@
 
   .inner {
     display: grid;
-    gap: var(--s3);
-    padding: var(--s3) var(--s4) var(--s4);
+    padding: 0 var(--s4) var(--s4);
     border-top: 1px solid var(--panel-line);
+  }
+
+  /* 一段一个来源。段之间只用留白分开，画线会让这个小面板变成一张表格。 */
+  .group {
+    display: grid;
+    gap: var(--s3);
+    padding-top: var(--s3);
   }
 
   .row {
