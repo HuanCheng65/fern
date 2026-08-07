@@ -13,7 +13,47 @@ use fern_download::{DownloadClient, DownloadEvent};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, LoaderKind, settings::source_order, version};
+use crate::{
+    DataPaths, LoaderKind,
+    metacache::{self, Freshness},
+    settings::source_order,
+    version,
+};
+
+/// 版本列表在缓存目录里的名字。
+///
+/// Fabric / Quilt 的列表是按游戏版本查的，NeoForge / Forge 那两个 Maven 列表
+/// 是全量的——一份缓存能服务所有游戏版本，所以名字里不带版本号。
+fn listing_slug(kind: LoaderKind, game_version: &str) -> String {
+    match kind {
+        LoaderKind::NeoForge => "loader-neoforge-versions.json".to_owned(),
+        LoaderKind::Forge => "loader-forge-maven-metadata.xml".to_owned(),
+        other => format!(
+            "loader-{}-{game_version}.json",
+            display_name(other).to_lowercase()
+        ),
+    }
+}
+
+/// 版本列表，走缓存。
+async fn listing(
+    paths: &DataPaths,
+    client: &DownloadClient,
+    kind: LoaderKind,
+    game_version: &str,
+    url: &str,
+) -> Result<Vec<u8>> {
+    let cached = metacache::mutable(
+        client,
+        paths,
+        &listing_slug(kind, game_version),
+        url,
+        Freshness::Within(metacache::LISTING_TTL),
+    )
+    .await
+    .with_context(|| format!("读取 {} 的版本列表", display_name(kind)))?;
+    Ok(cached.bytes)
+}
 
 /// 一个可选的加载器版本。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,7 +91,11 @@ fn meta_root(kind: LoaderKind) -> Result<&'static str> {
 }
 
 /// NeoForge / Forge 的版本从 Maven 仓库列出来，没有 meta server。
-async fn list_maven_versions(kind: LoaderKind, game_version: &str) -> Result<Vec<LoaderVersion>> {
+async fn list_maven_versions(
+    paths: &DataPaths,
+    kind: LoaderKind,
+    game_version: &str,
+) -> Result<Vec<LoaderVersion>> {
     let client = DownloadClient::new(source_order(), 4);
     match kind {
         LoaderKind::NeoForge => {
@@ -59,10 +103,14 @@ async fn list_maven_versions(kind: LoaderKind, game_version: &str) -> Result<Vec
             struct Listing {
                 versions: Vec<String>,
             }
-            let bytes = client
-                .fetch("https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge")
-                .await
-                .context("读取 NeoForge 的版本列表")?;
+            let bytes = listing(
+                paths,
+                &client,
+                kind,
+                game_version,
+                "https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge",
+            )
+            .await?;
             let listing: Listing =
                 serde_json::from_slice(&bytes).context("解析 NeoForge 的版本列表")?;
             // NeoForge 的版本号前两段对应游戏版本：1.21.1 → 21.1.x。
@@ -82,12 +130,14 @@ async fn list_maven_versions(kind: LoaderKind, game_version: &str) -> Result<Vec
         LoaderKind::Forge => {
             // Forge 只有 maven-metadata.xml。条目形如 `1.12.2-14.23.5.2859`，
             // 不引 XML 解析器，按标签切出来就够。
-            let bytes = client
-                .fetch(
-                    "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml",
-                )
-                .await
-                .context("读取 Forge 的版本列表")?;
+            let bytes = listing(
+                paths,
+                &client,
+                kind,
+                game_version,
+                "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml",
+            )
+            .await?;
             let text = String::from_utf8_lossy(&bytes);
             let wanted = format!("{game_version}-");
             let mut versions: Vec<LoaderVersion> = text
@@ -119,16 +169,17 @@ fn neoforge_prefix(game_version: &str) -> Option<String> {
 }
 
 /// 这个游戏版本上可用的加载器版本，新的在前。
-pub async fn list_versions(kind: LoaderKind, game_version: &str) -> Result<Vec<LoaderVersion>> {
+pub async fn list_versions(
+    paths: &DataPaths,
+    kind: LoaderKind,
+    game_version: &str,
+) -> Result<Vec<LoaderVersion>> {
     if matches!(kind, LoaderKind::NeoForge | LoaderKind::Forge) {
-        return list_maven_versions(kind, game_version).await;
+        return list_maven_versions(paths, kind, game_version).await;
     }
     let url = format!("{}/versions/loader/{game_version}", meta_root(kind)?);
     let client = DownloadClient::new(source_order(), 4);
-    let bytes = client
-        .fetch(&url)
-        .await
-        .with_context(|| format!("读取 {kind:?} 的版本列表"))?;
+    let bytes = listing(paths, &client, kind, game_version, &url).await?;
     let entries: Vec<LoaderEntry> =
         serde_json::from_slice(&bytes).with_context(|| format!("解析 {kind:?} 的版本列表"))?;
     Ok(entries
@@ -141,8 +192,12 @@ pub async fn list_versions(kind: LoaderKind, game_version: &str) -> Result<Vec<L
 }
 
 /// 最新的稳定版；一个稳定的都没有就退回最新的那个。
-pub async fn latest_version(kind: LoaderKind, game_version: &str) -> Result<String> {
-    let versions = list_versions(kind, game_version).await?;
+pub async fn latest_version(
+    paths: &DataPaths,
+    kind: LoaderKind,
+    game_version: &str,
+) -> Result<String> {
+    let versions = list_versions(paths, kind, game_version).await?;
     versions
         .iter()
         .find(|version| version.stable)

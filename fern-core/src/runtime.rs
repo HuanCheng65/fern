@@ -88,6 +88,10 @@ pub async fn ensure_java(
         .filter(|name| !name.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| component_for(requirement.minimum).to_owned());
+    // 这个名字来自版本 JSON，而它要同时变成安装目录名和缓存文件名。
+    if !crate::version::is_safe_id(&component) {
+        return Err(anyhow!("运行时组件名无法作为目录名：{component}"));
+    }
     let install_root = paths.runtimes.join(&component);
 
     let _ = events.send(DownloadEvent::Status {
@@ -95,10 +99,17 @@ pub async fn ensure_java(
     });
 
     let downloader = DownloadClient::new(source_order(), 64);
-    let index_bytes = downloader
-        .fetch(RUNTIME_INDEX_URL)
-        .await
-        .context("读取 Mojang 运行时清单")?;
+    // 这份索引一年动不了几次，而且 URL 本身就带着内容哈希——一天一次足够。
+    let index_bytes = crate::metacache::mutable(
+        &downloader,
+        paths,
+        "java-runtime-index.json",
+        RUNTIME_INDEX_URL,
+        crate::metacache::Freshness::Within(std::time::Duration::from_secs(24 * 60 * 60)),
+    )
+    .await
+    .context("读取 Mojang 运行时清单")?
+    .bytes;
     let index: HashMap<String, HashMap<String, Vec<RuntimeEntry>>> =
         serde_json::from_slice(&index_bytes).context("解析 Mojang 运行时清单")?;
 
@@ -116,13 +127,17 @@ pub async fn ensure_java(
         }
     };
 
-    let manifest_bytes = downloader
-        .fetch(&entry.manifest.url)
-        .await
-        .with_context(|| format!("读取 {component} 的文件清单"))?;
-    if !fern_download::sha1_matches(&manifest_bytes, &entry.manifest.sha1) {
-        return Err(anyhow!("{component} 的文件清单校验失败"));
-    }
+    // 文件清单带 sha1，是不可变的。缓存它的意义在重装/换实例时：同一份运行时
+    // 的清单不会因为换了个实例就变。
+    let manifest_bytes = crate::metacache::immutable(
+        &downloader,
+        &paths.cache.join(format!("java-runtime-{component}.json")),
+        &entry.manifest.url,
+        Some(&entry.manifest.sha1),
+        None,
+    )
+    .await
+    .with_context(|| format!("读取 {component} 的文件清单"))?;
     let manifest: RuntimeManifest =
         serde_json::from_slice(&manifest_bytes).context("解析运行时文件清单")?;
 

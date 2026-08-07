@@ -8,10 +8,12 @@ use fern_download::DownloadClient;
 use fern_meta::{VersionManifest, VersionManifestEntry};
 use serde::{Deserialize, Serialize};
 
-use crate::{DataPaths, InstanceId, InstanceProfile, settings::source_order};
-
-const VERSION_MANIFEST_URL: &str =
-    "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+use crate::{
+    DataPaths, InstanceId, InstanceProfile,
+    metacache::{self, Freshness},
+    prepare::MANIFEST_SLUG,
+    settings::source_order,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -323,14 +325,26 @@ fn read_prepared_metadata(
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
 
-pub async fn list_versions() -> Result<Vec<VersionOption>> {
+/// 能建实例的所有版本。
+///
+/// `refresh` 是用户按下刷新的那一下。平时走缓存：这个列表有两千多条，六小时
+/// 之内它的内容不会变，而每次打开「新建实例」都重拉一遍只是在让那一屏白等。
+pub async fn list_versions(paths: &DataPaths, refresh: bool) -> Result<Vec<VersionOption>> {
     let client = DownloadClient::new(source_order(), 4);
-    let bytes = client
-        .fetch(VERSION_MANIFEST_URL)
-        .await
-        .context("fetch version manifest")?;
+    let cached = metacache::mutable(
+        &client,
+        paths,
+        MANIFEST_SLUG,
+        metacache::VERSION_MANIFEST_URL,
+        if refresh {
+            Freshness::Force
+        } else {
+            Freshness::Within(metacache::LISTING_TTL)
+        },
+    )
+    .await?;
     let manifest: VersionManifest =
-        serde_json::from_slice(&bytes).context("parse version manifest")?;
+        serde_json::from_slice(&cached.bytes).context("解析版本清单")?;
     Ok(manifest.versions.iter().map(VersionOption::from).collect())
 }
 

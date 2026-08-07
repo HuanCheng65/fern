@@ -219,9 +219,12 @@ async fn list_instances() -> Result<Vec<fern_core::InstanceProfile>, String> {
         .await?
 }
 
+/// 能建实例的所有版本。
+///
+/// `refresh` 是用户按下刷新的那一下；平时走缓存，六小时之内不再联网。
 #[tauri::command]
-async fn list_versions() -> Result<Vec<fern_core::VersionOption>, String> {
-    fern_core::list_versions()
+async fn list_versions(refresh: bool) -> Result<Vec<fern_core::VersionOption>, String> {
+    fern_core::list_versions(&paths()?, refresh)
         .await
         .map_err(|error| format!("{error:#}"))
 }
@@ -243,7 +246,7 @@ async fn create_instance(
         (fern_core::LoaderKind::Vanilla, _) => None,
         (_, Some(version)) if !version.is_empty() => Some(version),
         (kind, _) => Some(
-            fern_core::latest_loader_version(kind, &game_version)
+            fern_core::latest_loader_version(&paths, kind, &game_version)
                 .await
                 .map_err(|error| format!("{error:#}"))?,
         ),
@@ -262,7 +265,7 @@ async fn list_loader_versions(
     if kind == fern_core::LoaderKind::Vanilla {
         return Ok(Vec::new());
     }
-    fern_core::list_loader_versions(kind, &game_version)
+    fern_core::list_loader_versions(&paths()?, kind, &game_version)
         .await
         .map_err(|error| format!("{error:#}"))
 }

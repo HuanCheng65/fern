@@ -17,6 +17,7 @@ mod java;
 mod job;
 mod launch;
 mod loader;
+mod metacache;
 mod microsoft;
 mod modpack;
 mod modrinth;

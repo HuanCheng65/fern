@@ -4,17 +4,24 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{DownloadClient, DownloadEvent, DownloadTask, sha1_matches};
+use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
 use fern_meta::{
-    DownloadInfo, Library, RuleContext, VersionManifest, VersionMetadata, rules_allow,
+    DownloadInfo, Library, RuleContext, VersionManifest, VersionManifestEntry, VersionMetadata,
+    rules_allow,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, Job, java, loader, rules, runtime, settings::source_order, version};
+use crate::{
+    DataPaths, Job, java, loader,
+    metacache::{self, Freshness},
+    rules, runtime,
+    settings::source_order,
+    version,
+};
 
-const VERSION_MANIFEST_URL: &str =
-    "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+/// 版本清单在缓存目录里的名字。补全和「新建实例」的版本列表读的是同一份。
+pub(crate) const MANIFEST_SLUG: &str = "version_manifest_v2.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,43 +73,15 @@ pub async fn prepare_instance(
     let events = &job.downloads();
     let version_id = profile.game_version.clone();
     let version_id = version_id.as_str();
+    if !version::is_safe_id(version_id) {
+        return Err(anyhow!("版本 id 无法作为目录名：{version_id}"));
+    }
     let downloader = DownloadClient::new(source_order(), 64);
 
     job.step("读取版本信息");
-    let manifest_bytes = downloader
-        .fetch(VERSION_MANIFEST_URL)
-        .await
-        .context("fetch version manifest")?;
-    let manifest: VersionManifest =
-        serde_json::from_slice(&manifest_bytes).context("parse version manifest")?;
-    let entry = manifest
-        .versions
-        .iter()
-        .find(|entry| entry.id == version_id)
-        .ok_or_else(|| anyhow!("version {version_id} is absent from the Mojang manifest"))?;
-
-    let version_bytes = downloader
-        .fetch(&entry.url)
-        .await
-        .with_context(|| format!("fetch version metadata for {version_id}"))?;
-    if entry
-        .sha1
-        .as_deref()
-        .is_some_and(|expected| !sha1_matches(&version_bytes, expected))
-    {
-        return Err(anyhow!(
-            "version metadata checksum mismatch for {version_id}"
-        ));
-    }
     let version_root = paths.versions.join(version_id);
-    write_atomic(
-        &version_root.join(format!("{version_id}.json")),
-        &version_bytes,
-    )
-    .await?;
     // 原版那一份先解出来：装 NeoForge 之前要拿它里面的 client jar 地址。
-    let vanilla: VersionMetadata =
-        serde_json::from_slice(&version_bytes).context("parse version metadata")?;
+    let vanilla = vanilla_metadata(paths, &downloader, version_id).await?;
 
     // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
     // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
@@ -174,31 +153,33 @@ pub async fn prepare_instance(
             .id
             .clone()
             .unwrap_or_else(|| format!("{}.xml", logging.file.sha1));
-        tasks.push(task_from_info(
-            paths.assets.join("log_configs").join(name),
-            &logging.file,
-        )?);
+        // 这个名字也是版本 JSON 给的，同样不能原样拼进路径。
+        let destination =
+            fern_download::safe_join(&paths.assets.join("log_configs"), Path::new(&name))?;
+        tasks.push(task_from_info(destination, &logging.file)?);
     }
 
     if let Some(index) = &metadata.asset_index {
         let _ = events.send(DownloadEvent::Status {
             message: "读取资源索引".to_owned(),
         });
-        let index_bytes = downloader
-            .fetch(&index.url)
-            .await
-            .with_context(|| format!("fetch asset index {}", index.id))?;
-        if index_bytes.len() as u64 != index.size || !sha1_matches(&index_bytes, &index.sha1) {
-            return Err(anyhow!("asset index checksum mismatch for {}", index.id));
+        // 索引 id 来自版本 JSON，也就是来自网络，而它要直接变成文件名。
+        if !version::is_safe_id(&index.id) {
+            return Err(anyhow!("资源索引名无法作为文件名：{}", index.id));
         }
-        write_atomic(
+        // 索引带 sha1 和大小，是不可变的：本地那份对得上就不必再拉一遍。
+        let index_bytes = metacache::immutable(
+            &downloader,
             &paths
                 .assets
                 .join("indexes")
                 .join(format!("{}.json", index.id)),
-            &index_bytes,
+            &index.url,
+            Some(&index.sha1),
+            Some(index.size),
         )
-        .await?;
+        .await
+        .with_context(|| format!("读取资源索引 {}", index.id))?;
         let asset_index: AssetObjectIndex =
             serde_json::from_slice(&index_bytes).context("parse asset index")?;
         for object in asset_index.objects.values() {
@@ -252,6 +233,82 @@ pub async fn prepare_instance(
     runtime::ensure_java(paths, component, &requirement, events).await?;
 
     Ok(result)
+}
+
+/// 原版那份版本 JSON。
+///
+/// 本地已经有了就直接读，**连清单都不去拉**。这一条是「已经装好的实例可以
+/// 离线启动」的全部理由：一个版本 id 对应的 JSON 是 Mojang 发布的、不再改变
+/// 的一份文件，而它此刻就躺在我们自己的数据目录里，还是启动时真正会读的那份。
+/// 为了确认一份我们已经有的东西没变而必须联网，是在给每一次启动加一道无谓的
+/// 门槛。
+async fn vanilla_metadata(
+    paths: &DataPaths,
+    downloader: &DownloadClient,
+    version_id: &str,
+) -> Result<VersionMetadata> {
+    if let Ok(local) = version::read_one(paths, version_id) {
+        return Ok(local);
+    }
+    let entry = manifest_entry(paths, downloader, version_id).await?;
+    let bytes = metacache::immutable(
+        downloader,
+        &paths
+            .versions
+            .join(version_id)
+            .join(format!("{version_id}.json")),
+        &entry.url,
+        entry.sha1.as_deref(),
+        None,
+    )
+    .await
+    .with_context(|| format!("读取 {version_id} 的版本描述"))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("解析 {version_id} 的版本描述"))
+}
+
+/// 清单里这个版本的那一条。
+///
+/// 清单是这条链上唯一真正会变的东西——它回答的是「现在有哪些版本」。缓存里
+/// 找不到要的版本时强制刷一次再找：快照发布十分钟后就来建实例是正常用法，
+/// 让人等六小时的 TTL 过去不是。
+async fn manifest_entry(
+    paths: &DataPaths,
+    downloader: &DownloadClient,
+    version_id: &str,
+) -> Result<VersionManifestEntry> {
+    let cached = metacache::mutable(
+        downloader,
+        paths,
+        MANIFEST_SLUG,
+        metacache::VERSION_MANIFEST_URL,
+        Freshness::Within(metacache::LISTING_TTL),
+    )
+    .await?;
+    let missing = || anyhow!("Mojang 的版本清单里没有 {version_id}");
+    let find = |bytes: &[u8]| -> Result<Option<VersionManifestEntry>> {
+        let manifest: VersionManifest = serde_json::from_slice(bytes).context("解析版本清单")?;
+        Ok(manifest
+            .versions
+            .into_iter()
+            .find(|entry| entry.id == version_id))
+    };
+
+    if let Some(entry) = find(&cached.bytes)? {
+        return Ok(entry);
+    }
+    // 手上这份就是刚拉的，那就是真的没有。
+    if !cached.from_cache {
+        return Err(missing());
+    }
+    let fresh = metacache::mutable(
+        downloader,
+        paths,
+        MANIFEST_SLUG,
+        metacache::VERSION_MANIFEST_URL,
+        Freshness::Force,
+    )
+    .await?;
+    find(&fresh.bytes)?.ok_or_else(missing)
 }
 
 /// 1.6.x 及更早的资源布局。
@@ -385,19 +442,6 @@ fn ensure_trailing_slash(url: &str) -> String {
     } else {
         format!("{url}/")
     }
-}
-
-async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    let temporary = path.with_extension("part");
-    tokio::fs::write(&temporary, bytes).await?;
-    if tokio::fs::try_exists(path).await? {
-        tokio::fs::remove_file(path).await?;
-    }
-    tokio::fs::rename(temporary, path).await?;
-    Ok(())
 }
 
 #[cfg(test)]

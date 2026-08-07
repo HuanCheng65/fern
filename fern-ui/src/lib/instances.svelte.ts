@@ -123,13 +123,18 @@ class InstanceStore {
     }
   }
 
-  /** 版本清单只拉一次，创建面板反复开关不该反复打网络。 */
-  async loadVersions() {
-    if (this.versions.length > 0 || this.versionsLoading) return
+  /**
+   * 版本清单。
+   *
+   * 这一进程里只拉一次；`refresh` 是用户主动要最新的那一下，它会穿过这一层，
+   * 也会穿过后端六小时的缓存。
+   */
+  async loadVersions(refresh = false) {
+    if (!refresh && (this.versions.length > 0 || this.versionsLoading)) return
     this.versionsLoading = true
     try {
       this.versions = inTauri()
-        ? await invoke<VersionOption[]>('list_versions')
+        ? await invoke<VersionOption[]>('list_versions', { refresh })
         : ((await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json').then(
             (r) => r.json(),
           )) as { versions: { id: string; type: string; releaseTime: string }[] }).versions.map(

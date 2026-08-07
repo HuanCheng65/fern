@@ -13,6 +13,12 @@ pub struct DataPaths {
     pub versions: PathBuf,
     pub instances: PathBuf,
     pub logs: PathBuf,
+    /// 会过期的元数据（版本清单、加载器版本列表）。
+    ///
+    /// 和 `versions`、`assets` 分开：那两个虽然也是下载来的，但它们是**成品**
+    /// ——游戏要读的东西，删了就等于卸载。这里放的全是随时可以整个删掉、下次
+    /// 联网自己长回来的东西，所以「清理缓存」能安全地只清它。
+    pub cache: PathBuf,
 }
 
 impl DataPaths {
@@ -25,6 +31,7 @@ impl DataPaths {
             versions: root.join("versions"),
             instances: root.join("instances"),
             logs: root.join("logs"),
+            cache: root.join("cache"),
             root,
         }
     }
@@ -49,6 +56,7 @@ impl DataPaths {
             &self.versions,
             &self.instances,
             &self.logs,
+            &self.cache,
         ] {
             fs::create_dir_all(path)?;
         }
