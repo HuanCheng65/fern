@@ -10,6 +10,7 @@ mod crash;
 mod credentials;
 mod data;
 mod event;
+mod forge;
 mod gamelog;
 mod instance;
 mod java;
@@ -44,7 +45,8 @@ pub use fern_download::DownloadEvent;
 pub use fern_meta::{VersionManifest, VersionManifestEntry};
 pub use gamelog::{LogLine, LogParser};
 pub use instance::{
-    CoverSeed, InstanceId, InstanceProfile, InstanceSettings, LoaderKind, LoaderProfile, Resolution,
+    CoverSeed, GarbageCollector, InstanceId, InstanceProfile, InstanceSettings, LoaderKind,
+    LoaderProfile, ProcessPriority, Resolution,
 };
 pub use java::{
     JavaRequirement, JavaRuntime, detect_java, discover as discover_java,

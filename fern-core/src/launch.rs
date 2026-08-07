@@ -230,6 +230,20 @@ pub async fn launch_instance(
             format!("token:{}:{}", credentials.access_token, credentials.uuid),
         )
         .insert("natives_directory", natives_directory.to_string_lossy())
+        // NeoForge / Forge 用这两个拼模块路径（`-p ${library_directory}/…`）。
+        // 少了它们，`-p` 收到的是一串没被替换的字面量，securejarhandler 根本
+        // 不在模块路径上，于是后面每一条 `--add-opens …=cpw.mods.securejarhandler`
+        // 都指向一个不存在的模块——报出来的是 InaccessibleObjectException，
+        // 和「变量没替换」看不出任何关系。
+        .insert("library_directory", paths.libraries.to_string_lossy())
+        .insert(
+            "classpath_separator",
+            if cfg!(target_os = "windows") {
+                ";"
+            } else {
+                ":"
+            },
+        )
         .insert("launcher_name", "Fern")
         .insert("launcher_version", env!("CARGO_PKG_VERSION"))
         .insert("clientid", "")
@@ -303,7 +317,11 @@ pub async fn launch_instance(
     if let Some(argument) = tuning::heap_argument(&jvm_arguments, heap) {
         jvm_arguments.push(argument);
     }
-    jvm_arguments.extend(tuning::gc_arguments(java_major, &jvm_arguments));
+    jvm_arguments.extend(tuning::gc_arguments(
+        java_major,
+        profile.settings.garbage_collector.unwrap_or_default(),
+        &jvm_arguments,
+    ));
     stage(LaunchStage::BuildingCommand);
     let plan = LaunchPlan {
         java_binary: java_binary.clone(),
@@ -330,14 +348,26 @@ pub async fn launch_instance(
     )?;
     let arguments = plan.command_arguments(&variables);
     append_launch_log(&launch_log, &format!("arguments={arguments:?}"))?;
+    let arguments = argfile_if_needed(
+        arguments,
+        &plan.main_class,
+        java_major,
+        &plan.working_directory,
+    )?;
     stage(LaunchStage::StartingProcess);
     let started_at = std::time::SystemTime::now();
-    let mut child = Command::new(&java_binary)
+    let mut command = Command::new(&java_binary);
+    command
         .args(arguments)
         .current_dir(&plan.working_directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_priority(
+        &mut command,
+        profile.settings.process_priority.unwrap_or_default(),
+    );
+    let mut child = command
         .spawn()
         .with_context(|| format!("start Java from {}", java_binary.display()))?;
     append_launch_log(&launch_log, &format!("started pid={}", child.id()))?;
@@ -444,6 +474,48 @@ pub async fn launch_instance(
         required_java_major,
         launch_log,
     })
+}
+
+/// 让游戏进程跑在指定的优先级上（文档 §6.3）。
+///
+/// 默认不动——调度器本来就偏向前台进程，绝大多数情况下调它没有意义。存在的
+/// 理由是「一边挂机一边干别的」这类场景，那时候用户明确知道自己要什么。
+fn apply_priority(command: &mut Command, priority: crate::ProcessPriority) {
+    if priority == crate::ProcessPriority::Normal {
+        return;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // 这两个常量在 std 里没有，值来自 Win32 的 processthreadsapi.h。
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        const ABOVE_NORMAL_PRIORITY_CLASS: u32 = 0x0000_8000;
+        command.creation_flags(match priority {
+            crate::ProcessPriority::Low => BELOW_NORMAL_PRIORITY_CLASS,
+            crate::ProcessPriority::High => ABOVE_NORMAL_PRIORITY_CLASS,
+            crate::ProcessPriority::Normal => return,
+        });
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // nice 值越小优先级越高。调高需要特权，拿不到就算了——为了一个可选的
+        // 优化而让启动失败是不划算的，所以这里忽略返回值。
+        let niceness = match priority {
+            crate::ProcessPriority::Low => 10,
+            crate::ProcessPriority::High => -5,
+            crate::ProcessPriority::Normal => return,
+        };
+        // SAFETY: 在 fork 和 exec 之间执行，setpriority 是 async-signal-safe 的。
+        unsafe {
+            command.pre_exec(move || {
+                libc::setpriority(libc::PRIO_PROCESS, 0, niceness);
+                Ok(())
+            });
+        }
+    }
 }
 
 fn append_launch_log(path: &Path, message: &str) -> io::Result<()> {
@@ -763,6 +835,68 @@ impl LaunchPlan {
     }
 }
 
+/// Windows 的命令行总长上限，留一点余量。
+///
+/// CreateProcess 的硬上限是 32767 个字符。大型整合包的 classpath 能有几百个
+/// jar，路径再深一点就顶上去了——超了之后进程根本起不来，报的错还和长度
+/// 毫无关系。
+const COMMAND_LINE_LIMIT: usize = 31000;
+
+/// 参数太长时改用 `@argfile`（文档 §5.1）。
+///
+/// Java 9 起支持从文件读参数。只在 Windows 上、只在真的超长时才用——平时
+/// 直接传参更好排查，日志里能原样看到命令行。
+///
+/// 返回替换后的参数表。用不上就原样返回。
+fn argfile_if_needed(
+    arguments: Vec<String>,
+    main_class: &str,
+    java_major: u16,
+    directory: &Path,
+) -> io::Result<Vec<String>> {
+    let length: usize = arguments.iter().map(|argument| argument.len() + 3).sum();
+    if !cfg!(target_os = "windows") || java_major < 9 || length < COMMAND_LINE_LIMIT {
+        return Ok(arguments);
+    }
+
+    // 主类和它后面的游戏参数不能进 argfile：`@file` 只用来给 JVM 读它自己的
+    // 参数，展开的位置在主类之前。按主类本身定位，不靠「像不像选项」去猜——
+    // classpath 那一长串里什么字符都可能有。
+    let split = arguments
+        .iter()
+        .position(|argument| argument == main_class)
+        .unwrap_or(arguments.len());
+    let (jvm, rest) = arguments.split_at(split);
+
+    let path = directory.join("fern-launch.args");
+    std::fs::write(&path, encode_argfile(jvm))?;
+
+    let mut replaced = vec![format!("@{}", path.display())];
+    replaced.extend(rest.iter().cloned());
+    Ok(replaced)
+}
+
+/// argfile 的转义规则。
+///
+/// Java 按空白切分，双引号内的内容当作一个整体；引号内的反斜杠是转义字符，
+/// 所以 Windows 路径里的每个反斜杠都要写两遍。不转义的话
+/// `C:\Users\name` 会变成 `C:Usersname`——一个只在长命令行时才出现的、
+/// 极难对上号的故障。
+fn encode_argfile(arguments: &[String]) -> String {
+    let mut text = String::new();
+    for argument in arguments {
+        text.push('"');
+        for character in argument.chars() {
+            if character == '\\' || character == '"' {
+                text.push('\\');
+            }
+            text.push(character);
+        }
+        text.push('\n');
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,6 +981,69 @@ mod tests {
         assert!(!root.join("escaped.so").exists());
 
         std::fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[test]
+    fn argfile_encoding_survives_a_round_trip_through_java() {
+        // 引号里的反斜杠是转义字符，Windows 路径里每一个都要写两遍。不转义的
+        // 话 `C:\\Users\\name` 会变成 `C:Usersname`——一个只在长命令行时才
+        // 出现、极难对上号的故障。Java 9+ 在所有平台都认 @argfile，所以这条
+        // 能在 Linux 上真跑一遍。
+        let Some(java) = crate::discover_java(None)
+            .into_iter()
+            .find(|runtime| runtime.major >= 9)
+        else {
+            return;
+        };
+
+        let root = std::env::temp_dir().join(format!("fern-argfile-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create root");
+        let path = root.join("args");
+        let tricky = r#"C:\Users\Fern Player\一个"引号""#;
+        std::fs::write(
+            &path,
+            encode_argfile(&[
+                format!("-Dfern.test={tricky}"),
+                "-XshowSettings:properties".to_owned(),
+                "-version".to_owned(),
+            ]),
+        )
+        .expect("write argfile");
+
+        let output = Command::new(&java.path)
+            .arg(format!("@{}", path.display()))
+            .output()
+            .expect("run java");
+        let text = String::from_utf8_lossy(&output.stderr).into_owned()
+            + &String::from_utf8_lossy(&output.stdout);
+        assert!(
+            text.contains(tricky),
+            "参数没有原样传进 JVM。argfile 内容：\n{}\n实际属性：\n{}",
+            std::fs::read_to_string(&path).unwrap_or_default(),
+            text.lines()
+                .filter(|line| line.contains("fern.test"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+
+        std::fs::remove_dir_all(root).expect("remove root");
+    }
+
+    #[test]
+    fn short_command_lines_are_left_alone() {
+        let arguments = vec![
+            "-Xmx4G".to_owned(),
+            "net.minecraft.client.main.Main".to_owned(),
+            "--username".to_owned(),
+        ];
+        let same = argfile_if_needed(
+            arguments.clone(),
+            "net.minecraft.client.main.Main",
+            21,
+            Path::new("/tmp"),
+        )
+        .expect("no argfile needed");
+        assert_eq!(same, arguments);
     }
 
     #[test]

@@ -79,6 +79,29 @@ pub struct Resolution {
     pub height: u32,
 }
 
+/// 垃圾回收器（文档 §6.2）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GarbageCollector {
+    /// G1 加一组温和参数。客户端场景的默认答案。
+    #[default]
+    G1,
+    /// 大内存整合包的实验选项。停顿更短，但吃更多内存和 CPU。
+    Z,
+}
+
+/// 进程优先级（文档 §6.3）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProcessPriority {
+    /// 后台跑着别的活的时候用，游戏让路。
+    Low,
+    #[default]
+    Normal,
+    /// 游戏优先。多数情况下没必要——调度器本来就偏向前台进程。
+    High,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceSettings {
@@ -88,6 +111,12 @@ pub struct InstanceSettings {
     pub max_memory_mb: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
+    /// 不填就是 G1。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub garbage_collector: Option<GarbageCollector>,
+    /// 不填就是 Normal。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_priority: Option<ProcessPriority>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

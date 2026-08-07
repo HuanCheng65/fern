@@ -257,18 +257,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_loader_we_cannot_install_is_refused_at_creation() {
+    fn every_installable_loader_is_accepted_at_creation() {
         let root = std::env::temp_dir().join(format!("fern-loader-guard-{}", std::process::id()));
         let paths = DataPaths::new(&root);
 
-        let refused = create_instance_with_loader(
-            &paths,
-            "Forge",
-            "1.20.1",
-            crate::LoaderKind::NeoForge,
-            Some("47.1.0"),
-        );
-        assert!(refused.is_err(), "建一个永远补全不了的实例比直接拒绝更糟");
+        // 界面列出来的每一种都必须建得出来，否则用户走到一半才被拦住。
+        // 反过来的守卫（拒掉装不上的）留着是给将来新增的 LoaderKind 兜底。
+        for option in crate::installable_loaders() {
+            if option.kind == crate::LoaderKind::Vanilla {
+                continue;
+            }
+            let created = create_instance_with_loader(
+                &paths,
+                &option.label,
+                "1.21.1",
+                option.kind,
+                Some("1.0.0"),
+            );
+            assert!(created.is_ok(), "{:?} 建不出来", option.kind);
+        }
 
         // 装得上的照常。
         let ok = create_instance_with_loader(
@@ -305,7 +312,7 @@ mod tests {
             crate::InstanceSettings {
                 java_path: Some("/usr/lib/jvm/java-21/bin/java".into()),
                 max_memory_mb: Some(6144),
-                resolution: None,
+                ..crate::InstanceSettings::default()
             },
         )
         .expect("update settings");

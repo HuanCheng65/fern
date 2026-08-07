@@ -57,7 +57,11 @@ pub fn heap_megabytes(physical_bytes: Option<u64>, mods: ModsProfile, manual: Op
 /// 只对 Java 17 以上生效：Java 8 上 `G1NewSizePercent` 要先解锁实验选项，
 /// 为了几个参数去动 `-XX:+UnlockExperimentalVMOptions` 不划算，而跑 Java 8
 /// 的都是老版本，本来也不吃内存。
-pub fn gc_arguments(java_major: u16, existing: &[String]) -> Vec<String> {
+pub fn gc_arguments(
+    java_major: u16,
+    collector: crate::GarbageCollector,
+    existing: &[String],
+) -> Vec<String> {
     if java_major < 17 {
         return Vec::new();
     }
@@ -69,16 +73,20 @@ pub fn gc_arguments(java_major: u16, existing: &[String]) -> Vec<String> {
     {
         return Vec::new();
     }
-    vec![
-        // G1NewSizePercent 到今天仍然是实验选项（Java 21、25 上都拒绝启动），
-        // 而且解锁开关必须排在它前面。少了这一行，游戏根本起不来——
-        // 「Could not create the Java Virtual Machine」。
-        "-XX:+UnlockExperimentalVMOptions".to_owned(),
-        "-XX:+UseG1GC".to_owned(),
-        "-XX:G1NewSizePercent=20".to_owned(),
-        "-XX:G1ReservePercent=20".to_owned(),
-        "-XX:MaxGCPauseMillis=50".to_owned(),
-    ]
+    match collector {
+        crate::GarbageCollector::G1 => vec![
+            // G1NewSizePercent 到今天仍然是实验选项（Java 21、25 上都拒绝
+            // 启动），而且解锁开关必须排在它前面。少了这一行，游戏根本起不
+            // 来——「Could not create the Java Virtual Machine」。
+            "-XX:+UnlockExperimentalVMOptions".to_owned(),
+            "-XX:+UseG1GC".to_owned(),
+            "-XX:G1NewSizePercent=20".to_owned(),
+            "-XX:G1ReservePercent=20".to_owned(),
+            "-XX:MaxGCPauseMillis=50".to_owned(),
+        ],
+        // ZGC 自 JDK 15 起就是正式选项，不需要解锁；也不该配 G1 那组参数。
+        crate::GarbageCollector::Z => vec!["-XX:+UseZGC".to_owned()],
+    }
 }
 
 /// 元数据和用户都没说堆大小时，我们才给。
@@ -229,19 +237,28 @@ mod tests {
 
     #[test]
     fn gc_flags_stay_out_of_the_way_of_an_existing_collector() {
-        assert!(!gc_arguments(21, &[]).is_empty());
-        assert!(gc_arguments(8, &[]).is_empty());
-        assert!(gc_arguments(21, &["-XX:+UseZGC".to_owned()]).is_empty());
-        assert!(gc_arguments(21, &["-XX:+UseSerialGC".to_owned()]).is_empty());
+        assert!(!gc_arguments(21, crate::GarbageCollector::G1, &[]).is_empty());
+        assert!(gc_arguments(8, crate::GarbageCollector::G1, &[]).is_empty());
+        assert!(
+            gc_arguments(21, crate::GarbageCollector::G1, &["-XX:+UseZGC".to_owned()]).is_empty()
+        );
+        assert!(
+            gc_arguments(
+                21,
+                crate::GarbageCollector::G1,
+                &["-XX:+UseSerialGC".to_owned()]
+            )
+            .is_empty()
+        );
         // 不相关的参数不该挡住默认值。
-        assert!(!gc_arguments(21, &["-Xmx4G".to_owned()]).is_empty());
+        assert!(!gc_arguments(21, crate::GarbageCollector::G1, &["-Xmx4G".to_owned()]).is_empty());
     }
 
     #[test]
     fn experimental_flags_are_unlocked_before_they_are_used() {
         // 端到端跑出来的教训：少了解锁开关，JVM 直接拒绝启动，而且解锁必须
         // 排在实验选项**前面**——顺序错了报的是一样的错。
-        let arguments = gc_arguments(21, &[]);
+        let arguments = gc_arguments(21, crate::GarbageCollector::G1, &[]);
         let unlock = arguments
             .iter()
             .position(|argument| argument == "-XX:+UnlockExperimentalVMOptions")
@@ -251,6 +268,15 @@ mod tests {
                 assert!(index > unlock, "解锁开关必须排在实验选项前面");
             }
         }
+    }
+
+    #[test]
+    fn zgc_does_not_drag_the_g1_tuning_along() {
+        let z = gc_arguments(21, crate::GarbageCollector::Z, &[]);
+        assert_eq!(z, vec!["-XX:+UseZGC"]);
+        // ZGC 自 JDK 15 起是正式选项，不该再要求解锁实验开关。
+        assert!(!z.iter().any(|a| a.contains("UnlockExperimental")));
+        assert!(!z.iter().any(|a| a.contains("G1")));
     }
 
     #[test]

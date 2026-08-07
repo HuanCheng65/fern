@@ -435,6 +435,7 @@ dependencies = [
  "fern-meta",
  "flate2",
  "keyring",
+ "libc",
  "md-5",
  "pearl-core",
  "reqwest",

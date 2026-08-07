@@ -45,14 +45,84 @@ fn meta_root(kind: LoaderKind) -> Result<&'static str> {
         LoaderKind::Fabric => Ok("https://meta.fabricmc.net/v2"),
         LoaderKind::Quilt => Ok("https://meta.quiltmc.org/v3"),
         LoaderKind::Vanilla => Err(anyhow!("原版不需要安装加载器")),
-        LoaderKind::NeoForge | LoaderKind::Forge => Err(anyhow!(
-            "{kind:?} 的安装需要在本地执行 processors，还没有实现"
-        )),
+        // 这两家没有 meta server，走 installer，见 forge 模块。
+        LoaderKind::NeoForge | LoaderKind::Forge => Err(anyhow!("{kind:?} 不使用 meta server")),
     }
+}
+
+/// NeoForge / Forge 的版本从 Maven 仓库列出来，没有 meta server。
+async fn list_maven_versions(kind: LoaderKind, game_version: &str) -> Result<Vec<LoaderVersion>> {
+    let client = DownloadClient::new(source_order(), 4);
+    match kind {
+        LoaderKind::NeoForge => {
+            #[derive(Deserialize)]
+            struct Listing {
+                versions: Vec<String>,
+            }
+            let bytes = client
+                .fetch("https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge")
+                .await
+                .context("读取 NeoForge 的版本列表")?;
+            let listing: Listing =
+                serde_json::from_slice(&bytes).context("解析 NeoForge 的版本列表")?;
+            // NeoForge 的版本号前两段对应游戏版本：1.21.1 → 21.1.x。
+            let prefix = neoforge_prefix(game_version)
+                .ok_or_else(|| anyhow!("NeoForge 不支持 {game_version}"))?;
+            Ok(listing
+                .versions
+                .into_iter()
+                .filter(|version| version.starts_with(&prefix))
+                .rev()
+                .map(|version| {
+                    let stable = !version.contains("beta") && !version.contains("alpha");
+                    LoaderVersion { version, stable }
+                })
+                .collect())
+        }
+        LoaderKind::Forge => {
+            // Forge 只有 maven-metadata.xml。条目形如 `1.12.2-14.23.5.2859`，
+            // 不引 XML 解析器，按标签切出来就够。
+            let bytes = client
+                .fetch(
+                    "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml",
+                )
+                .await
+                .context("读取 Forge 的版本列表")?;
+            let text = String::from_utf8_lossy(&bytes);
+            let wanted = format!("{game_version}-");
+            let mut versions: Vec<LoaderVersion> = text
+                .split("<version>")
+                .skip(1)
+                .filter_map(|chunk| chunk.split("</version>").next())
+                .filter_map(|entry| entry.strip_prefix(&wanted))
+                .map(|version| LoaderVersion {
+                    version: version.to_owned(),
+                    // Forge 不标稳定性；同一游戏版本的都当稳定。
+                    stable: true,
+                })
+                .collect();
+            // maven-metadata 是按发布顺序排的，新的在最后。
+            versions.reverse();
+            Ok(versions)
+        }
+        other => Err(anyhow!("{other:?} 的版本不从 Maven 列")),
+    }
+}
+
+/// `1.21.1` → `21.1.`，`1.21` → `21.0.`
+fn neoforge_prefix(game_version: &str) -> Option<String> {
+    let (major, minor, patch) = fern_meta::release_ordinal(game_version)?;
+    if major != 1 {
+        return None;
+    }
+    Some(format!("{minor}.{patch}."))
 }
 
 /// 这个游戏版本上可用的加载器版本，新的在前。
 pub async fn list_versions(kind: LoaderKind, game_version: &str) -> Result<Vec<LoaderVersion>> {
+    if matches!(kind, LoaderKind::NeoForge | LoaderKind::Forge) {
+        return list_maven_versions(kind, game_version).await;
+    }
     let url = format!("{}/versions/loader/{game_version}", meta_root(kind)?);
     let client = DownloadClient::new(source_order(), 4);
     let bytes = client
@@ -92,6 +162,10 @@ pub async fn install(
     loader_version: &str,
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<String> {
+    // NeoForge 和 Forge 要在本地跑安装器，是完全不同的一条路。
+    if matches!(kind, LoaderKind::NeoForge | LoaderKind::Forge) {
+        return crate::forge::install(paths, kind, game_version, loader_version, events).await;
+    }
     let expected_id = version_id(kind, game_version, loader_version);
     if version::read_one(paths, &expected_id).is_ok() {
         return Ok(expected_id);
@@ -177,13 +251,19 @@ pub struct LoaderOption {
 /// 等于让用户走到一半才被拦住。名字也从这里给：能装什么和它叫什么是同一件
 /// 事，分在两处，加一种加载器就要改两个地方。
 pub fn installable() -> Vec<LoaderOption> {
-    [LoaderKind::Vanilla, LoaderKind::Fabric, LoaderKind::Quilt]
-        .into_iter()
-        .map(|kind| LoaderOption {
-            kind,
-            label: display_name(kind).to_owned(),
-        })
-        .collect()
+    [
+        LoaderKind::Vanilla,
+        LoaderKind::Fabric,
+        LoaderKind::Quilt,
+        LoaderKind::NeoForge,
+        LoaderKind::Forge,
+    ]
+    .into_iter()
+    .map(|kind| LoaderOption {
+        kind,
+        label: display_name(kind).to_owned(),
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -191,21 +271,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_loaders_we_can_actually_install_are_offered() {
+    fn every_offered_loader_has_a_way_to_be_installed() {
+        // 列一个装不上的选项，等于让用户走到一半才被拦住。所以每一个被列出来
+        // 的加载器，都必须要么有 meta server，要么走 installer。
         let kinds: Vec<_> = installable()
             .into_iter()
             .map(|option| option.kind)
             .collect();
-        assert!(kinds.contains(&LoaderKind::Fabric));
-        assert!(kinds.contains(&LoaderKind::Quilt));
-        // NeoForge 的安装要在本地跑 processors，还没做——列出来就是骗人。
-        assert!(!kinds.contains(&LoaderKind::NeoForge));
-        assert!(!kinds.contains(&LoaderKind::Forge));
+        for kind in [
+            LoaderKind::Fabric,
+            LoaderKind::Quilt,
+            LoaderKind::NeoForge,
+            LoaderKind::Forge,
+        ] {
+            assert!(kinds.contains(&kind), "{kind:?} 装得上却没有被列出来");
+        }
         for kind in kinds {
-            assert!(
-                kind == LoaderKind::Vanilla || meta_root(kind).is_ok(),
-                "{kind:?} 被列为可安装，却没有 meta server"
-            );
+            let reachable = match kind {
+                LoaderKind::Vanilla => true,
+                LoaderKind::NeoForge | LoaderKind::Forge => {
+                    crate::forge::installer_url(kind, "1.21.1", "1.0").is_ok()
+                }
+                other => meta_root(other).is_ok(),
+            };
+            assert!(reachable, "{kind:?} 被列为可安装，却没有安装途径");
         }
     }
 
@@ -220,12 +309,14 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_loaders_say_why_instead_of_failing_obscurely() {
-        let error = meta_root(LoaderKind::NeoForge).unwrap_err().to_string();
-        assert!(
-            error.contains("processors"),
-            "错误信息该说清缺的是什么：{error}"
-        );
+    fn the_two_installer_based_loaders_do_not_go_through_a_meta_server() {
+        // 它们的版本从 Maven 列、profile 从 installer jar 里掏。走错路会得到
+        // 一个 404，而不是一句能看懂的话。
+        for kind in [LoaderKind::NeoForge, LoaderKind::Forge] {
+            let error = meta_root(kind).unwrap_err().to_string();
+            assert!(error.contains("meta server"), "{error}");
+        }
+        assert!(meta_root(LoaderKind::Vanilla).is_err());
     }
 
     #[test]

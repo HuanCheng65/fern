@@ -96,6 +96,9 @@ pub async fn prepare_instance(
         &version_bytes,
     )
     .await?;
+    // 原版那一份先解出来：装 NeoForge 之前要拿它里面的 client jar 地址。
+    let vanilla: VersionMetadata =
+        serde_json::from_slice(&version_bytes).context("parse version metadata")?;
 
     // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
     // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
@@ -104,6 +107,21 @@ pub async fn prepare_instance(
         && let Some(loader) = profile.loader_profile.clone()
     {
         {
+            // NeoForge / Forge 的 processors 要把原版 client jar 拆开重打，
+            // 所以它必须先在磁盘上。Fabric 不需要，但多验一次已经存在的文件
+            // 只是一次 sha1，不值得为它分叉。
+            if let Some(client) = vanilla
+                .downloads
+                .as_ref()
+                .and_then(|downloads| downloads.client.as_ref())
+                && matches!(
+                    profile.loader,
+                    crate::LoaderKind::NeoForge | crate::LoaderKind::Forge
+                )
+            {
+                let jar = task_from_info(version_root.join(format!("{version_id}.jar")), client)?;
+                downloader.download_all(vec![jar], events).await?;
+            }
             let installed =
                 loader::install(paths, profile.loader, version_id, &loader.version, events).await?;
             // 建实例时还不知道上游会给哪个 id，装完才知道；记回实例文件，
