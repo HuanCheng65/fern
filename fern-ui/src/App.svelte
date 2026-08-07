@@ -15,6 +15,7 @@
   import Backdrop from './components/Backdrop.svelte'
   import TopBar from './components/TopBar.svelte'
   import CommandPalette from './components/CommandPalette.svelte'
+  import Notices from './components/Notices.svelte'
   import Mark from './components/Mark.svelte'
   import CrashReport from './components/CrashReport.svelte'
   import GameLog from './components/GameLog.svelte'
@@ -200,6 +201,12 @@
       <div class="edge" aria-hidden="true"></div>
     {/if}
   {/if}
+
+  <!--
+    通知层挂在外壳上，不挂在任何一个场景里：它说的是「刚才那件事完成了」，
+    而那件事完成的时候，用户很可能已经走到别的地方去了。
+  -->
+  <Notices />
 
   {#if nav.overlay === 'palette'}
     <CommandPalette onclose={() => nav.dismiss()} />
