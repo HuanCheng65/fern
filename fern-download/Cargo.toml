@@ -14,3 +14,8 @@ reqwest.workspace = true
 serde.workspace = true
 sha1.workspace = true
 tokio.workspace = true
+
+# 测试要起一个会失败几次的本地服务器：重试这件事只有真的收到两次请求才算
+# 验过，而单测里没有别的办法制造「这一次连不上，下一次能连上」。
+[dev-dependencies]
+tokio = { workspace = true, features = ["net"] }

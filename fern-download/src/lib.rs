@@ -169,6 +169,14 @@ pub fn safe_join(root: &Path, relative: &Path) -> Result<PathBuf> {
 /// 掉 2 个，重跑一遍就好了，那本来就不该报到用户面前。
 const ATTEMPTS_PER_SOURCE: u32 = 3;
 
+/// 整批重来几轮。
+///
+/// 单文件的重试解决不了成片的失败：网线被拔掉十秒、Wi-Fi 切换、对端限流，
+/// 这类事件会在同一时刻打掉几十个文件，而它们各自的三次尝试都发生在那十秒
+/// 之内。「重跑一遍就好了」既然是真的，就该由我们跑，而不是报一句「12 个
+/// 文件下载失败」让用户自己再点一次。
+const BATCH_ROUNDS: u32 = 3;
+
 /// 超过这个大小才值得断点续传。资源文件普遍几 KB，为它们多读一次磁盘、
 /// 多发一个 Range 头是净亏损；client jar 和 Java 运行时才是会断在半路的那些。
 const RESUME_THRESHOLD: u64 = 4 * 1024 * 1024;
@@ -230,6 +238,61 @@ impl SourceHealth {
     }
 }
 
+/// 一个文件没下下来，以及再试一次有没有意义。
+struct Refusal {
+    reason: String,
+    /// 上游明确说没有这个文件时是 `false`：重试多少次还是没有。
+    retryable: bool,
+}
+
+impl Refusal {
+    fn retryable(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            retryable: true,
+        }
+    }
+
+    fn fatal(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            retryable: false,
+        }
+    }
+}
+
+/// 一轮跑完之后没成的那一个。
+struct Failure {
+    task: DownloadTask,
+    reason: String,
+    retryable: bool,
+}
+
+/// 失败要说清楚是哪些文件、为什么。
+///
+/// 上一版只报一个数（「12 个文件下载失败」）。那句话对用户和对排障的人都没有
+/// 用：既不知道缺的是资源还是库，也不知道是断网、404 还是校验不过——而这三种
+/// 的处理方式完全不同。
+fn describe_failures(failures: &[Failure]) -> String {
+    /// 列几个。全列出来的话，一次断网能刷几百行。
+    const SHOWN: usize = 3;
+
+    let mut lines = vec![format!("{} 个文件没有下载成功", failures.len())];
+    for failure in failures.iter().take(SHOWN) {
+        let name = failure
+            .task
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| failure.task.path.display().to_string());
+        lines.push(format!("{name}（{}）", failure.reason));
+    }
+    if failures.len() > SHOWN {
+        lines.push(format!("另有 {} 个", failures.len() - SHOWN));
+    }
+    lines.join("；")
+}
+
 #[derive(Clone)]
 pub struct DownloadClient {
     client: reqwest::Client,
@@ -243,7 +306,12 @@ impl DownloadClient {
         Self {
             client: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(45))
+                // 读超时，不是总超时。总超时是按「一次请求最多花多久」设的，
+                // 而这里最大的两个文件是 client jar 和 Java 运行时——两百多兆
+                // 在一条普通的家用带宽上本来就要跑几分钟。之前设的 45 秒总
+                // 超时会把它们**每一次**都掐死在半路，表现出来正是「有几个
+                // 文件总是失败」。真正该管的是「卡住不动」，那是读超时。
+                .read_timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("valid download client configuration"),
             sources: if sources.is_empty() {
@@ -366,6 +434,54 @@ impl DownloadClient {
         let started = Instant::now();
         let downloaded_bytes = Arc::new(AtomicU64::new(0));
         let last_emit = Arc::new(AtomicU64::new(0));
+
+        let mut pending = tasks;
+        let mut failures = Vec::new();
+        for round in 0..BATCH_ROUNDS {
+            if round > 0 {
+                // 说出来。上一版这一段是完全静默的，用户看到的是进度条卡了
+                // 几秒然后蹦出一句「12 个文件下载失败」。
+                let _ = events.send(DownloadEvent::Status {
+                    message: format!("重试 {} 个文件", pending.len()),
+                });
+                // 成片的失败多半来自一次短暂的断网，等一下比立刻重试有用。
+                tokio::time::sleep(Duration::from_millis(800u64 << round.min(3))).await;
+            }
+            failures = self
+                .run_round(pending, &downloaded_bytes, started, &last_emit, events)
+                .await;
+            // 上游明确说没有的东西，重试多少次都还是没有。
+            if failures.is_empty() || failures.iter().all(|failure| !failure.retryable) {
+                break;
+            }
+            pending = failures
+                .iter()
+                .filter(|failure| failure.retryable)
+                .map(|failure| failure.task.clone())
+                .collect();
+        }
+
+        let _ = events.send(DownloadEvent::TaskFinished {
+            failed: failures
+                .iter()
+                .map(|failure| failure.task.path.display().to_string())
+                .collect(),
+        });
+        if failures.is_empty() {
+            return Ok(());
+        }
+        Err(anyhow!("{}", describe_failures(&failures)))
+    }
+
+    /// 跑一轮，返回没成的那些。
+    async fn run_round(
+        &self,
+        tasks: Vec<DownloadTask>,
+        downloaded_bytes: &Arc<AtomicU64>,
+        started: Instant,
+        last_emit: &Arc<AtomicU64>,
+        events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+    ) -> Vec<Failure> {
         let mut jobs = tokio::task::JoinSet::new();
         for task in tasks {
             let client = self.clone();
@@ -380,7 +496,7 @@ impl DownloadClient {
             });
         }
 
-        let mut failed = Vec::new();
+        let mut failures = Vec::new();
         while let Some(joined) = jobs.join_next().await {
             match joined {
                 Ok((task, Ok(()))) => {
@@ -389,18 +505,26 @@ impl DownloadClient {
                         bytes: task.size.unwrap_or(0),
                     });
                 }
-                Ok((task, Err(_))) => failed.push(task.path.display().to_string()),
-                Err(error) => failed.push(format!("download worker: {error}")),
+                Ok((task, Err(error))) => failures.push(Failure {
+                    task,
+                    retryable: error.retryable,
+                    reason: error.reason,
+                }),
+                // 任务自己没了（panic 或被取消）。它下的那个文件是哪个已经
+                // 无从知道，但这件事必须留痕，不能当成功。
+                Err(error) => failures.push(Failure {
+                    task: DownloadTask {
+                        path: PathBuf::from("<未完成的下载任务>"),
+                        url: Url::parse("about:blank").expect("valid placeholder url"),
+                        sha1: None,
+                        size: None,
+                    },
+                    retryable: false,
+                    reason: format!("下载任务异常结束：{error}"),
+                }),
             }
         }
-        let _ = events.send(DownloadEvent::TaskFinished {
-            failed: failed.clone(),
-        });
-        if failed.is_empty() {
-            Ok(())
-        } else {
-            Err(anyhow!("{} files failed to download", failed.len()))
-        }
+        failures
     }
 
     async fn download_one(
@@ -410,26 +534,37 @@ impl DownloadClient {
         started: Instant,
         last_emit: &AtomicU64,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
-    ) -> Result<()> {
+    ) -> std::result::Result<(), Refusal> {
         let _permit = self
             .semaphore
             .acquire()
             .await
-            .context("download semaphore closed")?;
+            .map_err(|error| Refusal::fatal(format!("下载信号量已关闭：{error}")))?;
 
         // 校验通过即跳过，所以补全天然幂等：「修复文件」就是同一个入口再跑
         // 一遍，不需要单独的一套代码。
-        if task.is_satisfied().await? {
-            downloaded_bytes.fetch_add(task.size.unwrap_or(0), Ordering::Relaxed);
-            emit_progress(downloaded_bytes, started, last_emit, events, true);
-            return Ok(());
+        match task.is_satisfied().await {
+            Ok(true) => {
+                downloaded_bytes.fetch_add(task.size.unwrap_or(0), Ordering::Relaxed);
+                emit_progress(downloaded_bytes, started, last_emit, events, true);
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(error) => return Err(Refusal::retryable(format!("读取已有文件失败：{error}"))),
         }
 
-        if let Some(parent) = task.path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+        if let Some(parent) = task.path.parent()
+            && let Err(error) = tokio::fs::create_dir_all(parent).await
+        {
+            return Err(Refusal::retryable(format!(
+                "创建目录 {} 失败：{error}",
+                parent.display()
+            )));
         }
         let temporary = task.path.with_extension("part");
         let mut last_error = None;
+        // 每个源都明确回答「我这里没有」时，重试整批也不会有别的结果。
+        let mut all_missing = true;
         for source in self.ordered_sources(&task.url) {
             let url = source.rewrite(&task.url);
             let host = url.host_str().unwrap_or_default().to_owned();
@@ -456,18 +591,24 @@ impl DownloadClient {
                     Ok(false) => {
                         // 服务器明确说没有这个文件，换个源，别在同一堵墙上撞三次。
                         self.health.record(&host, false);
-                        last_error = Some(anyhow!("{url} 上没有这个文件"));
+                        last_error = Some(format!("{host} 上没有这个文件"));
                         break;
                     }
                     Err(error) => {
                         self.health.record(&host, false);
-                        last_error = Some(error);
+                        all_missing = false;
+                        last_error = Some(format!("{host}：{error}"));
                     }
                 }
             }
         }
         let _ = tokio::fs::remove_file(&temporary).await;
-        Err(last_error.unwrap_or_else(|| anyhow!("no download source configured")))
+        let reason = last_error.unwrap_or_else(|| "没有可用的下载源".to_owned());
+        if all_missing {
+            Err(Refusal::fatal(reason))
+        } else {
+            Err(Refusal::retryable(reason))
+        }
     }
 
     /// 试一次。`Ok(false)` 表示这个源上没有（4xx），换源；`Err` 表示值得再试。
@@ -732,6 +873,123 @@ mod tests {
         }
         // 两条限流掉一条，加上强制的那一条。
         assert_eq!(count, 2);
+    }
+
+    /// 一个前 `refusals` 次连上来就直接断开、之后正常应答的服务器。
+    ///
+    /// 重试这件事，只有真的收到第二次请求才算验过。
+    async fn flaky_server(refusals: usize, body: &'static [u8], status: &'static str) -> Url {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let address = listener.local_addr().expect("local address");
+        tokio::spawn(async move {
+            let mut seen = 0usize;
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = [0u8; 1024];
+                let _ = stream.read(&mut buffer).await;
+                if seen < refusals {
+                    seen += 1;
+                    // 不回任何东西，直接断开：这就是网络抖动的样子。
+                    continue;
+                }
+                seen += 1;
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes()).await;
+                let _ = stream.write_all(body).await;
+                let _ = stream.flush().await;
+            }
+        });
+        Url::parse(&format!("http://{address}/client.jar")).expect("server url")
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("fern-dl-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create scratch");
+        root
+    }
+
+    #[tokio::test]
+    async fn a_batch_retries_the_files_that_failed() {
+        // 单个源的三次尝试全部用光，整批还要再来一轮——成片的失败往往是一次
+        // 短暂的断网，而那几十个文件各自的三次尝试都发生在那几秒之内。
+        const BODY: &[u8] = b"fern";
+        let url = flaky_server(ATTEMPTS_PER_SOURCE as usize, BODY, "200 OK").await;
+        let root = scratch("retry");
+        let path = root.join("client.jar");
+        let task = DownloadTask::new(
+            &path,
+            url.as_str(),
+            "654edb122a04602f918500d59b1d6fc37b9d0c01",
+            BODY.len() as u64,
+        )
+        .expect("build task");
+
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+        let client = DownloadClient::new(vec![Arc::new(OfficialSource)], 4);
+        client
+            .download_all(vec![task], &events)
+            .await
+            .expect("second round succeeds");
+        assert_eq!(std::fs::read(&path).expect("downloaded file"), BODY);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn a_missing_file_is_reported_by_name_instead_of_being_hammered() {
+        // 上游说没有就是没有，重试整批不会有别的结果。而报出来的那句话要说得出
+        // 是哪个文件、为什么——「12 个文件下载失败」对谁都没有用。
+        let url = flaky_server(0, b"", "404 Not Found").await;
+        let root = scratch("missing");
+        let task =
+            DownloadTask::new(root.join("absent.jar"), url.as_str(), "00", 4).expect("build task");
+
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+        let client = DownloadClient::new(vec![Arc::new(OfficialSource)], 4);
+        let started = Instant::now();
+        let error = client
+            .download_all(vec![task], &events)
+            .await
+            .expect_err("nothing to download");
+        let message = format!("{error}");
+        assert!(message.contains("absent.jar"), "{message}");
+        assert!(message.contains("没有这个文件"), "{message}");
+        // 没有退避、没有第二轮：确定的失败不该让用户多等。
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "重试了不该重试的"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_failure_report_names_files_and_reasons() {
+        let failure = |name: &str, reason: &str| Failure {
+            task: DownloadTask::unverified(
+                PathBuf::from("/fern/libraries").join(name),
+                "https://example.invalid/x.jar",
+            )
+            .expect("build task"),
+            reason: reason.to_owned(),
+            retryable: true,
+        };
+        let one = describe_failures(&[failure("asm.jar", "连接超时")]);
+        assert!(one.contains("asm.jar（连接超时）"), "{one}");
+
+        // 一次断网能打掉几百个文件，全列出来就没人看了。
+        let many: Vec<Failure> = (0..9)
+            .map(|i| failure(&format!("a{i}.jar"), "连接超时"))
+            .collect();
+        let report = describe_failures(&many);
+        assert!(report.contains("9 个文件没有下载成功"), "{report}");
+        assert!(report.contains("另有 6 个"), "{report}");
     }
 
     #[test]
