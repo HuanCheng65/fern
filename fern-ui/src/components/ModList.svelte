@@ -8,15 +8,17 @@
    * 停用的模组留在列表里，只是压暗：文件其实还在磁盘上（加了 `.disabled`
    * 后缀），从列表里消失会让人以为被删了。
    *
-   * 安装靠拖放。Tauri 的拖放事件给的是真实路径，而 webview 里的文件选择框
-   * 拿不到——所以这里没有「浏览」按钮，只有一句话和一个能打开目录的出口。
+   * 本地的 jar 靠拖放安装。Tauri 的拖放事件给的是真实路径，而 webview 里的
+   * 文件选择框拿不到——所以这里没有「浏览」按钮。要找新模组走「添加模组」，
+   * 它带着这个实例跳到补给站。
    */
   import { invoke } from '@tauri-apps/api/core'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
-  import { FolderOpen, Trash2 } from 'lucide-svelte'
+  import { FolderOpen, Plus, Trash2 } from 'lucide-svelte'
   import { onMount } from 'svelte'
   import { inTauri } from '../lib/instances.svelte'
   import { formatBytes } from '../lib/launch.svelte'
+  import { nav } from '../lib/nav.svelte'
 
   interface ModFile {
     fileName: string
@@ -121,12 +123,21 @@
         <small class="t-quiet">{enabledCount}/{mods.length} 启用</small>
       {/if}
     </span>
-    <button
-      class="btn btn--link"
-      onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'mods' })}
-    >
-      <FolderOpen size={13} strokeWidth={1.9} />模组目录
-    </button>
+    <span class="acts">
+      <!--
+        带着实例跳到补给站，那边的筛选条件会对准它。跨场景跳转必须带参数，
+        否则用户到了那边还要自己把版本和加载器再选一遍。
+      -->
+      <button class="btn btn--link" onclick={() => nav.enter('supply', '', { forInstance: instanceId })}>
+        <Plus size={13} strokeWidth={2} />添加模组
+      </button>
+      <button
+        class="btn btn--link"
+        onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'mods' })}
+      >
+        <FolderOpen size={13} strokeWidth={1.9} />模组目录
+      </button>
+    </span>
   </div>
 
   {#if loading}
@@ -193,6 +204,11 @@
   .label small {
     margin-left: var(--s2);
     font-weight: 400;
+  }
+
+  .acts {
+    display: flex;
+    gap: var(--s4);
   }
 
   .empty {

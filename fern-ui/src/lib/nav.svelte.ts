@@ -121,6 +121,19 @@ class NavStore {
     this.commit()
   }
 
+  /**
+   * 用掉一个一次性参数。
+   *
+   * 跨场景跳转带来的参数（「为这个实例找东西」）应该只生效一次。留在地址里的话，
+   * 用户随后改了选择，下一次重新求值又会被它盖回去。
+   */
+  consume(key: string) {
+    if (!(key in this.params)) return
+    const { [key]: _dropped, ...rest } = this.params
+    this.params = rest
+    this.commit()
+  }
+
   /** 收回场景首页。只有一级纵深，所以返回永远只有这一种去处。 */
   back() {
     if (!this.detail) return

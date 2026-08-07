@@ -30,6 +30,7 @@
   import { launch } from './lib/launch.svelte'
   import { nav, SCENES } from './lib/nav.svelte'
   import { prefs } from './lib/prefs.svelte'
+  import { supply } from './lib/supply.svelte'
   import { theme } from './lib/theme.svelte'
   import './styles/tokens.css'
 
@@ -39,13 +40,17 @@
   const isMac = platform === 'macos'
   /** 背景用当前实例的封面当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.cover ?? 'Fern')
-  /** 顶栏的面包屑只要一个词。目前只有实例场景有纵深。 */
+  /** 顶栏的面包屑只要一个词。哪个场景有纵深，就由那个场景说它叫什么。 */
   const detailLabel = $derived(
-    nav.scene !== 'instances' || !nav.detail
+    !nav.detail
       ? ''
-      : nav.detail === 'new'
-        ? '新建实例'
-        : (instances.list.find((item) => item.id === nav.detail)?.name ?? ''),
+      : nav.scene === 'instances'
+        ? nav.detail === 'new'
+          ? '新建实例'
+          : (instances.list.find((item) => item.id === nav.detail)?.name ?? '')
+        : nav.scene === 'supply'
+          ? supply.viewingTitle || nav.detail
+          : '',
   )
 
   const createInstance = () => nav.enter('instances', 'new')
@@ -202,7 +207,7 @@
           {:else if nav.scene === 'instances'}
             <InstancesScene />
           {:else if nav.scene === 'supply'}
-            <SupplyScene onback={() => nav.go('launch')} />
+            <SupplyScene />
           {:else if nav.scene === 'multiplayer'}
             <Placeholder
               seed="multiplayer"

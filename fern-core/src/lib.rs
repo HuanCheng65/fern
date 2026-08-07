@@ -69,7 +69,8 @@ pub use microsoft::{
     ensure_fresh as refresh_microsoft_session, finish_login as finish_microsoft_login,
 };
 pub use modrinth::{
-    ProjectVersion, SearchHit, SearchResult, install as install_from_modrinth,
+    GalleryImage, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind, SearchHit, SearchQuery,
+    SearchResult, install as install_from_modrinth, is_external_url, project as modrinth_project,
     search as search_modrinth, versions as modrinth_versions,
 };
 pub use mods::{

@@ -221,57 +221,73 @@ async fn launch_instance(
     result
 }
 
-/// 补给站搜索。按目标实例的游戏版本和加载器过滤——用户是在为某个实例找东西，
-/// 列出装不上的结果只会浪费他一次点击。
+/// 补给站搜索。
+///
+/// 条件全部由界面给出，不从「当前实例」推断——补给站是一个独立的地方，
+/// 装不装得上是标注，不是过滤器。
 #[tauri::command]
-async fn search_mods(
-    query: String,
-    instance_id: String,
-    offset: u32,
-    limit: u32,
-) -> Result<fern_core::SearchResult, String> {
-    let (game_version, loader) = instance_target(&instance_id)?;
-    fern_core::search_modrinth(&query, &game_version, loader, offset, limit)
+async fn search_resources(query: fern_core::SearchQuery) -> Result<fern_core::SearchResult, String> {
+    fern_core::search_modrinth(&query)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
-/// 一个项目在这个实例下有哪些可选版本。
+/// 一个项目的详情。
 #[tauri::command]
-async fn project_versions(
-    project: String,
-    instance_id: String,
-) -> Result<Vec<fern_core::ProjectVersion>, String> {
-    let (game_version, loader) = instance_target(&instance_id)?;
-    fern_core::modrinth_versions(&project, &game_version, loader)
+async fn project_detail(project: String) -> Result<fern_core::ProjectDetail, String> {
+    fern_core::modrinth_project(&project)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
-/// 装一个版本，连同它的必需依赖。
+/// 一个项目的全部版本，新的在前。兼容性由界面按目标实例标注。
+#[tauri::command]
+async fn project_versions(project: String) -> Result<Vec<fern_core::ProjectVersion>, String> {
+    fern_core::modrinth_versions(&project)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 装一个版本。模组会连同必需依赖一起装。
 #[tauri::command]
 async fn install_from_modrinth(
     app: tauri::AppHandle,
     instance_id: String,
     version_id: String,
+    kind: fern_core::ResourceKind,
 ) -> Result<Vec<String>, String> {
     let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
     let events = launcher_events(&app);
     let downloads = fern_core::download_bridge(&events);
-    fern_core::install_from_modrinth(&paths, &instance_id, &version_id, &downloads)
+    fern_core::install_from_modrinth(&paths, &instance_id, &version_id, kind, &downloads)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
-/// 补给站的两个查询都要知道「装到哪个实例」，那决定了过滤条件。
-fn instance_target(instance_id: &str) -> Result<(String, fern_core::LoaderKind), String> {
-    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    let profile = fern_core::list_instances(&paths)
-        .map_err(|error| format!("{error:#}"))?
-        .into_iter()
-        .find(|profile| profile.id.as_str() == instance_id)
-        .ok_or_else(|| format!("实例 {instance_id} 不存在"))?;
-    Ok((profile.game_version, profile.loader))
+/// 用系统浏览器打开一个链接。
+///
+/// 详情页上的链接是 Modrinth 给的字符串，会被原样递给系统的打开程序，所以
+/// 只放行 https——`file://` 会打开本地文件，Windows 上还有一堆自定义协议。
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    if !fern_core::is_external_url(&url) {
+        return Err("只能打开 https 链接".to_owned());
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("explorer");
+
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+
+    #[cfg(target_os = "linux")]
+    let mut command = std::process::Command::new("xdg-open");
+
+    command
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// 这个实例装了哪些模组。
@@ -472,7 +488,9 @@ pub fn run() {
             list_java_runtimes,
             remove_java_runtime,
             instance_runtime,
-            search_mods,
+            search_resources,
+            project_detail,
+            open_external,
             project_versions,
             install_from_modrinth,
             list_mods,

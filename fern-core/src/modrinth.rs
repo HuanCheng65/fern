@@ -5,6 +5,10 @@
 //!
 //! 这一层只负责「去哪里找、下哪个文件」。文件落进 `mods/` 之后就归 `mods`
 //! 模块管——补给是获取，管理是状态，两件事。
+//!
+//! 搜索条件全部由调用方明确给出，这里不去问「当前实例是什么」。补给站是一个
+//! 独立的地方：先按实例过滤，等于把浏览和「给这个实例装东西」压成了一件事，
+//! 于是想看看有什么就得先有一个实例。要不要装得上是**标注**，不是过滤器。
 
 use anyhow::{Context, Result, anyhow};
 use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
@@ -27,6 +31,124 @@ const USER_AGENT: &str = concat!(
 /// 一次装依赖最多跟这么深。真实的依赖链两三层就到头，留点余量，主要是防
 /// 上游数据里出现环让我们一直转下去。
 const MAX_DEPTH: usize = 6;
+
+/// 补给站能装的东西。
+///
+/// 只列这三种，因为只有这三种是「下一个文件放进一个目录」就完事的。整合包要
+/// 建实例、数据包要选存档、插件是服务端的事——把它们摆在类型筛选里，等于给
+/// 一个点了会失败的按钮。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    #[default]
+    Mod,
+    ResourcePack,
+    Shader,
+}
+
+impl ResourceKind {
+    /// Modrinth 的 `project_type`。
+    fn project_type(self) -> &'static str {
+        match self {
+            Self::Mod => "mod",
+            Self::ResourcePack => "resourcepack",
+            Self::Shader => "shader",
+        }
+    }
+
+    /// 文件落到游戏目录下的哪里。
+    pub fn directory(self) -> &'static str {
+        match self {
+            Self::Mod => "mods",
+            Self::ResourcePack => "resourcepacks",
+            Self::Shader => "shaderpacks",
+        }
+    }
+
+    /// 只有模组有依赖图。资源包和光影是自足的文件，去解析它们的 dependencies
+    /// 只会把一堆无关的东西拖下来。
+    fn has_dependencies(self) -> bool {
+        matches!(self, Self::Mod)
+    }
+
+    /// 加载器标签只对模组成立。资源包在 Modrinth 上的 loader 是 `minecraft`，
+    /// 光影是 `iris`/`optifine`——拿 fabric 去筛它们会得到空列表。
+    fn honours_loader(self) -> bool {
+        matches!(self, Self::Mod)
+    }
+}
+
+/// 一次搜索要问的全部条件。空字符串和 None 一律表示「不限」。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SearchQuery {
+    pub query: String,
+    pub kind: ResourceKind,
+    pub game_version: String,
+    pub loader: Option<LoaderKind>,
+    pub category: String,
+    /// `relevance` / `downloads` / `follows` / `newest` / `updated`。
+    pub sort: String,
+    pub offset: u32,
+    pub limit: u32,
+}
+
+impl Default for SearchQuery {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            kind: ResourceKind::Mod,
+            game_version: String::new(),
+            loader: None,
+            category: String::new(),
+            sort: "relevance".to_owned(),
+            offset: 0,
+            limit: 40,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GalleryImage {
+    pub url: String,
+    pub title: String,
+}
+
+/// 项目详情页要的东西。
+///
+/// 不含 `body`。它是一整篇 markdown，渲染它要么引一个解析器加一层消毒，要么
+/// 自己写一个——把网络来的字符串变成 DOM 是 XSS 面，不值得为一段介绍开这个口。
+/// 详情页给一个「在 Modrinth 打开」，正文交给浏览器。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDetail {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    /// 一句话摘要，纯文本。
+    pub description: String,
+    pub project_type: String,
+    pub categories: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    pub gallery: Vec<GalleryImage>,
+    pub downloads: u64,
+    pub followers: u64,
+    pub updated: String,
+    pub license: String,
+    pub game_versions: Vec<String>,
+    pub loaders: Vec<String>,
+    /// 外部链接。只保留 https 的，其余当没有。
+    pub links: Vec<ProjectLink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLink {
+    pub label: String,
+    pub url: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +209,58 @@ struct RawHit {
     icon_url: Option<String>,
     #[serde(default)]
     categories: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProject {
+    id: String,
+    slug: String,
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    project_type: String,
+    #[serde(default)]
+    categories: Vec<String>,
+    #[serde(default)]
+    icon_url: Option<String>,
+    #[serde(default)]
+    gallery: Vec<RawGallery>,
+    #[serde(default)]
+    downloads: u64,
+    #[serde(default)]
+    followers: u64,
+    #[serde(default)]
+    updated: String,
+    #[serde(default)]
+    license: Option<RawLicense>,
+    #[serde(default)]
+    game_versions: Vec<String>,
+    #[serde(default)]
+    loaders: Vec<String>,
+    #[serde(default)]
+    source_url: Option<String>,
+    #[serde(default)]
+    issues_url: Option<String>,
+    #[serde(default)]
+    wiki_url: Option<String>,
+    #[serde(default)]
+    discord_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawGallery {
+    url: String,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLicense {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,32 +403,41 @@ fn json_array(values: &[&str]) -> String {
     format!("[{}]", quoted.join(","))
 }
 
-/// 搜索模组。
+/// 搜索。
 ///
-/// 按当前实例的游戏版本和加载器过滤——用户是在为某个实例找东西，列出装不上的
-/// 结果只会浪费他一次点击。
-pub async fn search(
-    query: &str,
-    game_version: &str,
-    loader: LoaderKind,
-    offset: u32,
-    limit: u32,
-) -> Result<SearchResult> {
-    let mut facets = vec![json_array(&["project_type:mod"])];
-    if !game_version.is_empty() {
-        facets.push(json_array(&[&format!("versions:{game_version}")]));
+/// 条件全部来自调用方，一个都不从「当前实例」推断。不写条件就是不限，于是
+/// 补给站默认是在浏览整个 Modrinth，而不是在浏览「这个实例装得上的东西」。
+pub async fn search(request: &SearchQuery) -> Result<SearchResult> {
+    let kind = request.kind;
+    let mut facets = vec![json_array(&[&format!(
+        "project_type:{}",
+        kind.project_type()
+    )])];
+    if !request.game_version.is_empty() {
+        facets.push(json_array(&[&format!("versions:{}", request.game_version)]));
     }
-    let tags = loader_tags(loader);
-    if !tags.is_empty() {
-        // 同一个 facet 数组里的条目是「或」的关系，正好用来表达 quilt 或 fabric。
-        let any: Vec<String> = tags.iter().map(|tag| format!("categories:{tag}")).collect();
-        facets.push(json_array(
-            &any.iter().map(String::as_str).collect::<Vec<_>>(),
-        ));
+    if !request.category.is_empty() {
+        facets.push(json_array(&[&format!("categories:{}", request.category)]));
     }
+    if let Some(loader) = request.loader.filter(|_| kind.honours_loader()) {
+        let tags = loader_tags(loader);
+        if !tags.is_empty() {
+            // 同一个 facet 数组里的条目是「或」的关系，正好用来表达 quilt 或 fabric。
+            let any: Vec<String> = tags.iter().map(|tag| format!("categories:{tag}")).collect();
+            facets.push(json_array(
+                &any.iter().map(String::as_str).collect::<Vec<_>>(),
+            ));
+        }
+    }
+    let sort = match request.sort.as_str() {
+        "downloads" | "follows" | "newest" | "updated" => request.sort.as_str(),
+        _ => "relevance",
+    };
     let url = format!(
-        "{API}/search?query={}&offset={offset}&limit={limit}&facets={}",
-        urlencoding(query),
+        "{API}/search?query={}&index={sort}&offset={}&limit={}&facets={}",
+        urlencoding(&request.query),
+        request.offset,
+        request.limit.clamp(1, 100),
         urlencoding(&format!("[{}]", facets.join(",")))
     );
 
@@ -278,14 +461,83 @@ pub async fn search(
     })
 }
 
-/// 一个项目在这个版本和加载器下有哪些可选版本，新的在前。
-pub async fn versions(
-    project: &str,
-    game_version: &str,
-    loader: LoaderKind,
-) -> Result<Vec<ProjectVersion>> {
-    let raw = raw_versions(project, game_version, loader).await?;
+/// 一个项目的全部版本，新的在前。
+///
+/// 不在这里按目标实例筛。详情页要把所有版本都摆出来，装不上的标出来而不是
+/// 藏起来——「这个模组还没适配 1.21」是用户需要知道的事实，一个空列表说不了
+/// 这句话。
+pub async fn versions(project: &str) -> Result<Vec<ProjectVersion>> {
+    let raw: Vec<RawVersion> = get(&format!("{API}/project/{project}/version")).await?;
     Ok(raw.into_iter().map(describe).collect())
+}
+
+/// 项目详情。
+pub async fn project(slug: &str) -> Result<ProjectDetail> {
+    let raw: RawProject = get(&format!("{API}/project/{slug}")).await?;
+    let mut links = Vec::new();
+    for (label, url) in [
+        ("源码", raw.source_url),
+        ("问题追踪", raw.issues_url),
+        ("百科", raw.wiki_url),
+        ("Discord", raw.discord_url),
+    ] {
+        // 链接来自上游，非 https 的一律当没有——详情页上的每一个都会被点。
+        if let Some(url) = url.filter(|url| is_external_url(url)) {
+            links.push(ProjectLink {
+                label: label.to_owned(),
+                url,
+            });
+        }
+    }
+    links.push(ProjectLink {
+        label: "Modrinth 页面".to_owned(),
+        url: format!("https://modrinth.com/{}/{}", raw.project_type, raw.slug),
+    });
+
+    Ok(ProjectDetail {
+        id: raw.id,
+        slug: raw.slug,
+        title: raw.title,
+        description: raw.description,
+        project_type: raw.project_type,
+        categories: raw.categories,
+        icon_url: raw.icon_url.filter(|url| !url.is_empty()),
+        gallery: raw
+            .gallery
+            .into_iter()
+            .map(|image| GalleryImage {
+                title: image.title.unwrap_or_default(),
+                url: image.url,
+            })
+            .collect(),
+        downloads: raw.downloads,
+        followers: raw.followers,
+        updated: raw.updated,
+        // 上游的 name 可能是空串而不是缺失，所以按「第一个非空」取，别用
+        // unwrap_or——那样会得到一个空的许可证栏。
+        license: raw
+            .license
+            .map(|license| {
+                let name = license.name.unwrap_or_default();
+                if name.is_empty() { license.id } else { name }
+            })
+            .unwrap_or_default(),
+        game_versions: raw.game_versions,
+        loaders: raw.loaders,
+        links,
+    })
+}
+
+/// 能不能交给系统浏览器打开。
+///
+/// 详情页上的链接是上游给的字符串，会被原样递给 `xdg-open` / `open` /
+/// `explorer`。限死 https 一种协议：`file://` 会打开本地文件，Windows 上还有
+/// 一堆自定义协议处理器，而以 `-` 开头的串会被当成命令行开关。
+pub fn is_external_url(raw: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(raw) else {
+        return false;
+    };
+    url.scheme() == "https" && url.host_str().is_some_and(|host| !host.is_empty())
 }
 
 async fn raw_versions(
@@ -336,6 +588,7 @@ pub async fn install(
     paths: &DataPaths,
     instance_id: &str,
     version_id: &str,
+    kind: ResourceKind,
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<Vec<String>> {
     let profile = crate::list_instances(paths)?
@@ -345,8 +598,8 @@ pub async fn install(
     let game_version = profile.game_version.as_str();
     let loader = profile.loader;
 
-    let mods_directory = paths.game_directory(instance_id).join("mods");
-    tokio::fs::create_dir_all(&mods_directory).await?;
+    let directory = paths.game_directory(instance_id).join(kind.directory());
+    tokio::fs::create_dir_all(&directory).await?;
 
     let mut seen_projects = HashSet::new();
     let mut pending = vec![(version_id.to_owned(), 0usize)];
@@ -367,13 +620,16 @@ pub async fn install(
         };
         // Modrinth 每个文件都给 sha1，所以这里是有校验的下载。
         tasks.push(DownloadTask::new(
-            fern_download::safe_join(&mods_directory, std::path::Path::new(&file.filename))?,
+            fern_download::safe_join(&directory, std::path::Path::new(&file.filename))?,
             &file.url,
             &file.hashes.sha1,
             file.size,
         )?);
         installed.push(file.filename.clone());
 
+        if !kind.has_dependencies() {
+            continue;
+        }
         for dependency in &version.dependencies {
             if dependency.dependency_type != "required" {
                 continue;
@@ -409,7 +665,7 @@ pub async fn install(
         message: if installed.len() > 1 {
             format!("下载 {} 个文件（含依赖）", installed.len())
         } else {
-            "下载模组".to_owned()
+            "下载文件".to_owned()
         },
     });
     let downloader = DownloadClient::new(crate::settings::source_order(), 8);
@@ -504,6 +760,32 @@ mod tests {
             .filter_map(|dependency| dependency.project_id.clone())
             .collect();
         assert_eq!(required, vec!["a"]);
+    }
+
+    #[test]
+    fn only_https_links_are_handed_to_the_system_opener() {
+        assert!(is_external_url("https://modrinth.com/mod/sodium"));
+        assert!(is_external_url("https://github.com/some/repo"));
+
+        // 这些会被原样递给 xdg-open / explorer。
+        assert!(!is_external_url("http://example.com"));
+        assert!(!is_external_url("file:///etc/passwd"));
+        assert!(!is_external_url("javascript:alert(1)"));
+        assert!(!is_external_url("ms-settings:privacy"));
+        assert!(!is_external_url("--version"));
+        assert!(!is_external_url(""));
+        assert!(!is_external_url("https://"));
+    }
+
+    #[test]
+    fn resource_kinds_land_in_the_directory_the_game_reads() {
+        assert_eq!(ResourceKind::Mod.directory(), "mods");
+        assert_eq!(ResourceKind::ResourcePack.directory(), "resourcepacks");
+        assert_eq!(ResourceKind::Shader.directory(), "shaderpacks");
+        // 加载器筛选只对模组成立：资源包的 loader 是 minecraft，光影是 iris。
+        assert!(ResourceKind::Mod.honours_loader());
+        assert!(!ResourceKind::ResourcePack.honours_loader());
+        assert!(!ResourceKind::Shader.honours_loader());
     }
 
     #[test]

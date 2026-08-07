@@ -1,126 +1,138 @@
 <script lang="ts">
   /**
-   * 补给站。
+   * 补给站——一个独立的、找东西的地方。
    *
-   * 「去哪里找」和「装了什么」是两件事：这一屏只管找和装，装完之后的状态在
-   * 实例详情页的模组列表里。
+   * 上一版把搜索结果按当前实例的版本和加载器过滤掉了。那让它成了「给这个实例
+   * 装东西」的附属品：没有实例就什么都看不到，而且永远看不见「这个模组还没
+   * 适配你这个版本」这个事实——一个空列表说不出这句话。
    *
-   * 结果按当前实例的游戏版本和加载器过滤。用户是在为某个实例找东西——列出一个
-   * 它装不上的模组，只会浪费他一次点击才发现装不了。所以顶上一直写着这次是在
-   * 为谁筛选。
+   * 现在筛选条件是明确的控件，默认全不限；「装到哪个实例」是另一件事，摆在
+   * 旁边，只在真的要装的时候才用得上。装不装得上是版本上的标注。
+   *
+   * 只做模组、资源包、光影：这三种是「下一个文件放进一个目录」就完事的。
+   * 整合包要建实例，那是另一条路径，没做就不摆在这里。
    */
-  import { invoke } from '@tauri-apps/api/core'
-  import { ArrowRight, Search } from 'lucide-svelte'
+  import { Search } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
-  import ProjectVersions from '../components/ProjectVersions.svelte'
-  import { inTauri, instances } from '../lib/instances.svelte'
+  import ProjectDetailView from './ProjectDetail.svelte'
+  import { instances } from '../lib/instances.svelte'
+  import { nav } from '../lib/nav.svelte'
+  import { compactNumber, KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
 
-  interface Props {
-    onback: () => void
-  }
+  /** 版本筛选只给正式版，快照在补给站里几乎没人找。 */
+  const releases = $derived(
+    instances.versions.filter((item) => item.kind === 'release').slice(0, 60),
+  )
 
-  let { onback }: Props = $props()
-
-  interface Hit {
-    projectId: string
-    slug: string
-    title: string
-    description: string
-    author: string
-    downloads: number
-    iconUrl?: string
-    categories: string[]
-  }
-
-  let query = $state('')
-  let hits = $state<Hit[]>([])
-  let total = $state(0)
-  let searching = $state(false)
-  let error = $state('')
-  let searched = $state(false)
-  let picked = $state<Hit | null>(null)
-
-  const target = $derived(instances.current)
-  /** 原版实例没有加载器，装不了模组——与其给一列装不上的结果，不如直接说清。 */
-  const modded = $derived(target !== undefined && target.loader !== 'Vanilla')
-
-  const compact = (value: number) =>
-    value >= 1_000_000
-      ? `${(value / 1_000_000).toFixed(1)}M`
-      : value >= 1000
-        ? `${(value / 1000).toFixed(0)}K`
-        : String(value)
-
-  async function run() {
-    if (!target || !inTauri()) return
-    searching = true
-    error = ''
-    try {
-      const result = await invoke<{ hits: Hit[]; total: number }>('search_mods', {
-        query: query.trim(),
-        instanceId: target.id,
-        offset: 0,
-        limit: 40,
-      })
-      hits = result.hits
-      total = result.total
-      searched = true
-    } catch (cause) {
-      error = String(cause)
-    } finally {
-      searching = false
-    }
-  }
-
-  // 进来就给一屏热门的，空着一片白比什么都不给更糟。
+  // 从实例的模组页跳过来时带着实例 id，直接把条件对准它。用掉就从地址里去掉，
+  // 否则用户随后改了「安装到」，下一次求值又会被它盖回去。
   $effect(() => {
-    if (modded && !searched && !searching) void run()
+    const aim = nav.params.forInstance
+    if (!aim) return
+    supply.aimAt(aim)
+    nav.consume('forInstance')
   })
+
+  // 进来就给一屏，空着一片白比什么都不给更糟。
+  $effect(() => {
+    if (!supply.loaded && !supply.searching) void supply.search()
+  })
+
+  void instances.loadVersions()
 </script>
 
-<section class="supply">
-  {#if !target}
-    <div class="blank">
-      <h1 class="t-h1">还没有实例</h1>
-      <p class="note">模组要装进某个实例。先创建一个，再回到这里。</p>
-      <button class="btn btn--link" onclick={onback}>返回启动<ArrowRight size={14} /></button>
-    </div>
-  {:else if !modded}
-    <div class="blank">
-      <h1 class="t-h1">这是一个原版实例</h1>
-      <p class="note">
-        {target.name} 没有安装模组加载器，无法安装模组。新建实例时选择 Fabric、Quilt、NeoForge
-        或 Forge 即可。
-      </p>
-      <button class="btn btn--link" onclick={onback}>返回启动<ArrowRight size={14} /></button>
-    </div>
-  {:else}
+{#if nav.detail}
+  <ProjectDetailView slug={nav.detail} />
+{:else}
+  <section class="supply">
     <header class="bar">
       <div class="field">
         <Search size={15} strokeWidth={1.9} />
         <input
           class="input"
-          bind:value={query}
+          bind:value={supply.query}
           spellcheck="false"
-          placeholder="搜索模组"
-          onkeydown={(event) => event.key === 'Enter' && void run()}
+          placeholder="搜索 Modrinth"
+          onkeydown={(event) => event.key === 'Enter' && supply.refresh()}
         />
       </div>
-      <p class="t-quiet scope">
-        为 <strong>{target.name}</strong> 筛选 · {target.gameVersion} · {target.loader}
-      </p>
+
+      <div class="kinds">
+        {#each KINDS as item (item.id)}
+          <button
+            class="chip"
+            class:on={supply.kind === item.id}
+            onclick={() => {
+              supply.kind = item.id
+              supply.refresh()
+            }}
+          >
+            {item.label}
+          </button>
+        {/each}
+      </div>
     </header>
 
-    {#if error}
-      <div class="alert">{error}</div>
-    {:else if searching && hits.length === 0}
+    <div class="filters">
+      <label class="pick">
+        <span class="t-quiet">游戏版本</span>
+        <select
+          class="select"
+          bind:value={supply.gameVersion}
+          onchange={() => supply.refresh()}
+        >
+          <option value="">不限</option>
+          {#each releases as version (version.id)}
+            <option value={version.id}>{version.id}</option>
+          {/each}
+        </select>
+      </label>
+
+      <!-- 资源包和光影没有加载器这个概念，摆一个选了没用的控件是噪音。 -->
+      {#if supply.kind === 'mod'}
+        <label class="pick">
+          <span class="t-quiet">加载器</span>
+          <select class="select" bind:value={supply.loader} onchange={() => supply.refresh()}>
+            <option value="">不限</option>
+            {#each LOADER_FILTERS as item (item.id)}
+              <option value={item.id}>{item.label}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+
+      <label class="pick">
+        <span class="t-quiet">排序</span>
+        <select class="select" bind:value={supply.sort} onchange={() => supply.refresh()}>
+          {#each SORTS as item (item.id)}
+            <option value={item.id}>{item.label}</option>
+          {/each}
+        </select>
+      </label>
+
+      <!-- 装到哪，是上下文不是筛选，所以推到最右边并且和左边隔开。 -->
+      {#if instances.list.length > 0}
+        <label class="pick target">
+          <span class="t-quiet">安装到</span>
+          <select class="select" bind:value={supply.targetId}>
+            {#each instances.recent as item (item.id)}
+              <option value={item.id}>{item.name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+    </div>
+
+    {#if supply.error}
+      <div class="alert">{supply.error}</div>
+    {:else if supply.searching && supply.hits.length === 0}
       <p class="t-quiet hint">搜索中</p>
-    {:else if hits.length === 0}
-      <p class="t-quiet hint">没有匹配的模组。</p>
+    {:else if supply.hits.length === 0}
+      <p class="t-quiet hint">没有匹配的结果。</p>
     {:else}
       <div class="grid scroll">
-        {#each hits as hit (hit.projectId)}
-          <button class="card" onclick={() => (picked = hit)}>
+        {#each supply.hits as hit (hit.projectId)}
+          <button class="card" onclick={() => nav.open(hit.slug)}>
             <span class="icon">
               {#if hit.iconUrl}
                 <img src={hit.iconUrl} alt="" loading="lazy" />
@@ -132,23 +144,22 @@
             <span class="text">
               <strong>{hit.title}</strong>
               <small class="desc">{hit.description}</small>
-              <small class="t-mono meta">{compact(hit.downloads)} · {hit.author}</small>
+              <small class="t-mono meta">{compactNumber(hit.downloads)} · {hit.author}</small>
             </span>
           </button>
         {/each}
       </div>
-      <p class="t-quiet count">共 {total} 个结果，显示前 {hits.length} 个</p>
-    {/if}
-  {/if}
-</section>
 
-{#if picked && target}
-  <ProjectVersions
-    project={picked.slug}
-    title={picked.title}
-    instanceId={target.id}
-    onclose={() => (picked = null)}
-  />
+      <div class="foot">
+        <span class="t-quiet">共 {supply.total} 个结果，已显示 {supply.hits.length} 个</span>
+        {#if supply.canLoadMore}
+          <button class="btn btn--link" disabled={supply.searching} onclick={() => supply.more()}>
+            {supply.searching ? '加载中' : '加载更多'}
+          </button>
+        {/if}
+      </div>
+    {/if}
+  </section>
 {/if}
 
 <style>
@@ -159,29 +170,12 @@
     min-height: 0;
   }
 
-  .blank {
-    display: grid;
-    align-content: center;
-    justify-items: start;
-    gap: var(--s3);
-    height: 100%;
-    max-width: 46ch;
-  }
-
-  .note {
-    margin: 0;
-    color: var(--ink-3);
-    font-size: var(--t-body);
-    line-height: 1.65;
-  }
-
   .bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: var(--s3);
-    padding-bottom: var(--s4);
   }
 
   .field {
@@ -197,16 +191,52 @@
     min-width: 0;
   }
 
-  .scope {
-    margin: 0;
+  .kinds {
+    display: flex;
+    gap: var(--s2);
   }
 
-  .scope strong {
+  .chip {
+    padding: 5px var(--s3);
+    border-radius: 999px;
+    background: var(--tint-1);
+    color: var(--ink-3);
+    font-size: var(--t-small);
+    transition:
+      background var(--t-fast) var(--ease),
+      color var(--t-fast) var(--ease);
+  }
+
+  .chip:hover {
     color: var(--ink-2);
-    font-weight: 500;
+    background: var(--tint-2);
   }
 
-  /* 瀑布流式的网格，卡片自己撑开——列数跟着窗口走，不写断点。 */
+  .chip.on {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s2) var(--s5);
+    padding: var(--s4) 0;
+  }
+
+  .pick {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  /* 「安装到」不是筛选，推到另一头去。 */
+  .target {
+    margin-left: auto;
+  }
+
+  /* 列数跟着窗口走，不写断点。 */
   .grid {
     flex: 1;
     min-height: 0;
@@ -278,12 +308,15 @@
     font-size: var(--t-micro);
   }
 
-  .hint,
-  .count {
+  .hint {
     margin: var(--s4) 0 0;
   }
 
-  .count {
+  .foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
     padding-top: var(--s3);
   }
 </style>
