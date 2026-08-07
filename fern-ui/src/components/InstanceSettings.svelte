@@ -30,8 +30,24 @@
     native: boolean
   }
 
+  /** 一次分配的理由。`topic` 决定它是依据、实测还是约束。 */
+  interface ExplanationItem {
+    topic: 'basis' | 'history' | 'limit'
+    text: string
+  }
+
+  interface AllocationDecision {
+    xmxMb: number
+    source: 'manual' | 'userJvmArgs' | 'adaptive' | 'static'
+    gc: 'untouched' | 'zgc' | 'g1'
+    explanation: ExplanationItem[]
+    arguments: string[]
+    tight: boolean
+  }
+
   interface InstanceRuntime {
     automaticMemoryMb: number
+    allocation: AllocationDecision
     physicalMemoryMb: number
     requirement: { minimum: number; maximum: number | null }
     java: JavaRuntime | null
@@ -39,18 +55,20 @@
     /** 全局默认。「跟随全局」四个字本身不解释任何事，得说得出它是什么。 */
     defaults: {
       memoryCeilingMb: number | null
-      garbageCollector: 'g1' | 'z' | null
+      garbageCollector: GcChoice | null
       resolution: { width: number; height: number } | null
       jvmArguments: string
     }
     memoryCeilingMb: number
   }
 
+  type GcChoice = 'auto' | 'g1' | 'z'
+
   interface InstanceSettings {
     javaPath: string | null
     maxMemoryMb: number | null
     resolution: { width: number; height: number } | null
-    garbageCollector: 'g1' | 'z' | null
+    garbageCollector: GcChoice | null
     processPriority: 'low' | 'normal' | 'high' | null
   }
 
@@ -94,9 +112,37 @@
    */
   const ceiling = $derived(runtime?.memoryCeilingMb ?? 4096)
   /** 全局选的那个回收器，「跟随全局」要说得出是哪一个。 */
-  const globalGc = $derived(runtime?.defaults.garbageCollector ?? 'g1')
+  const globalGc = $derived<GcChoice>(runtime?.defaults.garbageCollector ?? 'auto')
+  const GC_LABEL: Record<GcChoice, string> = { auto: '自动', g1: 'G1', z: 'ZGC' }
   const memoryAuto = $derived(settings.maxMemoryMb === null)
   const memoryValue = $derived(settings.maxMemoryMb ?? runtime?.automaticMemoryMb ?? 2048)
+
+  /**
+   * 分配结论摊开成一句话。
+   *
+   * 依据、实测、约束三类各自成句，中间用句号断开——「基于 186 个 Mod、光影。
+   * 上次运行峰值 6.3 GB。」比把它们全用顿号串成一长条读得快。
+   */
+  const reasons = $derived.by(() => {
+    const items = runtime?.allocation.explanation ?? []
+    return (['basis', 'history', 'limit'] as const)
+      .map((topic) =>
+        items
+          .filter((item) => item.topic === topic)
+          .map((item) => item.text)
+          .join('、'),
+      )
+      .filter(Boolean)
+      .join('。')
+  })
+
+  /** MB 变成一句话。整数不带小数点——`8 GB` 比 `8.0 GB` 更像一个决定。 */
+  const gigabytes = (mb: number) => {
+    const value = mb / 1024
+    return Math.abs(value - Math.round(value)) < 0.05
+      ? `${Math.round(value)} GB`
+      : `${value.toFixed(1)} GB`
+  }
 
   /**
    * 同一个大版本可能同时装着 JDK 和 JRE，两行不能长得一模一样。
@@ -193,42 +239,47 @@
   <Loading note="读取实例信息" />
 {:else}
   <div class="body">
+      <!--
+        内存这一节不以滑杆开场（设计文档 §8）。默认只有一行结论加它的理由：
+        判断依据摊开、控件退后。滑杆是想接管的人才需要的东西，让它一直摆在
+        那里，等于每次打开这一屏都问一遍「你要不要动内存」。
+      -->
       <section>
         <div class="row-head">
           <span class="label">内存</span>
           <span class="t-mono value">
             {#if memoryAuto}
-              自动 · {runtime?.automaticMemoryMb ?? 2048} MB
+              自动 · {gigabytes(runtime?.allocation.xmxMb ?? runtime?.automaticMemoryMb ?? 2048)}
             {:else}
-              {memoryValue} MB
+              {gigabytes(memoryValue)}
             {/if}
           </span>
         </div>
-        <input
-          class="slider"
-          type="range"
-          min="1024"
-          max={ceiling}
-          step="512"
-          value={memoryValue}
-          disabled={memoryAuto}
-          oninput={(event) => setMemory(Number(event.currentTarget.value))}
-        />
+        {#if memoryAuto}
+          <p class="reason t-quiet">{reasons}</p>
+        {:else}
+          <input
+            class="slider"
+            type="range"
+            min="1024"
+            max={ceiling}
+            step="512"
+            value={memoryValue}
+            oninput={(event) => setMemory(Number(event.currentTarget.value))}
+          />
+        {/if}
         <div class="row-foot">
           <span class="t-quiet">
-            {#if runtime && runtime.modsCount > 0}
-              {runtime.modsCount} 个模组 · 物理内存 {Math.round(runtime.physicalMemoryMb / 1024)} GB
-            {:else}
-              物理内存 {Math.round((runtime?.physicalMemoryMb ?? 0) / 1024)} GB，游戏上限 {Math.round(
-                ceiling / 1024,
-              )} GB
-            {/if}
+            物理内存 {gigabytes(runtime?.physicalMemoryMb ?? 0)}，游戏上限 {gigabytes(ceiling)}
           </span>
           <button
             class="btn btn--link"
-            onclick={() => setMemory(memoryAuto ? (runtime?.automaticMemoryMb ?? 2048) : null)}
+            onclick={() =>
+              setMemory(
+                memoryAuto ? (runtime?.allocation.xmxMb ?? runtime?.automaticMemoryMb ?? 2048) : null,
+              )}
           >
-            {memoryAuto ? '手动指定' : '使用自动值'}
+            {memoryAuto ? '手动指定' : `改回自动（${gigabytes(runtime?.automaticMemoryMb ?? 2048)}）`}
           </button>
         </div>
       </section>
@@ -274,17 +325,20 @@
           -->
           <div class="row-head adv">
             <span class="label">垃圾回收器</span>
-            <span class="t-quiet">ZGC 停顿更短，但占用更多内存与 CPU。</span>
+            <span class="t-quiet">
+              自动会按 Java 版本挑：21 以上给分代 ZGC，更老的给 G1。
+            </span>
           </div>
           <Choice
             label="垃圾回收器"
             value={settings.garbageCollector ?? 'inherit'}
             onchange={(next) => {
-              settings.garbageCollector = next === 'inherit' ? null : (next as 'g1' | 'z')
+              settings.garbageCollector = next === 'inherit' ? null : (next as GcChoice)
               void persist()
             }}
             options={[
-              { value: 'inherit', label: `跟随全局（${globalGc === 'z' ? 'ZGC' : 'G1'}）` },
+              { value: 'inherit', label: `跟随全局（${GC_LABEL[globalGc]}）` },
+              { value: 'auto', label: '自动' },
               { value: 'g1', label: 'G1' },
               { value: 'z', label: 'ZGC' },
             ]}
@@ -405,6 +459,14 @@
     width: 100%;
     margin-top: var(--s3);
     accent-color: var(--accent);
+  }
+
+  /* 结论下面那行理由。占滑杆原来的位置，所以两种状态的高度不会跳。 */
+  .reason {
+    margin: var(--s2) 0 0;
+    max-width: 64ch;
+    font-size: var(--t-small);
+    line-height: 1.6;
   }
 
   .slider:disabled {

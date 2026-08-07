@@ -89,8 +89,8 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   {
     id: 'game/gc',
     label: '垃圾回收器',
-    note: 'ZGC 停顿更短，但占用更多内存与 CPU。实例可单独覆盖。',
-    keywords: 'gc g1 zgc garbage collector',
+    note: '自动会按 Java 版本挑：21 以上给分代 ZGC，更老的给 G1。实例可单独覆盖。',
+    keywords: 'gc g1 zgc garbage collector 自动',
   },
   {
     id: 'game/window',

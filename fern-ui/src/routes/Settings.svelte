@@ -420,9 +420,10 @@
           <SettingRow id="game/gc" found={focused === 'game/gc'}>
             <Choice
               label="垃圾回收器"
-              value={prefs.game.garbageCollector ?? 'g1'}
-              onchange={(value) => prefs.setGame({ garbageCollector: value as 'g1' | 'z' })}
+              value={prefs.game.garbageCollector ?? 'auto'}
+              onchange={(value) => prefs.setGame({ garbageCollector: value as 'auto' | 'g1' | 'z' })}
               options={[
+                { value: 'auto', label: '自动' },
                 { value: 'g1', label: 'G1' },
                 { value: 'z', label: 'ZGC' },
               ]}

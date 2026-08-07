@@ -53,6 +53,19 @@ pub enum LauncherEvent {
         instance_id: String,
         exit_code: Option<i32>,
     },
+    /// 游戏跑着时的堆压力，几秒一条。
+    ///
+    /// 数据来自我们自己注入的 GC 日志，和自适应分配读的是同一条流——所以这条
+    /// 事件是免费的。读不到就不发：岛上没有那条线，好过一条编出来的线。
+    GameMemory {
+        instance_id: String,
+        /// 最近一次回收之后的堆水位，MB。
+        used_mb: u32,
+        /// 这次会话到目前为止的峰值，MB。
+        peak_mb: u32,
+        /// 这次给了多少堆，MB。分母。
+        xmx_mb: u32,
+    },
     /// 非正常退出。和 `GameExited` 分开发：正常关掉游戏不该在界面上留下任何
     /// 痕迹，崩了才需要说话。
     GameCrashed(CrashReport),

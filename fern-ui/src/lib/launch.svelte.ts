@@ -53,10 +53,19 @@ export interface GameLogLine {
   message: string
 }
 
+/** 游戏跑着时的堆压力，几秒一条。读不到就不发，所以这里可以一直没有值。 */
+export interface MemoryPressure {
+  instanceId: string
+  usedMb: number
+  peakMb: number
+  xmxMb: number
+}
+
 type LauncherEvent =
   | { type: 'launch_stage'; payload: { instanceId: string; stage: LaunchStage } }
   | { type: 'game_log'; payload: { instanceId: string; level: LogLevel; message: string } }
   | { type: 'game_exited'; payload: { instanceId: string; exitCode: number | null } }
+  | { type: 'game_memory'; payload: MemoryPressure }
   | { type: 'game_crashed'; payload: CrashReport }
   | { type: string; payload: unknown }
 
@@ -90,6 +99,12 @@ class LaunchStore {
   instanceId = $state('')
   /** 正在跑的是哪个实例，用来在岛上叫出它的名字。 */
   runningName = $state('')
+  /**
+   * 最近一次读到的堆压力。游戏没在跑、或者读不到 GC 日志时是 null。
+   *
+   * 它只喂岛上那条细线。**没有值就没有线**——一条编出来的线比没有线更糟。
+   */
+  memory = $state<MemoryPressure | null>(null)
 
   #unlisten: UnlistenFn | undefined
 
@@ -116,6 +131,10 @@ class LaunchStore {
       case 'game_exited':
         this.running = false
         this.runningName = ''
+        this.memory = null
+        break
+      case 'game_memory':
+        this.memory = event.payload as MemoryPressure
         break
       case 'game_crashed':
         this.crash = event.payload as CrashReport
@@ -146,6 +165,7 @@ class LaunchStore {
     this.error = ''
     this.crash = null
     this.log = []
+    this.memory = null
   }
 
   /**
@@ -232,20 +252,41 @@ export const launch = new LaunchStore()
  * 游戏在跑是**状态**不是作业：它没有进度，也不会「完成」。所以它只报告自己
  * 还活着，不带任何百分比。
  */
-contributes((): Presence[] =>
-  launch.running
-    ? [
+contributes((): Presence[] => {
+  if (!launch.running) return []
+  const memory = launch.memory
+  // 堆压力是这一句里唯一一个会动的数，而它几秒才变一次——所以它进 detail，
+  // 不进那条会被反复念出来的 label。
+  const pressure = memory
+    ? `${gigabytes(memory.usedMb)} / ${gigabytes(memory.xmxMb)}`
+    : ''
+  return [
+    {
+      id: 'game',
+      priority: PRIORITY.live,
+      tone: 'live',
+      label: launch.runningName || '运行中',
+      // 细线画的是水位占堆的比例，不是进度——游戏不会「完成」。
+      fill: memory && memory.xmxMb > 0 ? memory.usedMb / memory.xmxMb : undefined,
+      rows: [
         {
           id: 'game',
-          priority: PRIORITY.live,
-          tone: 'live',
-          label: launch.runningName || '运行中',
-          rows: [{ id: 'game', label: launch.runningName || '游戏运行中', detail: '运行中' }],
-          actions: [{ label: '查看日志', run: () => nav.show('log') }],
+          label: launch.runningName || '游戏运行中',
+          detail: pressure ? `内存 ${pressure}` : '运行中',
         },
-      ]
-    : [],
-)
+      ],
+      actions: [{ label: '查看日志', run: () => nav.show('log') }],
+    },
+  ]
+})
+
+/** MB 变成一句话。和实例设置那一屏用的是同一条规则。 */
+function gigabytes(mb: number) {
+  const value = mb / 1024
+  return Math.abs(value - Math.round(value)) < 0.05
+    ? `${Math.round(value)} GB`
+    : `${value.toFixed(1)} GB`
+}
 
 
 /**

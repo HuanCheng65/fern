@@ -275,7 +275,9 @@ mod tests {
             &GameDefaults::default(),
             physical,
         );
-        assert_eq!(bare.garbage_collector, GarbageCollector::G1);
+        // 内置默认是「你决定」，不是某一个具体的收集器——写死一个，等于把
+        // 这个判断永久冻结在写下它的那一年。
+        assert_eq!(bare.garbage_collector, GarbageCollector::Auto);
         assert_eq!(bare.resolution, None);
         assert_eq!(bare.memory_ceiling_mb, 16384);
         assert!(bare.jvm_arguments.is_empty());

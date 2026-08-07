@@ -136,6 +136,11 @@ pub fn create_instance_with_loader(
 pub struct InstanceRuntime {
     /// 不手动指定时会分配的堆，单位 MB。
     pub automatic_memory_mb: u32,
+    /// 现在按下启动会得到的那份分配，连同它的理由。
+    ///
+    /// 和真正启动时算的是同一个函数——界面显示一份、启动用另一份，就会出现
+    /// 「设置里写着 8 G，实际跑的是 4 G」这种没人查得动的问题。
+    pub allocation: crate::AllocationDecision,
     pub physical_memory_mb: u32,
     /// 这个版本能接受的 Java 区间。
     pub requirement: crate::JavaRequirement,
@@ -163,12 +168,43 @@ pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<Instance
     let physical = crate::physical_memory_bytes();
     let defaults = crate::current_settings().game;
     let ceiling = crate::heap_ceiling(physical, defaults.memory_ceiling_mb);
+    let effective = crate::effective_settings(&profile.settings, &defaults, physical);
+    let java = crate::select_java(&crate::discover_java(Some(paths)), &requirement);
+    // 还没挑出 Java 时按这个版本的下限算：GC 决策树只关心大版本，而下限就是
+    // 补全时会去下的那一个。
+    let java_major = java.as_ref().map_or(requirement.minimum, |java| java.major);
+    // 预览不采集日志——`gc_log` 给 None，算出来的参数里就没有 -Xlog。
+    let allocation = crate::plan_allocation(
+        paths,
+        &profile,
+        &game_directory,
+        java_major,
+        effective.max_memory_mb,
+        ceiling,
+        effective.garbage_collector,
+        &effective.jvm_arguments,
+        None,
+    );
+    // 「自动会给多少」是另一个问题：手填了值的实例，滑杆旁边仍然要说得出
+    // 「不改的话会怎样」。
+    let automatic = crate::plan_allocation(
+        paths,
+        &profile,
+        &game_directory,
+        java_major,
+        None,
+        ceiling,
+        effective.garbage_collector,
+        &effective.jvm_arguments,
+        None,
+    );
 
     Ok(InstanceRuntime {
-        automatic_memory_mb: crate::heap_megabytes(physical, mods, None, ceiling),
+        automatic_memory_mb: automatic.xmx_mb,
+        allocation,
         physical_memory_mb: physical.map_or(0, |bytes| (bytes / (1024 * 1024)) as u32),
         requirement,
-        java: crate::select_java(&crate::discover_java(Some(paths)), &requirement),
+        java,
         mods_count: mods.count,
         defaults,
         memory_ceiling_mb: ceiling,
@@ -226,6 +262,9 @@ pub fn delete_instance(paths: &DataPaths, instance_id: &str) -> Result<()> {
     if logs.is_dir() {
         let _ = fs::remove_dir_all(logs);
     }
+    // 内存历史同理：留着它，下一个拿到同一个 id 的实例会继承一份不属于它的
+    // 统计，而且是看不见的那种——分配值莫名其妙地偏高或偏低。
+    crate::launch::memory::history::forget(paths, id.as_str());
     Ok(())
 }
 

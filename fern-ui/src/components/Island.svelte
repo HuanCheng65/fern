@@ -157,6 +157,18 @@
             {@render compact(main)}
           </button>
 
+          <!--
+            水位线。压在胶囊底边上，不占位、不参与布局——它是一条会一直动的
+            线，让它推动任何东西都会变成一个持续抖动的顶栏。
+          -->
+          {#if main.fill !== undefined}
+            <span
+              class="fill"
+              style:top={`${HEAD - 2}px`}
+              style:transform={`scaleX(${Math.min(1, main.fill)})`}
+            ></span>
+          {/if}
+
           <div class="body">
             <!-- offsetHeight 而不是 clientHeight：那些分隔线也得算进去。 -->
             <div class="inner" bind:offsetHeight={bodyHeight}>
@@ -230,6 +242,20 @@
 
   .sat.alert {
     color: var(--danger);
+  }
+
+  /* 极低的视觉权重：看得见，但不构成一个「要不要处理」的信号。 */
+  .fill {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 1.5px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.42;
+    transform-origin: 0 50%;
+    transition: transform var(--t-slow) var(--ease);
+    pointer-events: none;
   }
 
   .more {

@@ -49,6 +49,14 @@ export interface Presence {
   /** 紧凑形态里的那一行字。 */
   label: string
   fraction?: number
+  /**
+   * 0–1。在胶囊底边画一条细线。
+   *
+   * 和 `fraction` 是两件事：那个是进度，会走到头、会「完成」，所以紧凑那一行
+   * 会把它读成百分比；这个是**水位**——游戏的堆用了多少，它一直在动，永远
+   * 不会完成。用同一个字段表示，岛就会开始报告一个不存在的进度。
+   */
+  fill?: number
   rows: PresenceRow[]
   actions: PresenceAction[]
 }

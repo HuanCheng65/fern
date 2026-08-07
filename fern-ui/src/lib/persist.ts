@@ -29,7 +29,7 @@ export interface SettingsDoc {
 export interface GameDefaults {
   /** 交给游戏的内存上限，MB。null 是「物理内存的一半」。 */
   memoryCeilingMb: number | null
-  garbageCollector: 'g1' | 'z' | null
+  garbageCollector: 'auto' | 'g1' | 'z' | null
   resolution: { width: number; height: number } | null
   /** 额外 JVM 参数，原样一行。 */
   jvmArguments: string

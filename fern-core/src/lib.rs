@@ -84,12 +84,13 @@ pub use launch::loader::{
     installable as installable_loaders, latest_version as latest_loader_version,
     list_versions as list_loader_versions,
 };
+pub use launch::memory::{
+    AllocationDecision, AllocationSource, ExplanationItem, GcPath, MemoryBudget, ModsProfile,
+    Topic as ExplanationTopic, heap_ceiling, memory_budget, mods_profile, physical_memory_bytes,
+    plan as plan_allocation,
+};
 pub use launch::prepare::{PrepareResult, prepare_instance};
 pub use launch::rules::QuickPlay;
-pub use launch::tuning::{
-    MemoryBudget, ModsProfile, heap_ceiling, heap_megabytes, memory_budget, mods_profile,
-    physical_memory_bytes,
-};
 pub use launch::version::{effective_id as effective_version_id, resolve as resolve_version};
 pub use launch::{
     Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,

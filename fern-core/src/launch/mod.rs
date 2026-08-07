@@ -2,7 +2,7 @@
 //!
 //! 文件的顺序就是事情发生的顺序：`prepare` 补全文件（加载器那一段交给
 //! `loader` 与 `forge`），`version` 把带 `inheritsFrom` 的几份 JSON 合成一份，
-//! `rules` 决定这台机器该认哪些条目，`tuning` 决定给多少内存、用什么 GC，
+//! `rules` 决定这台机器该认哪些条目，`memory` 决定给多少内存、用什么 GC，
 //! 本文件把这些拼成命令行并管住进程，游戏跑起来之后的输出归 `gamelog` 与
 //! `crash`。
 //!
@@ -13,9 +13,9 @@ pub(crate) mod crash;
 pub(crate) mod forge;
 pub(crate) mod gamelog;
 pub(crate) mod loader;
+pub(crate) mod memory;
 pub(crate) mod prepare;
 pub(crate) mod rules;
-pub(crate) mod tuning;
 pub(crate) mod version;
 
 use std::{
@@ -200,7 +200,7 @@ pub async fn launch_instance(
     let effective = crate::effective_settings(
         &profile.settings,
         &crate::current_settings().game,
-        tuning::physical_memory_bytes(),
+        memory::physical_memory_bytes(),
     );
 
     stage(LaunchStage::CheckingFiles);
@@ -354,22 +354,39 @@ pub async fn launch_instance(
     let java_binary = runtime.path.clone();
     let java_major = runtime.major;
 
-    // 堆大小和 GC 放在挑完 Java 之后：G1 那组参数只对 17 以上给，而堆大小
-    // 要看这个实例的 mods 目录有多大。
-    let heap = tuning::heap_megabytes(
-        tuning::physical_memory_bytes(),
-        tuning::mods_profile(&game_directory),
+    // 内存与 GC 放在挑完 Java 之后：走哪条路要看 Java 大版本，给多少堆要看
+    // 这个实例的 mods 目录有多大。
+    let log_directory = paths.instance_log_directory(instance_id);
+    std::fs::create_dir_all(&log_directory)?;
+    let gc_log = log_directory.join("gc.log");
+    // 判断「用户是不是已经自己表过态」时，看的必须是**元数据加用户参数**合起来
+    // 的那一份。上一版先按元数据算完再把用户参数追加上去，于是用户写的
+    // `-XX:+UseZGC` 和我们给的 `-XX:+UseG1GC` 一起进了命令行——JVM 直接拒绝
+    // 启动，报出来只有一句「Could not create the Java Virtual Machine」。
+    let declared: Vec<String> = jvm_arguments
+        .iter()
+        .chain(effective.jvm_arguments.iter())
+        .cloned()
+        .collect();
+    let allocation = memory::plan(
+        paths,
+        &profile,
+        &game_directory,
+        java_major,
         effective.max_memory_mb,
         effective.memory_ceiling_mb,
-    );
-    if let Some(argument) = tuning::heap_argument(&jvm_arguments, heap) {
-        jvm_arguments.push(argument);
-    }
-    jvm_arguments.extend(tuning::gc_arguments(
-        java_major,
         effective.garbage_collector,
-        &jvm_arguments,
-    ));
+        &declared,
+        Some(&gc_log),
+    );
+    append_launch_log(
+        &log_directory.join("launch.log"),
+        &format!(
+            "memory xmx={}M source={:?} gc={:?}",
+            allocation.xmx_mb, allocation.source, allocation.gc
+        ),
+    )?;
+    jvm_arguments.extend(allocation.arguments.iter().cloned());
     // 用户自己那几个排在最后：同一个开关出现两次时 JVM 认后面的，所以他写的
     // 永远能盖掉我们给的。
     jvm_arguments.extend(effective.jvm_arguments.iter().cloned());
@@ -386,8 +403,6 @@ pub async fn launch_instance(
         game_arguments,
     };
     let java_binary = plan.java_binary.clone();
-    let log_directory = paths.instance_log_directory(instance_id);
-    std::fs::create_dir_all(&log_directory)?;
     let launch_log = log_directory.join("launch.log");
     append_launch_log(
         &launch_log,
@@ -469,12 +484,32 @@ pub async fn launch_instance(
         });
     }
 
+    // 游戏跑着的时候，岛上那条细线读的就是这份日志（设计文档 §8）。它和退出
+    // 之后的统计共用同一条日志流，所以这一路观察没有额外成本。
+    let alive = Arc::new(AtomicBool::new(true));
+    spawn_memory_watch(
+        gc_log.clone(),
+        allocation.xmx_mb,
+        instance_id.to_owned(),
+        events.clone(),
+        alive.clone(),
+    );
+
     let process_id = child.id();
     let wait_log = launch_log.clone();
     let wait_events = events.clone();
     let wait_instance = instance_id.to_owned();
     let wait_directory = plan.working_directory.clone();
     let wait_running = running.clone();
+    let session = SessionRecord {
+        paths: paths.clone(),
+        instance_id: instance_id.to_owned(),
+        modlist_hash: memory::history::modlist_hash(&plan.working_directory),
+        gc_log: gc_log.clone(),
+        xmx_mb: allocation.xmx_mb,
+        zgc: allocation.gc.behaves_like_zgc(),
+        started_at,
+    };
     std::thread::spawn(move || {
         let running = wait_running;
         let exit_code = match child.wait() {
@@ -491,6 +526,7 @@ pub async fn launch_instance(
             }
         };
 
+        alive.store(false, Ordering::SeqCst);
         // 抢在十五秒兜底之前把标记占掉：进程已经没了，再报一次「跑起来了」
         // 是在说一件不成立的事。实测就是这么出现的——退出之后又冒出一条
         // Running。
@@ -504,10 +540,17 @@ pub async fn launch_instance(
             exit_code,
         });
 
+        let log_tail = tail.lock().map(|tail| tail.clone()).unwrap_or_default();
+
+        // 这次跑成什么样，记一笔。下一次启动的分配就是照这些数算的。
+        // 记不下来只是少学一次，绝不能影响别的任何事，所以错误只进日志。
+        if let Err(error) = session.store(&log_tail) {
+            let _ = append_launch_log(&wait_log, &format!("memory history not recorded: {error}"));
+        }
+
         // 正常关掉游戏不该在界面上留下任何痕迹，崩了才需要说话。信号退出
         // （exit_code 为 None）也算——那多半是被 OOM killer 收走了。
         if exit_code != Some(0) {
-            let log_tail = tail.lock().map(|tail| tail.clone()).unwrap_or_default();
             let report = crash::build_report(
                 &wait_instance,
                 &wait_directory,
@@ -527,6 +570,104 @@ pub async fn launch_instance(
         required_java_major,
         launch_log,
     })
+}
+
+/// 游戏跑着的时候，每隔几秒读一次 GC 日志的尾巴，报一次堆压力。
+///
+/// 读尾巴而不是整份：一场长会话的日志能到几 MB，而我们只关心最后那几次回收。
+/// 读不到、解析不出来就什么都不报——**宁可岛上没有那条线，也不要一条编出来的
+/// 线**。
+fn spawn_memory_watch(
+    gc_log: PathBuf,
+    xmx_mb: u32,
+    instance_id: String,
+    events: UnboundedSender<LauncherEvent>,
+    alive: Arc<AtomicBool>,
+) {
+    if xmx_mb == 0 {
+        // 堆由用户的参数定，我们不知道分母是多少，那就不报占比。
+        return;
+    }
+    std::thread::spawn(move || {
+        while alive.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            if !alive.load(Ordering::SeqCst) {
+                break;
+            }
+            let Some(metrics) = read_log_tail(&gc_log, 64 * 1024)
+                .as_deref()
+                .and_then(memory::gclog::parse)
+            else {
+                continue;
+            };
+            let _ = events.send(LauncherEvent::GameMemory {
+                instance_id: instance_id.clone(),
+                used_mb: metrics.live_set_mb,
+                peak_mb: metrics.peak_mb,
+                xmx_mb,
+            });
+        }
+    });
+}
+
+/// 一份日志的最后若干字节，按 UTF-8 尽力解出来。
+fn read_log_tail(path: &Path, bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(bytes)))
+        .ok()?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).ok()?;
+    Some(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+/// 退出之后要记的那一笔。
+///
+/// 打包成一个值是因为它整个要搬进等待线程：一个个 clone 出去的写法，将来加
+/// 一个字段就得在三个地方各改一次。
+struct SessionRecord {
+    paths: DataPaths,
+    instance_id: String,
+    modlist_hash: String,
+    gc_log: PathBuf,
+    xmx_mb: u32,
+    zgc: bool,
+    started_at: std::time::SystemTime,
+}
+
+impl SessionRecord {
+    /// 把这一次会话记进历史。下一次启动的分配就是照这些数算的。
+    fn store(&self, log_tail: &str) -> Result<()> {
+        // 用户自己钉死了堆的那种情况没有分母，学不出任何东西，直接不记。
+        if self.xmx_mb == 0 {
+            return Ok(());
+        }
+        let text = std::fs::read_to_string(&self.gc_log).unwrap_or_default();
+        let Some(metrics) = memory::gclog::parse(&text) else {
+            return Ok(());
+        };
+        let minutes = self
+            .started_at
+            .elapsed()
+            .map(|elapsed| elapsed.as_secs_f64() / 60.0)
+            .unwrap_or_default();
+        memory::history::record(
+            &self.paths,
+            &self.instance_id,
+            &self.modlist_hash,
+            memory::history::Session {
+                at: memory::history::now_seconds(),
+                minutes,
+                xmx_mb: self.xmx_mb,
+                metrics,
+                // 堆真的爆了的那一行只会出现在游戏自己的输出里，GC 日志看不到。
+                oom: log_tail.contains("OutOfMemoryError"),
+                zgc: self.zgc,
+            },
+        )
+    }
 }
 
 /// 让游戏进程跑在指定的优先级上（文档 §6.3）。

@@ -95,10 +95,16 @@ pub struct Resolution {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GarbageCollector {
-    /// G1 加一组温和参数。客户端场景的默认答案。
+    /// 由启动器按 Java 大版本、版本世代和实例内容决定。
+    ///
+    /// 这是默认值，而且是唯一一个会随时间变好的选项：Java 21 以上给分代 ZGC，
+    /// 更老的给 G1，26.1 起的原版则完全不插手——Mojang 自己已经调好了。
+    /// 上一版的默认是写死的 G1，那等于把这个判断永久冻结在 2024 年。
     #[default]
+    Auto,
+    /// G1 加一组客户端向的参数。
     G1,
-    /// 大内存整合包的实验选项。停顿更短，但吃更多内存和 CPU。
+    /// 分代 ZGC。停顿更短，但要更多堆外空间。
     Z,
 }
 
