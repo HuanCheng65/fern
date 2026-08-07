@@ -68,10 +68,84 @@
   })
   let paths = $state({ root: '', logs: '' })
   let pathError = $state('')
-  let runtimes = $state<
-    { path: string; home: string; major: number; version: string; vendor: string; managed: boolean }[]
-  >([])
+  interface JavaRuntime {
+    path: string
+    home: string
+    major: number
+    version: string
+    vendor: string
+    arch: string
+    managed: boolean
+    added: boolean
+    image: 'jdk' | 'jre'
+    native: boolean
+    sizeBytes: number
+  }
+
+  /**
+   * 按大版本分组，而不是平铺一串安装路径。
+   *
+   * 用户的问题是「我缺什么」，平铺的列表只回答得了「我装了什么」。缺的那些
+   * 也占一组，组里没有运行时——那一行正是要让人看见的。
+   */
+  let groups = $state<{ major: number; requiredBy: string[]; runtimes: JavaRuntime[] }[]>([])
   let runtimeError = $state('')
+
+  const megabytes = (bytes: number) =>
+    bytes > 0 ? `${Math.round(bytes / (1024 * 1024))} MB` : ''
+
+  const describe = (item: JavaRuntime) =>
+    [
+      item.vendor || '未知发行版',
+      item.image === 'jdk' ? 'JDK' : 'JRE',
+      item.managed ? '由 Fern 下载' : item.added ? '手动添加' : '系统自带',
+      megabytes(item.sizeBytes),
+    ]
+      .filter(Boolean)
+      .join(' · ')
+
+  async function installJava(major: number) {
+    runtimeError = ''
+    try {
+      await invoke('install_java', {
+        major,
+        title: `安装 Java ${major}`,
+        subjects: [`java-${major}`],
+      })
+      await loadRuntimes()
+    } catch (error) {
+      runtimeError = String(error)
+    }
+  }
+
+  /**
+   * 手动登记一个位置。
+   *
+   * 用输入框而不是系统文件选择器：Java 装在哪里是一个用户能直接说出来的
+   * 路径，而目录选择器要为此引入一个仅此一处使用的权限。
+   */
+  let manualPath = $state('')
+
+  async function addJavaPath() {
+    if (!manualPath.trim()) return
+    runtimeError = ''
+    try {
+      await invoke('add_java_path', { path: manualPath.trim() })
+      manualPath = ''
+      await loadRuntimes()
+    } catch (error) {
+      runtimeError = String(error)
+    }
+  }
+
+  async function forgetJavaPath(home: string) {
+    try {
+      await invoke('forget_java_path', { home })
+      await loadRuntimes()
+    } catch (error) {
+      runtimeError = String(error)
+    }
+  }
 
   /** 这台机器有多少内存，以及现在那条线在哪。 */
   let budget = $state({ physicalMb: 0, ceilingMb: 0 })
@@ -127,7 +201,7 @@
   async function loadRuntimes() {
     if (!inTauri()) return
     try {
-      runtimes = await invoke('list_java_runtimes')
+      groups = await invoke('java_overview')
       runtimeError = ''
     } catch (error) {
       runtimeError = String(error)
@@ -439,35 +513,90 @@
             />
           </div>
         {:else if section === 'java'}
-          <!-- Java 平时是隐形的；能看见的唯一理由是它占了地方，要能删。 -->
           <div class="row stack">
             <span class="label">
-              已安装的运行时
-              <small>缺失的版本将在首次启动相应实例时自动下载，无需手动维护。</small>
+              运行时
+              <small>
+                按大版本列出。缺失的版本会在首次启动相应实例时自动下载，也可在此处提前安装。
+              </small>
             </span>
-            {#if runtimes.length === 0}
-              <p class="t-quiet">未找到可用的 Java，首次启动游戏时将自动下载。</p>
-            {:else}
-              <ul class="runtimes">
-                {#each runtimes as item (item.path)}
-                  <li>
+
+            {#if groups.length === 0}
+              <p class="t-quiet">尚未扫描到任何 Java，也没有实例需要它。</p>
+            {/if}
+
+            <ul class="runtimes">
+              {#each groups as group (group.major)}
+                <li class="group">
+                  <div class="group-head">
                     <span class="rt-name">
-                      Java {item.major}
+                      Java {group.major}
                       <small class="t-quiet">
-                        {item.vendor || '未知发行版'} · {item.managed ? '由 Fern 下载' : '系统自带'}
+                        {#if group.requiredBy.length > 0}
+                          {group.requiredBy.length} 个实例需要：{group.requiredBy.join('、')}
+                        {:else}
+                          当前没有实例需要
+                        {/if}
                       </small>
                     </span>
-                    {#if item.managed}
-                      <button class="btn btn--link" onclick={() => void removeRuntime(item.home)}>
-                        删除
+                    {#if group.runtimes.length === 0}
+                      <button class="btn btn--ghost" onclick={() => void installJava(group.major)}>
+                        安装
                       </button>
                     {/if}
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-            {#if runtimeError}<div class="alert">{runtimeError}</div>{/if}
+                  </div>
+
+                  {#each group.runtimes as item (item.path)}
+                    <div class="rt">
+                      <span class="rt-name">
+                        {item.version || `Java ${item.major}`}
+                        <small class="t-quiet">{describe(item)}</small>
+                        <!-- 非原生架构必须说明：能跑，但明显更慢，而这一点
+                             在任何别的地方都看不出来。 -->
+                        {#if !item.native}
+                          <small class="warn">{item.arch} 版本，与本机架构不一致，性能会下降</small>
+                        {/if}
+                        <small class="t-mono path">{item.home}</small>
+                      </span>
+                      {#if item.managed}
+                        <button class="btn btn--link" onclick={() => void removeRuntime(item.home)}>
+                          删除
+                        </button>
+                      {:else if item.added}
+                        <button class="btn btn--link" onclick={() => void forgetJavaPath(item.home)}>
+                          移除登记
+                        </button>
+                      {/if}
+                    </div>
+                  {/each}
+                </li>
+              {/each}
+            </ul>
           </div>
+
+          <div class="row stack">
+            <span class="label">
+              手动添加
+              <small>扫描不到的安装位置。填写 JDK/JRE 根目录或其中的 java 可执行文件。</small>
+            </span>
+            <div class="code-row">
+              <input
+                class="input t-mono"
+                bind:value={manualPath}
+                spellcheck="false"
+                placeholder="/usr/lib/jvm/java-21-openjdk"
+                onkeydown={(event) => event.key === 'Enter' && void addJavaPath()}
+              />
+              <button class="btn btn--ghost" onclick={() => void addJavaPath()}>添加</button>
+            </div>
+          </div>
+
+          <div class="row">
+            <span class="label">重新扫描</span>
+            <button class="btn btn--ghost" onclick={() => void loadRuntimes()}>扫描</button>
+          </div>
+
+          {#if runtimeError}<div class="alert">{runtimeError}</div>{/if}
         {:else if section === 'download'}
           <div class="row">
             <span class="label">
@@ -517,12 +646,39 @@
     list-style: none;
   }
 
-  .runtimes li {
+  .group {
+    display: grid;
+    gap: var(--s2);
+    padding: var(--s3) 0;
+    box-shadow: inset 0 -1px 0 var(--hairline-2);
+  }
+
+  .group:last-child {
+    box-shadow: none;
+  }
+
+  .group-head,
+  .rt {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--s3);
-    padding: var(--s2) 0;
+  }
+
+  /* 具体的安装缩进一级：它们从属于上面那个大版本。 */
+  .rt {
+    padding-left: var(--s4);
+  }
+
+  .warn {
+    color: var(--danger);
+    font-size: var(--t-micro);
+  }
+
+  .rt .path {
+    color: var(--ink-4);
+    font-size: var(--t-micro);
+    overflow-wrap: anywhere;
   }
 
   .rt-name {

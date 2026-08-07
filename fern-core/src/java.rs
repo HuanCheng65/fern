@@ -27,6 +27,19 @@ use fern_meta::release_ordinal;
 
 use crate::{DataPaths, LoaderKind};
 
+/// 这份安装是完整的开发套件还是只含运行时。
+///
+/// 跑游戏两者没有区别，所以它**不参与选择**——在没有偏好的地方发明一个偏好
+/// 只会让选择结果变得难以解释。它的作用只有一个：同一个大版本同时装了 JDK
+/// 和 JRE 时，列表里那两行不会长得一模一样。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JavaImage {
+    Jdk,
+    #[default]
+    Jre,
+}
+
 /// 一个能用来启动游戏的 Java。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,14 +57,20 @@ pub struct JavaRuntime {
     /// 由启动器自己下载并管理，放在 `runtimes/` 下面。
     #[serde(default)]
     pub managed: bool,
-}
-
-impl JavaRuntime {
-    /// 和启动器进程同架构。Apple Silicon 上的 x64 Java 走 Rosetta 能跑，
-    /// 但性能明显下降，只在没有原生版本时才该选中。
-    pub fn is_native_arch(&self) -> bool {
-        self.arch == normalize_arch(env::consts::ARCH)
-    }
+    /// 用户在设置中手动登记的路径，不在任何扫描目录里。
+    #[serde(default)]
+    pub added: bool,
+    #[serde(default)]
+    pub image: JavaImage,
+    /// 与启动器进程同架构。
+    ///
+    /// Apple Silicon 上的 x64 Java 经 Rosetta 可以运行，但性能明显下降，
+    /// 仅在没有原生版本时才应选中，且必须在界面上说明。
+    #[serde(default)]
+    pub native: bool,
+    /// 安装占用的字节数。只对可删除的那些计算——不打算删的东西不必知道多大。
+    #[serde(default)]
+    pub size_bytes: u64,
 }
 
 /// 一个版本能接受的 Java 区间。
@@ -148,7 +167,7 @@ pub fn select(runtimes: &[JavaRuntime], requirement: &JavaRequirement) -> Option
         .min_by_key(|runtime| {
             (
                 !requirement.accepts(runtime.major),
-                !runtime.is_native_arch(),
+                !runtime.native,
                 runtime.major,
                 !runtime.managed,
             )
@@ -169,12 +188,22 @@ pub fn discover(paths: Option<&DataPaths>) -> Vec<JavaRuntime> {
         collect_children(&paths.runtimes, &mut homes);
     }
     let managed_count = homes.len();
+    // 用户手动登记的：扫描路径的并集之外，只有他知道在哪。
+    let added = crate::current_settings().java.extra_paths;
+    let added_range = managed_count..managed_count + added.len();
+    homes.extend(added);
     homes.extend(system_java_homes());
 
     for (index, home) in homes.into_iter().enumerate() {
-        let Some(runtime) = probe_home(&home, index < managed_count) else {
+        let Some(mut runtime) = probe_home(&home, index < managed_count) else {
             continue;
         };
+        runtime.added = added_range.contains(&index);
+        // 只给能删的那些算体积——不打算删的东西不必知道它多大，而算一次要
+        // 走一万个文件。
+        if runtime.managed {
+            runtime.size_bytes = directory_size(&runtime.home);
+        }
         // 同一个 JDK 会被好几条路径找到（`java-1.21.0-…` 是 `java-21-…` 的
         // 符号链接，PATH 上的 `java` 又指向其中之一），按真实路径去重。
         let identity = fs::canonicalize(&runtime.path).unwrap_or_else(|_| runtime.path.clone());
@@ -208,6 +237,7 @@ pub fn probe(path: &Path) -> Result<JavaRuntime> {
         return Ok(runtime);
     }
     let (major, version) = ask_java_itself(path)?;
+    let image = detect_image(&home);
     Ok(JavaRuntime {
         path: path.to_path_buf(),
         home,
@@ -216,6 +246,10 @@ pub fn probe(path: &Path) -> Result<JavaRuntime> {
         arch: normalize_arch(env::consts::ARCH).to_owned(),
         vendor: String::new(),
         managed: false,
+        added: false,
+        image,
+        native: true,
+        size_bytes: 0,
     })
 }
 
@@ -244,6 +278,7 @@ fn probe_home(home: &Path, managed: bool) -> Option<JavaRuntime> {
     }
     // Ubuntu 打包的 openjdk-8 就没有 release 文件，只能问它自己。
     let (major, version) = ask_java_itself(&executable).ok()?;
+    let image = detect_image(&home);
     Some(JavaRuntime {
         path: executable,
         home,
@@ -252,6 +287,10 @@ fn probe_home(home: &Path, managed: bool) -> Option<JavaRuntime> {
         arch: normalize_arch(env::consts::ARCH).to_owned(),
         vendor: String::new(),
         managed,
+        added: false,
+        image,
+        native: true,
+        size_bytes: 0,
     })
 }
 
@@ -262,20 +301,71 @@ fn runtime_from_release(
     managed: bool,
 ) -> JavaRuntime {
     let version = release.java_version.unwrap_or_default();
+    let arch = release
+        .os_arch
+        .as_deref()
+        .map(normalize_arch)
+        .unwrap_or(normalize_arch(env::consts::ARCH))
+        .to_owned();
     JavaRuntime {
         path: executable.to_path_buf(),
         home: home.to_path_buf(),
         major: parse_major(&version).unwrap_or_default(),
         version,
-        arch: release
-            .os_arch
-            .as_deref()
-            .map(normalize_arch)
-            .unwrap_or(normalize_arch(env::consts::ARCH))
-            .to_owned(),
+        native: arch == normalize_arch(env::consts::ARCH),
+        arch,
         vendor: release.implementor.unwrap_or_default(),
         managed,
+        added: false,
+        // Adoptium 等发行版在 release 里写了 IMAGE_TYPE；没写的按 javac
+        // 在不在判断，这是 JDK 与 JRE 唯一稳定的外部差别。
+        image: release
+            .image_type
+            .as_deref()
+            .map(|value| {
+                if value.eq_ignore_ascii_case("JDK") {
+                    JavaImage::Jdk
+                } else {
+                    JavaImage::Jre
+                }
+            })
+            .unwrap_or_else(|| detect_image(home)),
+        size_bytes: 0,
     }
+}
+
+fn detect_image(home: &Path) -> JavaImage {
+    if home.join("bin").join(javac_executable_name()).is_file() {
+        JavaImage::Jdk
+    } else {
+        JavaImage::Jre
+    }
+}
+
+fn javac_executable_name() -> &'static str {
+    if cfg!(windows) { "javac.exe" } else { "javac" }
+}
+
+/// 目录占用的字节数。不跟符号链接，避免把系统目录算进来。
+fn directory_size(root: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                stack.push(entry.path());
+            } else if metadata.is_file() {
+                total += metadata.len();
+            }
+        }
+    }
+    total
 }
 
 #[derive(Debug, Default)]
@@ -283,6 +373,7 @@ struct ReleaseFile {
     java_version: Option<String>,
     os_arch: Option<String>,
     implementor: Option<String>,
+    image_type: Option<String>,
 }
 
 /// `release` 是 `KEY="VALUE"` 一行一条的纯文本，JDK 9 起每个发行版都带。
@@ -297,6 +388,7 @@ fn read_release(home: &Path) -> Option<ReleaseFile> {
         match key.trim() {
             "JAVA_VERSION" => release.java_version = Some(value),
             "OS_ARCH" => release.os_arch = Some(value),
+            "IMAGE_TYPE" => release.image_type = Some(value),
             "IMPLEMENTOR" => release.implementor = Some(value),
             _ => {}
         }
@@ -448,6 +540,91 @@ fn collect_children(root: &Path, homes: &mut Vec<PathBuf>) {
     }
 }
 
+/// 手动登记一个安装位置。
+///
+/// 先探一次再记：记下一个探不出版本的路径，等于在列表里放一行永远不会被
+/// 选中的东西，而用户看不出为什么。
+pub fn add_path(paths: &DataPaths, path: &Path) -> Result<JavaRuntime> {
+    let mut runtime = probe(path)?;
+    let home = runtime.home.clone();
+    let mut settings = crate::settings::load(paths);
+    if !settings.java.extra_paths.contains(&home) {
+        settings.java.extra_paths.push(home);
+        crate::settings::save(paths, &settings)?;
+    }
+    runtime.added = true;
+    Ok(runtime)
+}
+
+/// 不再登记某个手动加进来的位置。只是从名单上划掉，不动磁盘上的任何东西。
+pub fn forget_path(paths: &DataPaths, home: &Path) -> Result<()> {
+    let mut settings = crate::settings::load(paths);
+    let before = settings.java.extra_paths.len();
+    settings.java.extra_paths.retain(|entry| entry != home);
+    if settings.java.extra_paths.len() != before {
+        crate::settings::save(paths, &settings)?;
+    }
+    Ok(())
+}
+
+/// 设置页那一节要显示的内容。
+///
+/// 按大版本分组，而不是平铺一串安装路径：用户的问题是「我缺什么」，平铺的
+/// 列表只回答得了「我装了什么」。缺的那些也占一组，组里没有运行时——那一行
+/// 正是要让人看见的。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaGroup {
+    pub major: u16,
+    /// 需要这个大版本的实例名。
+    pub required_by: Vec<String>,
+    /// 装在这台机器上的那些。空表示这一组还缺。
+    pub runtimes: Vec<JavaRuntime>,
+}
+
+/// 一个实例需要哪个大版本，以及这台机器上有没有。
+///
+/// 需求取自已经落盘的版本元数据（现在离线也读得到，见 metacache），拿不到时
+/// 按版本号推——那时给出的是估计值，界面要说明。
+pub fn overview(paths: &DataPaths, instances: &[crate::InstanceProfile]) -> Vec<JavaGroup> {
+    let runtimes = discover(Some(paths));
+    let mut groups: Vec<JavaGroup> = Vec::new();
+
+    let group_for = |groups: &mut Vec<JavaGroup>, major: u16| -> usize {
+        match groups.iter().position(|group| group.major == major) {
+            Some(index) => index,
+            None => {
+                groups.push(JavaGroup {
+                    major,
+                    required_by: Vec::new(),
+                    runtimes: Vec::new(),
+                });
+                groups.len() - 1
+            }
+        }
+    };
+
+    for runtime in &runtimes {
+        let index = group_for(&mut groups, runtime.major);
+        groups[index].runtimes.push(runtime.clone());
+    }
+
+    for profile in instances {
+        let declared = crate::read_prepared_java_major(paths, &profile.game_version);
+        let requirement = requirement(&profile.game_version, profile.loader, declared);
+        // 已经有能用的就记在那一组下面；一个都没有才记在「要装哪个」那一组，
+        // 而要装的是下限——上限是我们避开已知坏组合用的，不是目标。
+        let major = select(&runtimes, &requirement)
+            .map(|runtime| runtime.major)
+            .unwrap_or(requirement.minimum);
+        let index = group_for(&mut groups, major);
+        groups[index].required_by.push(profile.name.clone());
+    }
+
+    groups.sort_by_key(|group| group.major);
+    groups
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,10 +635,44 @@ mod tests {
             home: PathBuf::from(format!("/jvm/{major}")),
             major,
             version: format!("{major}.0.1"),
+            native: arch == normalize_arch(env::consts::ARCH),
             arch: arch.to_owned(),
             vendor: "Test".to_owned(),
             managed,
+            added: false,
+            image: JavaImage::Jre,
+            size_bytes: 0,
         }
+    }
+
+    #[test]
+    fn the_overview_says_what_is_missing_not_just_what_is_installed() {
+        use crate::{InstanceId, InstanceProfile};
+
+        let root = env::temp_dir().join(format!("fern-java-overview-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+        let instances = vec![
+            InstanceProfile::vanilla(InstanceId::parse("old").expect("id"), "旧世界", "1.12.2"),
+            InstanceProfile::vanilla(InstanceId::parse("new").expect("id"), "新世界", "1.21.1"),
+        ];
+
+        let groups = overview(&paths, &instances);
+        // 每个实例都必须落进某一组：落不进去就意味着界面上有一个实例的需求
+        // 无人回答，而那正是这一节存在的理由。
+        let named: Vec<&str> = groups
+            .iter()
+            .flat_map(|group| group.required_by.iter().map(String::as_str))
+            .collect();
+        assert!(named.contains(&"旧世界"));
+        assert!(named.contains(&"新世界"));
+        // 1.12.2 只能跑 Java 8，不会被算到别的组里去。
+        let eight = groups.iter().find(|group| group.major == 8);
+        assert!(eight.is_some_and(|group| group.required_by.contains(&"旧世界".to_owned())));
+        // 组按大版本升序，界面不必自己再排一次。
+        let majors: Vec<u16> = groups.iter().map(|group| group.major).collect();
+        assert!(majors.windows(2).all(|pair| pair[0] < pair[1]));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

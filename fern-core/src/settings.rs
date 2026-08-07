@@ -83,6 +83,17 @@ pub struct GameDefaults {
     pub jvm_arguments: String,
 }
 
+/// Java 相关的设置。
+///
+/// 只有一项，而且是「我们扫不到的地方」——自动下载不做开关：文档里这一层
+/// 对用户是隐形的，一个能关掉它的开关等于给用户一个把游戏弄坏的按钮。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct JavaSettings {
+    /// 用户手动登记的安装位置。扫描路径的并集之外的那些。
+    pub extra_paths: Vec<std::path::PathBuf>,
+}
+
 /// 一个实例最终生效的那份。
 ///
 /// 三层：实例说了算 → 全局默认 → 内置默认。求值只在这里做一次，`launch` 和
@@ -131,6 +142,7 @@ pub struct Settings {
     pub download: DownloadSettings,
     /// 所有实例的起点。实例设置只写它要偏离的那几项。
     pub game: GameDefaults,
+    pub java: JavaSettings,
     /// 首次启动向导走完过一次。
     pub setup_done: bool,
     /// 游戏窗口开出来之后把启动器收起来（文档 §5.4 末句）。
@@ -147,6 +159,7 @@ impl Default for Settings {
             account: AccountSettings::default(),
             download: DownloadSettings::default(),
             game: GameDefaults::default(),
+            java: JavaSettings::default(),
             setup_done: false,
             minimize_on_launch: false,
         }

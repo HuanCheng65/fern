@@ -340,6 +340,16 @@ pub fn read_instance(paths: &DataPaths, instance_id: &str) -> Result<InstancePro
         .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))
 }
 
+/// 已经落盘的版本元数据里声明的 Java 大版本。
+///
+/// 这是权威的**下限**。补全过的实例读得到，没补全过的读不到——那时只能按
+/// 版本号推，界面上要说明那是估计。
+pub fn read_prepared_java_major(paths: &DataPaths, version_id: &str) -> Option<u16> {
+    read_prepared_metadata(paths, version_id)
+        .and_then(|metadata| metadata.java_version)
+        .map(|version| version.major_version)
+}
+
 fn read_prepared_metadata(
     paths: &DataPaths,
     version_id: &str,

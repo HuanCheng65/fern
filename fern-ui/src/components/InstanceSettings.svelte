@@ -24,7 +24,10 @@
     major: number
     version: string
     vendor: string
+    arch: string
     managed: boolean
+    image: 'jdk' | 'jre'
+    native: boolean
   }
 
   interface InstanceRuntime {
@@ -95,8 +98,21 @@
   const memoryAuto = $derived(settings.maxMemoryMb === null)
   const memoryValue = $derived(settings.maxMemoryMb ?? runtime?.automaticMemoryMb ?? 2048)
 
+  /**
+   * 同一个大版本可能同时装着 JDK 和 JRE，两行不能长得一模一样。
+   *
+   * 跑游戏两者没有区别，所以它只出现在标签里，不参与选择。
+   */
   const javaLabel = (item: JavaRuntime) =>
-    `Java ${item.major}${item.vendor ? ` · ${item.vendor}` : ''}${item.managed ? ' · 由 Fern 下载' : ''}`
+    [
+      `Java ${item.major}`,
+      item.vendor,
+      item.image === 'jdk' ? 'JDK' : 'JRE',
+      item.managed ? '由 Fern 下载' : '',
+      item.native ? '' : `${item.arch}，非原生架构`,
+    ]
+      .filter(Boolean)
+      .join(' · ')
 
   async function load() {
     if (!inTauri()) {

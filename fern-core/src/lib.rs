@@ -46,8 +46,8 @@ pub use auth::{
 pub use catalog::{
     InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, delete_instance,
     duplicate_instance, instance_runtime, list_instances, list_versions, read_instance,
-    rename_instance, set_instance_account, touch_played, update_instance_settings,
-    write_instance_profile,
+    read_prepared_java_major, rename_instance, set_instance_account, touch_played,
+    update_instance_settings, write_instance_profile,
 };
 pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
 pub use credentials::{client_token, store_secret};
@@ -61,7 +61,8 @@ pub use instance::{
     LoaderProfile, ProcessPriority, Resolution,
 };
 pub use java::{
-    JavaRequirement, JavaRuntime, detect_java, discover as discover_java,
+    JavaGroup, JavaImage, JavaRequirement, JavaRuntime, add_path as add_java_path, detect_java,
+    discover as discover_java, forget_path as forget_java_path, overview as java_overview,
     requirement as java_requirement, select as select_java,
 };
 pub use job::{Job, JobEvent};
@@ -91,7 +92,7 @@ pub use mods::{
     set_enabled as set_mod_enabled,
 };
 pub use prepare::{PrepareResult, prepare_instance};
-pub use runtime::{ensure_java, remove as remove_runtime};
+pub use runtime::{ensure_java, install as install_java, remove as remove_runtime};
 pub use saves::{SaveEntry, list as list_saves};
 pub use settings::{
     AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,

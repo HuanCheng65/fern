@@ -798,6 +798,59 @@ async fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
     off_thread(|| Ok(fern_core::discover_java(Some(&paths()?)))).await?
 }
 
+/// Java 按大版本分组的全貌：每一组由谁在用，装了没有。
+#[tauri::command]
+async fn java_overview() -> Result<Vec<fern_core::JavaGroup>, String> {
+    off_thread(|| {
+        let paths = paths()?;
+        let instances =
+            fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))?;
+        Ok(fern_core::java_overview(&paths, &instances))
+    })
+    .await?
+}
+
+/// 主动装一个大版本。走作业，因为这是一次两百兆上下的下载。
+#[tauri::command]
+async fn install_java(
+    app: tauri::AppHandle,
+    major: u16,
+    title: String,
+    subjects: Vec<String>,
+) -> Result<(), String> {
+    let paths = paths()?;
+    let events = launcher_events(&app);
+    let job = fern_core::Job::begin(&events, title, subjects);
+    job.expect(1);
+    job.step(format!("下载 Java {major}"));
+    let result = fern_core::install_java(&paths, major, &job.downloads())
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
+    result
+}
+
+/// 手动登记一个安装位置。可以指到可执行文件，也可以指到根目录。
+#[tauri::command]
+async fn add_java_path(path: String) -> Result<fern_core::JavaRuntime, String> {
+    off_thread(move || {
+        fern_core::add_java_path(&paths()?, std::path::Path::new(&path))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 不再登记某个手动加进来的位置。磁盘上的东西一个字节都不动。
+#[tauri::command]
+async fn forget_java_path(home: String) -> Result<(), String> {
+    off_thread(move || {
+        fern_core::forget_java_path(&paths()?, std::path::Path::new(&home))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 /// 删掉一份 Fern 自己下载的运行时。核心那边会拒绝 `runtimes/` 以外的路径。
 #[tauri::command]
 async fn remove_java_runtime(home: String) -> Result<(), String> {
@@ -847,6 +900,10 @@ pub fn run() {
             yggdrasil_login,
             memory_budget,
             list_java_runtimes,
+            java_overview,
+            install_java,
+            add_java_path,
+            forget_java_path,
             remove_java_runtime,
             instance_runtime,
             search_resources,

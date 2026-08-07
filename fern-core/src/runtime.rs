@@ -70,6 +70,23 @@ struct RuntimeArtifact {
     url: String,
 }
 
+/// 主动装一个大版本。
+///
+/// 和 `ensure_java` 的区别只在意图：那一条是「启动前发现缺了」，这一条是
+/// 「现在就把它备好」，所以即使已经装过也当作满足——重复下载一份两百兆的
+/// 运行时不是用户要的。
+pub async fn install(
+    paths: &DataPaths,
+    major: u16,
+    events: &UnboundedSender<DownloadEvent>,
+) -> Result<JavaRuntime> {
+    let requirement = JavaRequirement {
+        minimum: major,
+        maximum: Some(major),
+    };
+    ensure_java(paths, None, &requirement, events).await
+}
+
 /// 保证有一个满足要求的 Java，必要时下载。
 ///
 /// `component` 来自 version JSON 的 `javaVersion.component`——Mojang 自己指定了
