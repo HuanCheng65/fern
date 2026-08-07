@@ -10,6 +10,7 @@ mod instance;
 mod java;
 mod launch;
 mod prepare;
+mod runtime;
 mod settings;
 
 pub use catalog::{VersionOption, create_instance, list_instances, list_versions};
@@ -28,6 +29,10 @@ pub use launch::{
     Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,
 };
 pub use prepare::{PrepareResult, prepare_instance};
+pub use runtime::{
+    disk_usage as runtime_disk_usage, ensure_java, installed as installed_runtimes,
+    remove as remove_runtime,
+};
 pub use settings::{
     AccountKind, AccountSettings, DownloadSettings, Settings, SourcePreference,
     current as current_settings, load as load_settings, save as save_settings,

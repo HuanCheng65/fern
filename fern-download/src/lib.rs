@@ -75,6 +75,7 @@ impl DownloadSource for BmclapiSource {
         let replacement = match host {
             "libraries.minecraft.net" => "bmclapi2.bangbang93.com",
             "piston-meta.mojang.com" => "bmclapi2.bangbang93.com",
+            "launchermeta.mojang.com" => "bmclapi2.bangbang93.com",
             "piston-data.mojang.com" => "bmclapi2.bangbang93.com",
             "resources.download.minecraft.net" => "bmclapi2.bangbang93.com",
             _ => return official.clone(),

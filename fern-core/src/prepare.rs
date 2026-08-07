@@ -11,7 +11,7 @@ use fern_meta::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, settings::source_order};
+use crate::{DataPaths, java, runtime, settings::source_order};
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -171,6 +171,23 @@ pub async fn prepare_instance(
         message: "开始补全文件".to_owned(),
     });
     downloader.download_all(tasks, events).await?;
+
+    // Java 也是这个实例缺的文件之一，补全就该把它补上。放在这里而不是启动
+    // 时：启动那一步不该再有几百兆的下载，而补全本来就是「跑一遍直到齐活」。
+    let requirement = java::requirement(
+        version_id,
+        profile.loader,
+        metadata
+            .java_version
+            .as_ref()
+            .map(|version| version.major_version),
+    );
+    let component = metadata
+        .java_version
+        .as_ref()
+        .map(|version| version.component.as_str());
+    runtime::ensure_java(paths, component, &requirement, events).await?;
+
     Ok(result)
 }
 
