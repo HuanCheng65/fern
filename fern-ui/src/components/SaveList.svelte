@@ -10,6 +10,7 @@
    */
   import { invoke } from '@tauri-apps/api/core'
   import { FolderOpen } from 'lucide-svelte'
+  import Loading from './Loading.svelte'
   import { inTauri } from '../lib/instances.svelte'
   import { formatBytes } from '../lib/launch.svelte'
 
@@ -69,7 +70,7 @@
   </div>
 
   {#if loading}
-    <p class="t-quiet empty">读取中</p>
+    <Loading note="读取存档" />
   {:else if saves.length === 0}
     <p class="t-quiet empty">还没有存档。进游戏创建一个世界之后会出现在这里。</p>
   {:else}

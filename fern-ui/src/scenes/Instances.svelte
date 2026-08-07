@@ -15,12 +15,14 @@
    */
   import { Play, Plus } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
+  import Loading from '../components/Loading.svelte'
   import Collection from '../layouts/Collection.svelte'
   import InstanceDetail from './InstanceDetail.svelte'
   import NewInstance from './NewInstance.svelte'
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
+  import { expand, riseIn } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
 
   /** 新建页占用的那个纵深位。实例 id 是随机发的，撞不上这个词。 */
@@ -38,13 +40,20 @@
 </script>
 
 {#if creating}
-  <NewInstance />
+  <div class="depth" in:expand>
+    <NewInstance />
+  </div>
 {:else if viewing}
-  <InstanceDetail instance={viewing} />
+  <!-- 往深处走是就地展开，不是横移——两种导航要能分得清。 -->
+  <div class="depth" in:expand>
+    <InstanceDetail instance={viewing} />
+  </div>
 {:else if instances.list.length === 0}
   <section class="blank">
-    <h1 class="t-h1">{instances.loading ? '正在读取实例' : '暂无实例'}</h1>
-    {#if !instances.loading}
+    {#if instances.loading}
+      <Loading note="读取实例" />
+    {:else}
+      <h1 class="t-h1">暂无实例</h1>
       <p class="note">创建一个实例之后，它的封面会出现在这里。</p>
       <button class="btn btn--ghost" onclick={oncreate}><Plus size={15} />新建实例</button>
     {/if}
@@ -58,8 +67,8 @@
     {/snippet}
 
     <div class="grid">
-      {#each instances.recent as item (item.id)}
-        <div class="card" class:on={instances.current?.id === item.id}>
+      {#each instances.recent as item, index (item.id)}
+        <div class="card" class:on={instances.current?.id === item.id} in:riseIn={{ index }}>
           <button class="face" onclick={() => nav.open(item.id)} title="打开 {item.name}">
             <Cover seed={item.cover} quality={0.55} />
           </button>
@@ -86,6 +95,11 @@
 {/if}
 
 <style>
+  .depth {
+    height: 100%;
+    min-height: 0;
+  }
+
   .blank {
     display: grid;
     align-content: center;

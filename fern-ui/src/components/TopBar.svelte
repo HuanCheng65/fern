@@ -17,6 +17,7 @@
    * 背景层提取的色板走；只有场景内容滚到它底下时才浮现毛玻璃。
    */
   import { ArrowLeft, ScrollText, Settings } from 'lucide-svelte'
+  import Mark from './Mark.svelte'
   import { platform } from '../lib/frame.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
@@ -67,8 +68,9 @@
   data-tauri-drag-region="deep"
 >
   <button class="brand" onclick={() => nav.go('launch')} title="回到启动">
-    <span class="mark" aria-hidden="true"></span>
-    <span class="word">Fern</span>
+    <Mark size={18} />
+    <!-- 字标：小写、650、字距 −1.5%（见 docs/fern-brand-system.html 04）。 -->
+    <span class="word">fern</span>
   </button>
 
   <nav aria-label="主导航" class:deep={inDetail}>
@@ -125,11 +127,15 @@
         {#if launch.running}
           <span class="dot"></span>运行中
         {:else}
-          <span
-            class="ring"
-            class:spin={launch.progress < 0}
-            style:--fill={`${Math.max(launch.progress, 0)}%`}
-          ></span>
+          <!--
+            进度长在标志上：螺线画完即启动完成（见 docs/fern-brand-system.html
+            06）。进度未知时它沿走线自己跑，不假装知道到了百分之几。
+          -->
+          <Mark
+            size={14}
+            spinning={launch.progress < 0}
+            progress={launch.progress >= 0 ? launch.progress / 100 : undefined}
+          />
           {launch.progress >= 0 ? `${Math.round(launch.progress)}%` : launch.label || '准备中'}
         {/if}
       </button>
@@ -217,21 +223,16 @@
     padding: 0;
   }
 
-  .mark {
-    width: 11px;
-    height: 11px;
-    flex: none;
-    border-radius: 3px;
-    background: var(--accent);
-    box-shadow: 0 0 0 4px var(--accent-soft);
-    transition: background var(--t-slow) var(--ease);
+  .brand :global(svg) {
+    color: var(--accent);
+    transition: color var(--t-slow) var(--ease);
   }
 
   .word {
     color: var(--ink-2);
-    font-size: var(--t-small);
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font-size: var(--t-body);
+    font-weight: 650;
+    letter-spacing: -0.015em;
     transition: color var(--t-fast) var(--ease);
   }
 
@@ -364,26 +365,7 @@
     color: var(--ink);
   }
 
-  /* 进度环。conic-gradient 画一圈，中间挖空。 */
-  .ring {
-    width: 11px;
-    height: 11px;
-    border-radius: 50%;
-    background: conic-gradient(var(--accent) var(--fill), var(--tint-3) 0);
-    mask: radial-gradient(circle, transparent 46%, #000 47%);
-  }
 
-  /* 进度未知时就转，别假装知道到了百分之几。 */
-  .ring.spin {
-    background: conic-gradient(transparent 0deg, var(--accent) 300deg);
-    animation: spin calc(900ms / var(--motion, 1)) linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
-  }
 
   .dot {
     width: 6px;

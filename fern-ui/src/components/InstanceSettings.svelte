@@ -16,6 +16,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { ChevronRight } from 'lucide-svelte'
   import Choice from './Choice.svelte'
+  import Loading from './Loading.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
 
   interface JavaRuntime {
@@ -158,7 +159,7 @@
 </script>
 
 {#if loading}
-  <p class="t-quiet pad">读取中</p>
+  <Loading note="读取实例信息" />
 {:else}
   <div class="body">
       <section>

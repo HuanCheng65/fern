@@ -18,6 +18,7 @@
   import { onMount } from 'svelte'
   import { inTauri } from '../lib/instances.svelte'
   import { formatBytes } from '../lib/launch.svelte'
+  import Loading from './Loading.svelte'
   import { nav } from '../lib/nav.svelte'
 
   interface ModFile {
@@ -141,7 +142,7 @@
   </div>
 
   {#if loading}
-    <p class="t-quiet empty">读取中</p>
+    <Loading note="读取模组" />
   {:else if mods.length === 0}
     <p class="t-quiet empty">尚未安装模组。将 jar 文件拖入窗口即可安装。</p>
   {:else}

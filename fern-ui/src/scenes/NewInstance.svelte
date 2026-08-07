@@ -17,6 +17,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { Check, Plus } from 'lucide-svelte'
   import Choice from '../components/Choice.svelte'
+  import Loading from '../components/Loading.svelte'
   import { instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
@@ -164,7 +165,7 @@
                 </button>
               </div>
             {:else if stableLoaderVersions.length === 0}
-              <p class="t-quiet hint">正在读取 {loaderLabel} 的版本</p>
+              <Loading note="读取 {loaderLabel} 的版本" size={18} />
             {:else}
               <div class="picks scroll">
                 {#each stableLoaderVersions.slice(0, 60) as item (item.version)}
@@ -218,7 +219,7 @@
         />
         <div class="versions scroll">
           {#if instances.versionsLoading}
-            <p class="hint">正在读取版本清单</p>
+            <Loading note="读取版本清单" />
           {:else if shown.length === 0}
             <p class="hint">没有匹配的版本</p>
           {:else}

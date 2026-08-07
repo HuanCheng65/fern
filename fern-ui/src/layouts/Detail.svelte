@@ -14,6 +14,9 @@
    * 症状。某个 tab 的内容多到想再分组，用表单布局的纵向锚点。
    */
   import type { Snippet } from 'svelte'
+  import { fly } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
+  import { DURATION, scaled } from '../lib/motion'
 
   interface Tab {
     id: string
@@ -41,6 +44,23 @@
 
   const reading = $derived(tabs.find((item) => item.id === tab)?.reading === true)
 
+  /**
+   * 切 tab 时内容横向让一下位。
+   *
+   * tab 是「我在看另一个东西」，所以延续横向的语法——只是位移比场景切换小
+   * 一个数量级：换的是同一个实例里的一段，不是换了个地方。
+   */
+  let previous = $state(0)
+  const index = $derived(tabs.findIndex((item) => item.id === tab))
+  const slide = $derived.by(() => {
+    const direction = index >= previous ? 1 : -1
+    return { x: direction * 12, duration: scaled(DURATION.base), easing: cubicOut, opacity: 0 }
+  })
+
+  $effect(() => {
+    previous = index
+  })
+
   function onScroll() {
     if (scroller) compact = scroller.scrollTop > 56
   }
@@ -65,7 +85,11 @@
     {/each}
   </nav>
 
-  <div class="body" class:reading>{@render children()}</div>
+  <div class="body" class:reading>
+    {#key tab}
+      <div in:fly={slide}>{@render children()}</div>
+    {/key}
+  </div>
 </div>
 
 <style>

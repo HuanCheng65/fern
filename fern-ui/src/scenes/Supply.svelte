@@ -15,9 +15,11 @@
   import { Search } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
   import FilterGroup from '../components/FilterGroup.svelte'
+  import Loading from '../components/Loading.svelte'
   import Browse from '../layouts/Browse.svelte'
   import ProjectDetailView from './ProjectDetail.svelte'
   import { instances } from '../lib/instances.svelte'
+  import { expand, riseIn } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
   import { compactNumber, KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
 
@@ -80,12 +82,14 @@
 </script>
 
 {#if nav.detail}
-  <ProjectDetailView slug={nav.detail} />
+  <div class="depth" in:expand>
+    <ProjectDetailView slug={nav.detail} />
+  </div>
 {:else}
   <Browse>
     {#snippet search()}
       <div class="field">
-        <Search size={16} strokeWidth={1.9} />
+        <Search class="glass" size={16} strokeWidth={1.9} />
         <input
           class="input"
           bind:value={supply.query}
@@ -131,29 +135,35 @@
           }}
         />
       {/if}
-
-      <FilterGroup
-        label="排序"
-        value={supply.sort}
-        options={SORTS}
-        onchange={(value) => {
-          supply.sort = value
-          supply.refresh()
-        }}
-      />
     {/snippet}
 
     <div class="results" bind:this={results}>
       {#if supply.error}
         <div class="alert">{supply.error}</div>
       {:else if supply.searching && supply.hits.length === 0}
-        <p class="t-quiet hint">搜索中</p>
+        <Loading note="搜索中" fill />
       {:else if supply.hits.length === 0}
         <p class="t-quiet hint">没有匹配的结果。</p>
       {:else}
+        <!--
+          排序不是筛选条件——它不删掉任何东西，只换个顺序，所以跟着结果走
+          而不是待在左栏那一组条件里。
+        -->
+        <div class="results-head">
+          <span class="t-quiet">{supply.total} 个结果</span>
+          <label class="sort">
+            <span class="t-quiet">排序</span>
+            <select class="bare" bind:value={supply.sort} onchange={() => supply.refresh()}>
+              {#each SORTS as item (item.id)}
+                <option value={item.id}>{item.label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+
         <div class="grid">
-          {#each supply.hits as hit (hit.projectId)}
-            <button class="card" onclick={() => open(hit.slug, hit.title)}>
+          {#each supply.hits as hit, index (hit.projectId)}
+            <button class="card" onclick={() => open(hit.slug, hit.title)} in:riseIn={{ index }}>
               <span class="icon">
                 {#if hit.iconUrl}
                   <img src={hit.iconUrl} alt="" loading="lazy" />
@@ -177,7 +187,7 @@
           {:else if supply.canLoadMore}
             <span class="t-quiet">已显示 {supply.hits.length} / {supply.total}</span>
           {:else}
-            <span class="t-quiet">共 {supply.total} 个结果，到底了</span>
+            <span class="t-quiet">到底了</span>
           {/if}
         </div>
       {/if}
@@ -186,18 +196,64 @@
 {/if}
 
 <style>
+  .depth {
+    height: 100%;
+    min-height: 0;
+  }
+
+  /*
+   * 搜索是浏览型页面的核心动作，是这套布局唯一允许的重型控件——所以它是一个
+   * 真的输入框，不是一条浮着的文字。放大镜在框里面，不在框旁边。
+   */
   .field {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    width: min(460px, 100%);
+    position: relative;
+    width: min(520px, 100%);
+  }
+
+  .field :global(.glass) {
+    position: absolute;
+    top: 50%;
+    left: var(--s3);
     color: var(--ink-4);
+    transform: translateY(-50%);
+    pointer-events: none;
   }
 
   .field .input {
-    flex: 1;
-    min-width: 0;
-    font-size: var(--t-h2);
+    min-height: 44px;
+    padding-left: calc(var(--s3) * 2 + 16px);
+  }
+
+  .results-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    padding-bottom: var(--s3);
+  }
+
+  .sort {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  /* 排序在结果上方，重量要压住——一个带边框的 select 会盖过它下面的卡片。 */
+  .bare {
+    padding: 0;
+    color: var(--ink-2);
+    font-size: var(--t-small);
+    cursor: pointer;
+  }
+
+  .bare:hover {
+    color: var(--ink);
+  }
+
+  /* 下拉里的选项由系统画，深色前景色在浅色菜单上读不出来。 */
+  .bare option {
+    color: #10171b;
+    background: #dfe6e6;
   }
 
   /* 滚动容器就是结果区本身，哨兵和滚动记忆都挂在它身上。 */

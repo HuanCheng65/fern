@@ -16,6 +16,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowUpRight, Check, Download } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
+  import Loading from '../components/Loading.svelte'
   import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
   import { nav } from '../lib/nav.svelte'
@@ -117,7 +118,7 @@
 </script>
 
 {#if loading}
-  <p class="t-quiet pad">读取中</p>
+  <Loading note="读取项目" fill />
 {:else if !detail}
   <div class="alert pad">{error || '读不到这个项目。'}</div>
 {:else}

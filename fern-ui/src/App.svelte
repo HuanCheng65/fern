@@ -28,6 +28,7 @@
   import { flush, hydrate } from './lib/persist'
   import { instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
+  import { DURATION, scaled } from './lib/motion'
   import { nav, SCENES } from './lib/nav.svelte'
   import { prefs } from './lib/prefs.svelte'
   import { supply } from './lib/supply.svelte'
@@ -174,11 +175,7 @@
     }
   })
 
-  const enter = $derived({
-    x: nav.direction * 26,
-    duration: Math.round(190 * theme.motionScale),
-    opacity: 0,
-  })
+  const enter = $derived({ x: nav.direction * 26, duration: scaled(DURATION.base), opacity: 0 })
 </script>
 
 <svelte:head><title>Fern</title></svelte:head>
