@@ -23,7 +23,7 @@
  * 真正的界面去）。后者是防止它长成第二个应用的闸门。
  */
 
-export type SubjectType = 'instance' | 'account' | 'place'
+export type SubjectType = 'instance' | 'account' | 'place' | 'project'
 
 /** 一个可以被指名的东西。 */
 export interface Subject {
@@ -63,12 +63,32 @@ export interface Action {
   run: (subject?: Subject) => void
 }
 
+/** 要联网才答得出的那一类来源。 */
+export type RemoteSource = (query: string, signal: AbortSignal) => Promise<Subject[]>
+
 const subjectSources: Array<() => Subject[]> = []
 const actionSources: Array<() => Action[]> = []
+const remoteSources: RemoteSource[] = []
 
 /** 贡献一批对象。在拥有这些对象的模块里调用。 */
 export function provides(source: () => Subject[]) {
   subjectSources.push(source)
+}
+
+/**
+ * 贡献一批要联网才拿得到的对象。
+ *
+ * 面板必须即时，但「不联网」这条界限画错了：模组在这个应用里就是一等对象，
+ * 凭什么排除。真正的约束是——
+ *
+ *   **面板永远不能让你为「你已经知道自己要什么」的那件事等待。**
+ *
+ * 这是可满足的，靠两条：本地结果立即渲染；远端结果只**向下追加**，永不重排
+ * 已经画出来的部分。所以慢结果不会把你正要按回车的那一行挪走。保证写在这一层
+ * 而不是交给每个来源自觉，因为它一旦被破坏就是最难察觉的那种坏。
+ */
+export function providesRemote(source: RemoteSource) {
+  remoteSources.push(source)
 }
 
 /** 贡献一批动作。在暴露这些动作的模块里调用。 */
@@ -80,6 +100,7 @@ export const TYPE_LABEL: Record<SubjectType, string> = {
   instance: '实例',
   account: '账户',
   place: '前往',
+  project: '补给',
 }
 
 /**
@@ -170,13 +191,60 @@ export interface Scope {
   action?: Action
 }
 
+/** 远端结果慢到值得说一句的门槛。低于它就不必闪一下「搜索中」。 */
+const DEBOUNCE = 220
+
 class PaletteStore {
   query = $state('')
   scope = $state<Scope | null>(null)
   cursor = $state(0)
+  /** 远端来源正在答。只用来在列表末尾说一句，不阻塞任何东西。 */
+  searching = $state(false)
 
   readonly subjects = $derived(subjectSources.flatMap((source) => source()))
   readonly actions = $derived(actionSources.flatMap((source) => source()))
+
+  /** 远端答回来的那些，连同它们对应的查询——查询变了就作废。 */
+  #remote = $state<{ query: string; subjects: Subject[] }>({ query: '', subjects: [] })
+  #timer: ReturnType<typeof setTimeout> | undefined
+  #abort: AbortController | undefined
+
+  readonly remote = $derived(
+    this.#remote.query === this.query.trim() ? this.#remote.subjects : [],
+  )
+
+  /**
+   * 去问一轮远端。防抖，且只认最后一次的答案。
+   *
+   * 「作废」而不是真的取消：Tauri 的 invoke 没有取消口子，请求会跑完，我们
+   * 只是不采信。这一点必须做到——一个已经不对应当前输入的答案追加进来，比慢
+   * 更糟，它会在用户眼皮底下往列表里塞不相干的东西。
+   */
+  ask() {
+    clearTimeout(this.#timer)
+    this.#abort?.abort()
+    const query = this.query.trim()
+    // 下钻的时候不问远端：那时候用户已经在挑一个具体类型的东西了。
+    if (!query || this.scope || remoteSources.length === 0) {
+      this.searching = false
+      this.#remote = { query: '', subjects: [] }
+      return
+    }
+    this.#timer = setTimeout(() => {
+      const controller = new AbortController()
+      this.#abort = controller
+      this.searching = true
+      Promise.all(
+        remoteSources.map((source) =>
+          source(query, controller.signal).catch(() => [] as Subject[]),
+        ),
+      ).then((batches) => {
+        if (controller.signal.aborted) return
+        this.searching = false
+        this.#remote = { query, subjects: batches.flat() }
+      })
+    }, DEBOUNCE)
+  }
 
   /**
    * 结果按分数排，组标题只是分隔线。
@@ -217,18 +285,32 @@ class PaletteStore {
       // 动作稍稍让位于对象：面板的主角是东西，动词是对它们做的事。
       rows.push({ kind: 'action', key, action, points: points + weight(key) * 4 - 1 })
     }
-    return rows.sort((left, right) => right.points - left.points)
+    rows.sort((left, right) => right.points - left.points)
+
+    // 远端结果一律排在本地之后，不参与上面的排序。这不是「它们不够重要」，
+    // 是那条保证：已经画出来的行不许因为网络回来而移动位置。
+    for (const subject of this.remote) {
+      rows.push({
+        kind: 'subject',
+        key: `${subject.type}:${subject.id}`,
+        subject,
+        points: -1,
+      })
+    }
+    return rows
   })
 
   open(scope: Scope | null = null) {
     this.query = ''
     this.scope = scope
     this.cursor = 0
+    this.ask()
   }
 
   /** 查询变了就把光标收回第一行，否则它会停在一个已经不存在的位置上。 */
   reset() {
     this.cursor = 0
+    this.ask()
   }
 
   move(delta: number) {
@@ -275,6 +357,7 @@ class PaletteStore {
     this.scope = null
     this.query = ''
     this.cursor = 0
+    this.ask()
     return false
   }
 }

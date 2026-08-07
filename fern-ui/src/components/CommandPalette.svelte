@@ -108,7 +108,7 @@
     <kbd>esc</kbd>
   </div>
 
-  {#if rows.length === 0}
+  {#if rows.length === 0 && !palette.searching}
     <p class="none">没有匹配的结果</p>
   {:else}
     <div class="list scroll" bind:this={listEl}>
@@ -136,6 +136,12 @@
           {#if row.kind === 'action' && row.action.keys}<kbd>{row.action.keys}</kbd>{/if}
         </button>
       {/each}
+
+      <!-- 远端还在答。它排在最后，也只在最后说话——已经画出来的行不会因为
+           这一句而移动。 -->
+      {#if palette.searching}
+        <p class="pending">正在搜索补给…</p>
+      {/if}
     </div>
   {/if}
 
@@ -266,6 +272,13 @@
   .text small {
     color: var(--ink-3);
     font-family: var(--mono);
+    font-size: var(--t-micro);
+  }
+
+  .pending {
+    margin: 0;
+    padding: var(--s3);
+    color: var(--ink-4);
     font-size: var(--t-micro);
   }
 

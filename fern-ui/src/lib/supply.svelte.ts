@@ -12,6 +12,8 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import { commands, palette, providesRemote, type Subject } from './palette.svelte'
+import { nav } from './nav.svelte'
 import { inTauri, instances } from './instances.svelte'
 
 /** 数据包要选存档、插件是服务端的事，所以不做——摆上去就是点了会失败的按钮。 */
@@ -236,3 +238,69 @@ const LOADER_TAGS: Record<string, string> = {
 export const loaderTag = (displayName: string) => LOADER_TAGS[displayName] ?? ''
 
 export const LOADER_FILTERS = Object.entries(LOADER_TAGS).map(([label, id]) => ({ id, label }))
+
+
+/** 面板里一次搜多少条。它不是补给站，只是一条捷径，给几条最像的就够了。 */
+const PALETTE_HITS = 5
+
+/**
+ * 补给里的项目也可以被指名。
+ *
+ * 面板与补给站的分工：**面板是「我知道我要什么」，补给是「我不知道我要
+ * 什么」。** 所以这里只做直达，不复制筛选、排序、分页——那些是「不知道要
+ * 什么」时才需要的东西。
+ */
+providesRemote(async (query, signal) => {
+  if (!inTauri()) return []
+  const target = supply.target
+  const result = await invoke<{ hits: Hit[] }>('search_resources', {
+    query: {
+      query,
+      kind: 'mod',
+      // 有当前实例就顺手按它过滤：面板里搜模组，十有八九是要装给正在玩的
+      // 那个，给一条装不上的结果没有意义。
+      gameVersion: target?.gameVersion ?? '',
+      loader: target ? loaderTag(target.loader) || null : null,
+      category: '',
+      sort: 'relevance',
+      offset: 0,
+      limit: PALETTE_HITS,
+    },
+  })
+  if (signal.aborted) return []
+  return result.hits.map(
+    (hit): Subject => ({
+      type: 'project',
+      id: hit.slug,
+      title: hit.title,
+      hint: hit.author,
+      run: () => {
+        supply.beginViewing(hit.title)
+        nav.enter('supply', hit.slug)
+      },
+    }),
+  )
+})
+
+/**
+ * 交接，而不是在面板里再造一个补给站。
+ *
+ * 面板给的是最像的那几条；要挑、要比、要筛，就该去那个为此而生的地方，
+ * 并且把已经打过的字带过去。
+ */
+commands(() => [
+  {
+    id: 'supply.search',
+    title: '在补给中搜索',
+    hint: palette.query.trim() || undefined,
+    accepts: 'none',
+    run: () => {
+      const query = palette.query.trim()
+      if (query) {
+        supply.query = query
+        supply.refresh()
+      }
+      nav.go('supply')
+    },
+  },
+])
