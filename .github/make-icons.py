@@ -10,12 +10,16 @@
 那条要求的推广。
 
     python3 .github/make-icons.py
+
+已经被人手工换掉的文件不会被覆盖（比如 macOS 那个走 Icon Composer 的
+icns）——脚本记着自己上次写出去的样子，对不上就让开。
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import struct
-import zlib
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -41,6 +45,8 @@ RUNS_COMPACT = [(7, 8, 7, 8)] + RUNS[1:]
 ROOT = Path(__file__).resolve().parent.parent
 ICONS = ROOT / "fern-ui/src-tauri/icons"
 PUBLIC = ROOT / "fern-ui/public"
+# 记下每个生成出来的文件长什么样，好在下次认出哪些已经被人换掉了。
+MANIFEST = ICONS / ".generated.json"
 
 # 保护区是四周各一格，但图标底板本身已经是留白，取 14% 与规范的构造图一致。
 PAD_RATIO = 0.14
@@ -130,20 +136,63 @@ def favicon_svg() -> str:
     )
 
 
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_manifest() -> dict[str, str]:
+    try:
+        return json.loads(MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def write(path: Path, payload: bytes, manifest: dict[str, str], seen: dict[str, str]) -> None:
+    """写一个生成出来的文件，但**不覆盖手工换过的那一份**。
+
+    某些图标是人做的而不是算的——比如 macOS 那个走 Icon Composer 的 icns。
+    脚本记着自己上次写出去的样子，对不上就说明有人换过，让开。
+    """
+    key = path.name
+    if path.exists() and manifest.get(key) not in (None, digest(path)):
+        print(f"  跳过 {key}：已被替换为手工版本")
+        seen[key] = manifest[key]
+        return
+    path.write_bytes(payload)
+    seen[key] = digest(path)
+
+
+def png_bytes(image: Image.Image, **options) -> bytes:
+    import io
+
+    buffer = io.BytesIO()
+    image.save(buffer, format=options.pop("format", "PNG"), **options)
+    return buffer.getvalue()
+
+
 def main() -> None:
     ICONS.mkdir(parents=True, exist_ok=True)
     PUBLIC.mkdir(parents=True, exist_ok=True)
+    manifest = load_manifest()
+    seen: dict[str, str] = {}
 
     for name, size in [("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256)]:
-        tile(size).save(ICONS / name)
+        write(ICONS / name, png_bytes(tile(size)), manifest, seen)
 
     # Windows 的 ico 要多档，系统按上下文自己挑。
-    tile(256).save(
+    write(
         ICONS / "icon.ico",
-        sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        png_bytes(
+            tile(256),
+            format="ICO",
+            sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        ),
+        manifest,
+        seen,
     )
 
-    (ICONS / "icon.icns").write_bytes(
+    write(
+        ICONS / "icon.icns",
         icns(
             {
                 "icp4": tile(16),
@@ -155,13 +204,15 @@ def main() -> None:
                 "ic13": tile(512),
                 "ic14": tile(1024),
             }
-        )
+        ),
+        manifest,
+        seen,
     )
 
-    (PUBLIC / "favicon.svg").write_text(favicon_svg(), encoding="utf-8")
+    write(PUBLIC / "favicon.svg", favicon_svg().encode("utf-8"), manifest, seen)
 
+    MANIFEST.write_text(json.dumps(seen, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"图标已写入 {ICONS.relative_to(ROOT)} 与 {PUBLIC.relative_to(ROOT)}")
-    assert zlib  # 保持导入，PNG 编码走它
 
 
 if __name__ == "__main__":
