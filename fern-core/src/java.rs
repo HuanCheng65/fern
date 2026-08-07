@@ -358,11 +358,7 @@ fn java_executable_name() -> &'static str {
     }
 }
 
-/// 平台上惯例的安装位置，加上环境变量指出来的那些。
-///
-/// Windows 的注册表（`HKLM\SOFTWARE\JavaSoft\*`）没有扫：那要多引一个
-/// 平台专用依赖，而所有主流发行版都会装进下面这些目录，`JAVA_HOME` 和
-/// `PATH` 又兜住了装在别处的情况。
+/// 平台上惯例的安装位置，加上环境变量和（Windows 上）注册表指出来的那些。
 fn system_java_homes() -> Vec<PathBuf> {
     let mut homes = Vec::new();
 
@@ -385,6 +381,10 @@ fn system_java_homes() -> Vec<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
+        // 注册表是唯一能找到「装在非默认目录、又不在 PATH 上」那些 JDK 的
+        // 办法，而 Windows 的安装器让人选目录，改到别的盘去很常见。
+        homes.extend(crate::registry::java_homes());
+
         for variable in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
             let Some(base) = env::var_os(variable).map(PathBuf::from) else {
                 continue;
