@@ -16,6 +16,7 @@
   import TopBar from './components/TopBar.svelte'
   import CommandPalette, { type PaletteAction } from './components/CommandPalette.svelte'
   import CreateInstance from './components/CreateInstance.svelte'
+  import CrashReport from './components/CrashReport.svelte'
   import WindowFrame from './components/WindowFrame.svelte'
   import LaunchScene from './scenes/Launch.svelte'
   import InstancesScene from './scenes/Instances.svelte'
@@ -275,6 +276,15 @@
 
   {#if paletteOpen}
     <CommandPalette {actions} onclose={() => (paletteOpen = false)} />
+  {/if}
+
+  <!-- 崩溃报告压在所有浮层之上：它是用户此刻唯一需要处理的事。 -->
+  {#if launch.crash}
+    <CrashReport
+      report={launch.crash}
+      onclose={() => launch.dismissCrash()}
+      onopenLogs={() => void invoke('open_logs_directory')}
+    />
   {/if}
 
   {#if createOpen}

@@ -20,7 +20,11 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum DownloadEvent {
     Status { message: String },
     TaskStarted { total_files: u64, total_bytes: u64 },

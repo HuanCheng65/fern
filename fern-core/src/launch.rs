@@ -5,6 +5,10 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -12,7 +16,11 @@ use fern_meta::{Library, RuleContext, VersionMetadata, release_ordinal, rules_al
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 
-use crate::{DataPaths, java, tuning};
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::{
+    DataPaths, LaunchStage, LauncherEvent, crash, gamelog, gamelog::LogParser, java, tuning,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -135,7 +143,15 @@ pub async fn launch_instance(
     paths: &DataPaths,
     instance_id: &str,
     player_name: &str,
+    events: &UnboundedSender<LauncherEvent>,
 ) -> Result<LaunchResult> {
+    let stage = |stage: LaunchStage| {
+        let _ = events.send(LauncherEvent::LaunchStage {
+            instance_id: instance_id.to_owned(),
+            stage,
+        });
+    };
+    stage(LaunchStage::ResolvingVersion);
     if !(3..=16).contains(&player_name.len())
         || !player_name
             .bytes()
@@ -163,6 +179,7 @@ pub async fn launch_instance(
         .clone()
         .ok_or_else(|| anyhow!("version {version_id} has no main class"))?;
 
+    stage(LaunchStage::CheckingFiles);
     let context = current_rule_context(profile.settings.resolution.is_some());
     let natives_directory = paths.game_directory(instance_id).join("natives");
     tokio::fs::create_dir_all(&natives_directory).await?;
@@ -240,6 +257,7 @@ pub async fn launch_instance(
         .java_version
         .as_ref()
         .map(|version| version.major_version);
+    stage(LaunchStage::PreparingJava);
     let requirement = java::requirement(&version_id, profile.loader, required_java_major);
     let runtime = resolve_java_runtime(paths, &profile, &requirement)?;
     if runtime.major < requirement.minimum {
@@ -264,6 +282,7 @@ pub async fn launch_instance(
         jvm_arguments.push(argument);
     }
     jvm_arguments.extend(tuning::gc_arguments(java_major, &jvm_arguments));
+    stage(LaunchStage::BuildingCommand);
     let plan = LaunchPlan {
         java_binary: java_binary.clone(),
         working_directory: game_directory,
@@ -289,6 +308,8 @@ pub async fn launch_instance(
     )?;
     let arguments = plan.command_arguments(&variables);
     append_launch_log(&launch_log, &format!("arguments={arguments:?}"))?;
+    stage(LaunchStage::StartingProcess);
+    let started_at = std::time::SystemTime::now();
     let mut child = Command::new(&java_binary)
         .args(arguments)
         .current_dir(&plan.working_directory)
@@ -298,23 +319,92 @@ pub async fn launch_instance(
         .spawn()
         .with_context(|| format!("start Java from {}", java_binary.display()))?;
     append_launch_log(&launch_log, &format!("started pid={}", child.id()))?;
+
+    // 崩溃分析要用最后这一段，两个流写进同一个缓冲区——异常往往是 stderr
+    // 的栈配上 stdout 的上下文，分开看反而少一半信息。
+    let tail = Arc::new(Mutex::new(String::new()));
+    // 「窗口已经开出来了」只报一次，两个读线程加一个超时兜底都可能先到。
+    let running = Arc::new(AtomicBool::new(false));
+
     if let Some(stdout) = child.stdout.take() {
-        spawn_log_reader(stdout, launch_log.clone(), "stdout");
+        spawn_log_reader(
+            stdout,
+            LogSink {
+                path: launch_log.clone(),
+                stream: "stdout",
+                instance_id: instance_id.to_owned(),
+                events: events.clone(),
+                tail: tail.clone(),
+                running: running.clone(),
+            },
+        );
     }
     if let Some(stderr) = child.stderr.take() {
-        spawn_log_reader(stderr, launch_log.clone(), "stderr");
+        spawn_log_reader(
+            stderr,
+            LogSink {
+                path: launch_log.clone(),
+                stream: "stderr",
+                instance_id: instance_id.to_owned(),
+                events: events.clone(),
+                tail: tail.clone(),
+                running: running.clone(),
+            },
+        );
     }
+
+    // 日志里没等到窗口标志也不能一直不吭声：进程活过十五秒，就当它起来了。
+    {
+        let running = running.clone();
+        let events = events.clone();
+        let instance_id = instance_id.to_owned();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(15));
+            announce_running(&running, &events, &instance_id);
+        });
+    }
+
     let process_id = child.id();
     let wait_log = launch_log.clone();
-    std::thread::spawn(move || match child.wait() {
-        Ok(status) => {
-            let code = status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |code| code.to_string());
-            let _ = append_launch_log(&wait_log, &format!("exited code={code}"));
-        }
-        Err(error) => {
-            let _ = append_launch_log(&wait_log, &format!("wait error={error}"));
+    let wait_events = events.clone();
+    let wait_instance = instance_id.to_owned();
+    let wait_directory = plan.working_directory.clone();
+    std::thread::spawn(move || {
+        let exit_code = match child.wait() {
+            Ok(status) => {
+                let code = status
+                    .code()
+                    .map_or_else(|| "signal".to_owned(), |code| code.to_string());
+                let _ = append_launch_log(&wait_log, &format!("exited code={code}"));
+                status.code()
+            }
+            Err(error) => {
+                let _ = append_launch_log(&wait_log, &format!("wait error={error}"));
+                None
+            }
+        };
+
+        let _ = wait_events.send(LauncherEvent::LaunchStage {
+            instance_id: wait_instance.clone(),
+            stage: LaunchStage::Exited,
+        });
+        let _ = wait_events.send(LauncherEvent::GameExited {
+            instance_id: wait_instance.clone(),
+            exit_code,
+        });
+
+        // 正常关掉游戏不该在界面上留下任何痕迹，崩了才需要说话。信号退出
+        // （exit_code 为 None）也算——那多半是被 OOM killer 收走了。
+        if exit_code != Some(0) {
+            let log_tail = tail.lock().map(|tail| tail.clone()).unwrap_or_default();
+            let report = crash::build_report(
+                &wait_instance,
+                &wait_directory,
+                started_at,
+                exit_code,
+                &log_tail,
+            );
+            let _ = wait_events.send(LauncherEvent::GameCrashed(report));
         }
     });
     Ok(LaunchResult {
@@ -336,24 +426,99 @@ fn append_launch_log(path: &Path, message: &str) -> io::Result<()> {
     writeln!(file, "{} {message}", chrono_like_timestamp())
 }
 
-fn spawn_log_reader<R>(reader: R, path: PathBuf, stream: &'static str)
+/// 一个读线程要往哪些地方送。
+struct LogSink {
+    path: PathBuf,
+    stream: &'static str,
+    instance_id: String,
+    events: UnboundedSender<LauncherEvent>,
+    tail: Arc<Mutex<String>>,
+    running: Arc<AtomicBool>,
+}
+
+/// 崩溃分析看最后这么多字节就够，再多只是把内存和 IPC 撑大。
+const TAIL_LIMIT: usize = 64 * 1024;
+
+fn spawn_log_reader<R>(reader: R, sink: LogSink)
 where
     R: io::Read + Send + 'static,
 {
     std::thread::spawn(move || {
-        let Ok(file) = std::fs::OpenOptions::new()
+        // 落盘的那一份必须无条件写：界面订阅失败、事件被丢弃，日志文件都
+        // 还得在。
+        let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)
-        else {
-            return;
-        };
-        let mut file = io::BufWriter::new(file);
+            .open(&sink.path)
+            .ok()
+            .map(io::BufWriter::new);
+        let mut file = file;
+        let mut parser = LogParser::new();
+        let stderr = sink.stream == "stderr";
+
         for line in BufReader::new(reader).lines() {
             let Ok(line) = line else { break };
-            let _ = writeln!(file, "[{}] {line}", stream);
+            if let Some(file) = file.as_mut() {
+                let _ = writeln!(file, "[{}] {line}", sink.stream);
+                // 不缓冲太久：游戏卡死时，最后写进去的几行往往就是原因。
+                let _ = file.flush();
+            }
+            if let Ok(mut tail) = sink.tail.lock() {
+                tail.push_str(&line);
+                tail.push('\n');
+                if tail.len() > TAIL_LIMIT * 2 {
+                    let cut = tail.len() - TAIL_LIMIT;
+                    let cut = (cut..tail.len())
+                        .find(|index| tail.is_char_boundary(*index))
+                        .unwrap_or(tail.len());
+                    *tail = tail[cut..].to_owned();
+                }
+            }
+            let Some(parsed) = parser.push(&line, stderr) else {
+                continue;
+            };
+            if gamelog::signals_window_ready(&parsed.message) {
+                announce_running(&sink.running, &sink.events, &sink.instance_id);
+            }
+            if sink
+                .events
+                .send(LauncherEvent::GameLog {
+                    instance_id: sink.instance_id.clone(),
+                    level: parsed.level,
+                    message: parsed.message,
+                })
+                .is_err()
+            {
+                // 界面走了，日志还得继续读——不读，管道满了游戏就卡死。
+                continue;
+            }
         }
-        let _ = file.flush();
+
+        if let Some(parsed) = parser.flush(stderr) {
+            let _ = sink.events.send(LauncherEvent::GameLog {
+                instance_id: sink.instance_id.clone(),
+                level: parsed.level,
+                message: parsed.message,
+            });
+        }
+        if let Some(file) = file.as_mut() {
+            let _ = file.flush();
+        }
+    });
+}
+
+/// 只报一次「跑起来了」。
+fn announce_running(
+    running: &AtomicBool,
+    events: &UnboundedSender<LauncherEvent>,
+    instance_id: &str,
+) {
+    if running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = events.send(LauncherEvent::LaunchStage {
+        instance_id: instance_id.to_owned(),
+        stage: LaunchStage::Running,
     });
 }
 

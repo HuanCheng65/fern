@@ -11,7 +11,7 @@ use fern_meta::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, java, runtime, settings::source_order};
+use crate::{DataPaths, LauncherEvent, java, runtime, settings::source_order};
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
@@ -39,8 +39,9 @@ struct AssetObject {
 pub async fn prepare_instance(
     paths: &DataPaths,
     instance_id: &str,
-    events: &UnboundedSender<DownloadEvent>,
+    events: &UnboundedSender<LauncherEvent>,
 ) -> Result<PrepareResult> {
+    let events = &crate::event::download_bridge(events);
     paths.ensure_exists()?;
     let profile = crate::list_instances(paths)?
         .into_iter()

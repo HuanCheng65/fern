@@ -108,27 +108,36 @@ fn open_logs_directory() -> Result<(), String> {
     Ok(())
 }
 
+/// 把核心的事件流接到前端。
+///
+/// 转发任务是脱手的，不等命令返回：游戏日志和退出事件是在 `launch_instance`
+/// 返回之后才陆续到来的，命令一结束就关掉通道，界面就再也收不到游戏在说
+/// 什么。发送端全部丢掉时（下载结束、游戏退出、读线程收摊）通道自己关，
+/// 任务随之结束。
+fn launcher_events(app: &tauri::AppHandle) -> tokio::sync::mpsc::UnboundedSender<fern_core::LauncherEvent> {
+    let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = receiver.recv().await {
+            let _ = app.emit("launcher-event", event);
+        }
+    });
+    events
+}
+
 #[tauri::command]
 async fn prepare_instance(
     app: tauri::AppHandle,
     instance_id: String,
 ) -> Result<fern_core::PrepareResult, String> {
     let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let event_app = app.clone();
-    let forwarder = tauri::async_runtime::spawn(async move {
-        while let Some(event) = receiver.recv().await {
-            let _ = event_app.emit("download-event", event);
-        }
-    });
+    let events = launcher_events(&app);
     let result = fern_core::prepare_instance(&paths, &instance_id, &events)
         .await
         .map_err(|error| format!("{error:#}"));
     if let Err(error) = &result {
         let _ = paths.append_log(&format!("[prepare] instance={instance_id} error={error}"));
     }
-    drop(events);
-    let _ = forwarder.await;
     result
 }
 
@@ -139,18 +148,12 @@ async fn launch_instance(
     player_name: String,
 ) -> Result<fern_core::LaunchResult, String> {
     let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    let (events, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let event_app = app.clone();
-    let forwarder = tauri::async_runtime::spawn(async move {
-        while let Some(event) = receiver.recv().await {
-            let _ = event_app.emit("download-event", event);
-        }
-    });
+    let events = launcher_events(&app);
     let prepared = fern_core::prepare_instance(&paths, &instance_id, &events)
         .await
         .map_err(|error| format!("{error:#}"));
     let result = match prepared {
-        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &player_name)
+        Ok(_) => fern_core::launch_instance(&paths, &instance_id, &player_name, &events)
             .await
             .map_err(|error| format!("{error:#}")),
         Err(error) => Err(error),
@@ -158,9 +161,14 @@ async fn launch_instance(
     if let Err(error) = &result {
         let _ = paths.append_log(&format!("[launch] instance={instance_id} error={error}"));
     }
-    drop(events);
-    let _ = forwarder.await;
     result
+}
+
+/// 这台机器上的 Java。设置页要能看见 Fern 到底会用哪一个。
+#[tauri::command]
+fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
+    let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
+    Ok(fern_core::discover_java(Some(&paths)))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -181,6 +189,7 @@ pub fn run() {
             create_instance,
             offline_account,
             detect_java,
+            list_java_runtimes,
             get_settings,
             save_settings,
             open_instance_directory,

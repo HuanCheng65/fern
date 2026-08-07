@@ -4,8 +4,10 @@
 //! download, Java, account, and process events into UI-facing values.
 
 mod catalog;
+mod crash;
 mod data;
 mod event;
+mod gamelog;
 mod instance;
 mod java;
 mod launch;
@@ -15,10 +17,12 @@ mod settings;
 mod tuning;
 
 pub use catalog::{VersionOption, create_instance, list_instances, list_versions};
+pub use crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
 pub use data::DataPaths;
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;
 pub use fern_meta::{VersionManifest, VersionManifestEntry};
+pub use gamelog::{LogLine, LogParser};
 pub use instance::{
     CoverSeed, InstanceId, InstanceProfile, InstanceSettings, LoaderKind, LoaderProfile, Resolution,
 };
