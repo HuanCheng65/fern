@@ -22,6 +22,7 @@
   import LaunchScene from './scenes/Launch.svelte'
   import InstancesScene from './scenes/Instances.svelte'
   import Placeholder from './scenes/Placeholder.svelte'
+  import MultiplayerScene from './scenes/Multiplayer.svelte'
   import SupplyScene from './scenes/Supply.svelte'
   import Setup from './routes/Setup.svelte'
   import Settings from './routes/Settings.svelte'
@@ -34,6 +35,7 @@
   import { prefs } from './lib/prefs.svelte'
   import { supply } from './lib/supply.svelte'
   import { theme } from './lib/theme.svelte'
+  import { session } from './lib/pearl-session.svelte'
   import './styles/tokens.css'
 
   let setupOpen = $state(false)
@@ -57,6 +59,11 @@
 
   const createInstance = () => nav.enter('instances', 'new')
   const away = $derived(nav.overlay !== '')
+
+  // 联机昵称沿用 Fern 的账户昵称，Pearl 的配置只作为跨启动的兜底。
+  $effect(() => {
+    if (prefs.playerName.trim()) session.name = prefs.playerName.trim()
+  })
 
   async function openDirectory() {
     const current = instances.current
@@ -161,6 +168,7 @@
       ready = true
     })
     void instances.load()
+    void session.loadName()
     void launch.connect()
     // 写盘是防抖的：改完设置立刻切走或关窗，别把最后那一下丢了。
     const saveNow = () => void flush()
@@ -213,12 +221,7 @@
           {:else if nav.scene === 'supply'}
             <SupplyScene />
           {:else if nav.scene === 'multiplayer'}
-            <Placeholder
-              seed="multiplayer"
-              title="联机尚未开放"
-              note="房间、好友与服务器列表将在此处提供。"
-              onback={() => nav.go('launch')}
-            />
+            <MultiplayerScene />
           {:else}
             <Placeholder
               seed="wardrobe"

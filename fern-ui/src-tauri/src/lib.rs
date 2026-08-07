@@ -1,4 +1,166 @@
-use tauri::{Emitter, Manager};
+use std::future::Future;
+use std::sync::Arc;
+use std::time::Duration;
+
+use pearl_core::invite::Invite;
+use pearl_core::probe::{self, ProbeOptions};
+use pearl_core::session::{self, HostOptions, JoinOptions, MinecraftSource, SessionEvent, SessionOptions};
+use pearl_core::settings::{self, Settings};
+use pearl_core::sidecar::session_event_json;
+use tauri::{Emitter, Manager, State};
+use tokio::sync::Mutex;
+
+const PEARL_SIGNAL: &str = "https://pearl.huanchengfly.top";
+const PEARL_STOP_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Default)]
+struct RunningPearl {
+    task: Option<(tauri::async_runtime::JoinHandle<()>, session::StopHandle)>,
+    share: Option<tokio::sync::watch::Sender<Option<u16>>>,
+}
+
+impl RunningPearl {
+    async fn stop(&mut self) {
+        self.share = None;
+        if let Some((mut task, stop)) = self.task.take() {
+            stop.stop();
+            if tokio::time::timeout(PEARL_STOP_TIMEOUT, &mut task).await.is_err() {
+                tracing::warn!("Pearl session did not stop in time");
+                task.abort();
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PearlSessions(Arc<Mutex<RunningPearl>>);
+
+fn pearl_options(name: String) -> Result<SessionOptions, String> {
+    let display_name = settings::validate_display_name(&name).map_err(|error| error.to_string())?;
+    if let Err(error) = Settings::remember_display_name(&display_name) {
+        tracing::debug!("could not remember Pearl display name: {error:#}");
+    }
+    Ok(SessionOptions {
+        signal_base: std::env::var("PEARL_SIGNAL").unwrap_or_else(|_| PEARL_SIGNAL.to_owned()),
+        identity_path: None,
+        display_name,
+        probe: ProbeOptions {
+            port: probe::preferred_port(),
+            timeout: Duration::from_millis(1_500),
+            ..ProbeOptions::default()
+        },
+        relay_only: false,
+    })
+}
+
+async fn run_pearl<F, Fut>(
+    app: tauri::AppHandle,
+    sessions: State<'_, PearlSessions>,
+    share: Option<tokio::sync::watch::Sender<Option<u16>>>,
+    start: F,
+) -> Result<(), String>
+where
+    F: FnOnce(session::StopSignal, Box<dyn FnMut(SessionEvent) + Send>) -> Fut + Send + 'static,
+    Fut: Future<Output = anyhow::Result<()>> + Send,
+{
+    let state = sessions.0.clone();
+    let mut running = state.lock().await;
+    running.stop().await;
+    running.share = share;
+    let emitter = app.clone();
+    let emit = Box::new(move |event: SessionEvent| {
+        let _ = emitter.emit("session", session_event_json(&event));
+    }) as Box<dyn FnMut(SessionEvent) + Send>;
+    let (stop, signal) = session::stop_channel();
+    let task = tauri::async_runtime::spawn(async move {
+        let detail = start(signal, emit).await.err().map(|error| format!("{error:#}"));
+        let _ = app.emit("session", serde_json::json!({ "event": "ended", "detail": detail }));
+    });
+    running.task = Some((task, stop));
+    Ok(())
+}
+
+#[tauri::command]
+async fn pearl_host(
+    app: tauri::AppHandle,
+    sessions: State<'_, PearlSessions>,
+    name: String,
+) -> Result<(), String> {
+    let session = pearl_options(name)?;
+    let (share, shared_port) = tokio::sync::watch::channel(None);
+    run_pearl(app, sessions, Some(share), move |stop, emit| async move {
+        session::run_host(
+            HostOptions {
+                session,
+                minecraft: MinecraftSource::Discovered,
+                shared_port: Some(shared_port),
+            },
+            stop,
+            emit,
+        )
+        .await
+    })
+    .await
+}
+
+#[tauri::command]
+async fn pearl_join(
+    app: tauri::AppHandle,
+    sessions: State<'_, PearlSessions>,
+    invite: String,
+    name: String,
+) -> Result<(), String> {
+    let session = pearl_options(name)?;
+    let invite: Invite = invite.trim().parse().map_err(|_| {
+        "这串邀请码看起来不对，应该是十二个数字或一条 pearl:// 链接".to_owned()
+    })?;
+    run_pearl(app, sessions, None, move |stop, emit| async move {
+        session::run_join(
+            JoinOptions {
+                session,
+                invite,
+                local_port: 0,
+            },
+            stop,
+            emit,
+        )
+        .await
+    })
+    .await
+}
+
+#[tauri::command]
+async fn pearl_stop(sessions: State<'_, PearlSessions>) -> Result<(), String> {
+    sessions.0.lock().await.stop().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn pearl_share_port(
+    sessions: State<'_, PearlSessions>,
+    port: Option<u16>,
+) -> Result<(), String> {
+    if port == Some(0) {
+        return Err("端口需要在 1 到 65535 之间".to_owned());
+    }
+    let running = sessions.0.lock().await;
+    let Some(share) = &running.share else {
+        return Err("没有正在运行的房间".to_owned());
+    };
+    share.send(port).map_err(|_| "会话已经结束".to_owned())
+}
+
+#[tauri::command]
+fn pearl_remembered_name() -> Option<String> {
+    Settings::load().display_name
+}
+
+#[tauri::command]
+fn pearl_remember_name(name: String) -> Result<(), String> {
+    Settings::remember_display_name(&name)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 fn app_name() -> &'static str {
@@ -572,12 +734,21 @@ async fn remove_java_runtime(home: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(PearlSessions::default())
         .setup(|app| {
             #[cfg(not(target_os = "macos"))]
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
             }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event
+                && let Some(sessions) = window.try_state::<PearlSessions>()
+            {
+                let state = sessions.0.clone();
+                tauri::async_runtime::spawn(async move { state.lock().await.stop().await });
+            }
         })
         .invoke_handler(tauri::generate_handler![
             app_name,
@@ -620,7 +791,13 @@ pub fn run() {
             open_instance_directory,
             open_logs_directory,
             prepare_instance,
-            launch_instance
+            launch_instance,
+            pearl_host,
+            pearl_join,
+            pearl_stop,
+            pearl_share_port,
+            pearl_remembered_name,
+            pearl_remember_name
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fern");

@@ -18,7 +18,7 @@ getrandom = "0.3"
 libc = "0.2"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 md-5 = "0.10.6"
-pearl-core = { git = "https://github.com/HuanCheng65/pearl.git", rev = "f5c655c9f8481655e3a0b76aa28df34a693f1ed0" }
+pearl-core = { git = "https://github.com/HuanCheng65/pearl.git", rev = "15b47647b02f55bcd07365bf90a73256ea825e3a" }
 reqwest = { version = "0.12.22", default-features = false, features = ["json", "rustls-tls"] }
 regex = "1.11.1"
 sha1 = "0.10.6"
