@@ -6,11 +6,15 @@
    * 找一个版本是灾难，而且原生控件在深色界面里长得和别处完全不是一套。
    * 这里做成「正式版 / 快照」两档 + 搜索 + 一列可滚动的版本，行为和
    * 命令面板一致——同一个交互模型在启动器里只学一次。
+   *
+   * 加载器只问「要哪个」，不问「要哪个版本」：默认取最新的稳定版，那是绝大
+   * 多数人想要的答案。真要指定的人会去实例设置里找，不该让每个人都先理解
+   * 「loader 版本」是什么。
    */
   import { Check, Plus, X } from 'lucide-svelte'
   import Overlay from './Overlay.svelte'
   import Choice from './Choice.svelte'
-  import { instances } from '../lib/instances.svelte'
+  import { instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
 
   interface Props {
     onclose: () => void
@@ -26,6 +30,8 @@
   let kind = $state<Kind>('release')
   let query = $state('')
   let picked = $state('')
+  let loader = $state('vanilla')
+  let loaders = $state<LoaderOption[]>([{ kind: 'vanilla', label: '原版' }])
   let busy = $state(false)
   let error = $state('')
 
@@ -50,7 +56,7 @@
     busy = true
     error = ''
     try {
-      await instances.create(trimmed, picked)
+      await instances.create(trimmed, picked, loader)
       oncreated()
       onclose()
     } catch (cause) {
@@ -61,6 +67,11 @@
   }
 
   void instances.loadVersions()
+  if (inTauri()) {
+    void instances.loadLoaders().then((list) => {
+      if (list.length > 0) loaders = list
+    })
+  }
 </script>
 
 <Overlay label="新建实例" width="460px" {onclose}>
@@ -127,6 +138,27 @@
         {/if}
       </div>
     </div>
+
+    <!-- 加载器排在版本后面：先决定玩哪个版本，再决定怎么玩。 -->
+    {#if loaders.length > 1}
+      <div class="field">
+        <label for="loader-choice">加载器</label>
+        <div class="loaders" id="loader-choice">
+          {#each loaders as option (option.kind)}
+            <button
+              class="loader"
+              class:on={loader === option.kind}
+              onclick={() => (loader = option.kind)}
+            >
+              {option.label}
+            </button>
+          {/each}
+        </div>
+        {#if loader !== 'vanilla'}
+          <p class="hint left">将安装最新的稳定版，创建后可在实例设置里更改。</p>
+        {/if}
+      </div>
+    {/if}
 
     {#if error}<div class="alert">{error}</div>{/if}
   </div>
@@ -208,12 +240,43 @@
     color: var(--accent);
   }
 
+  /* 加载器只有两三个，铺开成一排比塞进下拉框省一次点击。 */
+  .loaders {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+
+  .loader {
+    padding: 7px var(--s3);
+    border-radius: var(--r1);
+    color: var(--ink-3);
+    font-size: var(--t-body);
+    transition:
+      background var(--t-fast) var(--ease),
+      color var(--t-fast) var(--ease);
+  }
+
+  .loader:hover {
+    background: var(--tint-1);
+  }
+
+  .loader.on {
+    color: var(--ink);
+    background: var(--tint-2);
+  }
+
   .hint {
     margin: 0;
     padding: var(--s5) 0;
     color: var(--ink-4);
     font-size: var(--t-small);
     text-align: center;
+  }
+
+  .hint.left {
+    padding: var(--s1) 0 0;
+    text-align: left;
   }
 
   footer {

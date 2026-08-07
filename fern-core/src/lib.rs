@@ -39,8 +39,9 @@ pub use launch::{
     Credentials, LaunchPlan, LaunchResult, LaunchVariables, launch_instance, offline_credentials,
 };
 pub use loader::{
-    LoaderVersion, display_name as loader_display_name, installable as installable_loaders,
-    latest_version as latest_loader_version, list_versions as list_loader_versions,
+    LoaderOption, LoaderVersion, display_name as loader_display_name,
+    installable as installable_loaders, latest_version as latest_loader_version,
+    list_versions as list_loader_versions,
 };
 pub use prepare::{PrepareResult, prepare_instance};
 pub use runtime::{ensure_java, remove as remove_runtime};

@@ -165,10 +165,25 @@ pub fn display_name(kind: LoaderKind) -> &'static str {
     }
 }
 
+/// 创建面板上的一个选项。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoaderOption {
+    pub kind: LoaderKind,
+    pub label: String,
+}
+
 /// 现在装得上的加载器。界面按这个决定给出哪些选项——列出一个装不上的，
-/// 等于让用户走到一半才被拦住。
-pub fn installable() -> Vec<LoaderKind> {
-    vec![LoaderKind::Vanilla, LoaderKind::Fabric, LoaderKind::Quilt]
+/// 等于让用户走到一半才被拦住。名字也从这里给：能装什么和它叫什么是同一件
+/// 事，分在两处，加一种加载器就要改两个地方。
+pub fn installable() -> Vec<LoaderOption> {
+    [LoaderKind::Vanilla, LoaderKind::Fabric, LoaderKind::Quilt]
+        .into_iter()
+        .map(|kind| LoaderOption {
+            kind,
+            label: display_name(kind).to_owned(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -177,17 +192,30 @@ mod tests {
 
     #[test]
     fn only_the_loaders_we_can_actually_install_are_offered() {
-        let offered = installable();
-        assert!(offered.contains(&LoaderKind::Fabric));
-        assert!(offered.contains(&LoaderKind::Quilt));
+        let kinds: Vec<_> = installable()
+            .into_iter()
+            .map(|option| option.kind)
+            .collect();
+        assert!(kinds.contains(&LoaderKind::Fabric));
+        assert!(kinds.contains(&LoaderKind::Quilt));
         // NeoForge 的安装要在本地跑 processors，还没做——列出来就是骗人。
-        assert!(!offered.contains(&LoaderKind::NeoForge));
-        assert!(!offered.contains(&LoaderKind::Forge));
-        for kind in offered {
+        assert!(!kinds.contains(&LoaderKind::NeoForge));
+        assert!(!kinds.contains(&LoaderKind::Forge));
+        for kind in kinds {
             assert!(
                 kind == LoaderKind::Vanilla || meta_root(kind).is_ok(),
                 "{kind:?} 被列为可安装，却没有 meta server"
             );
+        }
+    }
+
+    #[test]
+    fn every_option_carries_a_name_and_a_machine_readable_kind() {
+        for option in installable() {
+            assert!(!option.label.is_empty());
+            // 界面把 kind 原样发回来，序列化出来必须是个字符串。
+            let value = serde_json::to_value(option.kind).expect("serialize kind");
+            assert!(value.as_str().is_some_and(|kind| !kind.is_empty()));
         }
     }
 

@@ -95,6 +95,17 @@ pub fn create_instance_with_loader(
     let id = unique_id(paths, &base)?;
     let mut profile = InstanceProfile::vanilla(InstanceId::parse(&id)?, name, game_version);
     if loader != crate::LoaderKind::Vanilla {
+        // 拦在这里而不是补全时：建一个永远补全不了的实例，比直接说不行更糟——
+        // 用户会以为成了，直到点启动才发现。
+        if !crate::installable_loaders()
+            .iter()
+            .any(|option| option.kind == loader)
+        {
+            return Err(anyhow!(
+                "{} 的安装还没有实现",
+                crate::loader_display_name(loader)
+            ));
+        }
         let version = loader_version
             .map(str::to_owned)
             .ok_or_else(|| anyhow!("选了 {loader:?} 就必须给出加载器版本"))?;
@@ -244,6 +255,43 @@ fn unique_id(paths: &DataPaths, base: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loader_we_cannot_install_is_refused_at_creation() {
+        let root = std::env::temp_dir().join(format!("fern-loader-guard-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+
+        let refused = create_instance_with_loader(
+            &paths,
+            "Forge",
+            "1.20.1",
+            crate::LoaderKind::NeoForge,
+            Some("47.1.0"),
+        );
+        assert!(refused.is_err(), "建一个永远补全不了的实例比直接拒绝更糟");
+
+        // 装得上的照常。
+        let ok = create_instance_with_loader(
+            &paths,
+            "Fabric",
+            "1.21.1",
+            crate::LoaderKind::Fabric,
+            Some("0.16.5"),
+        )
+        .expect("fabric is installable");
+        assert_eq!(ok.loader, crate::LoaderKind::Fabric);
+        assert_eq!(
+            ok.loader_profile.as_ref().map(|p| p.version.as_str()),
+            Some("0.16.5")
+        );
+        // 装完才知道 id，建的时候留空。
+        assert_eq!(
+            ok.loader_profile.as_ref().map(|p| p.version_id.as_str()),
+            Some("")
+        );
+
+        fs::remove_dir_all(root).expect("remove test data");
+    }
 
     #[test]
     fn settings_survive_a_round_trip_through_disk() {

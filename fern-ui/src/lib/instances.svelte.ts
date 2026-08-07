@@ -21,6 +21,12 @@ export interface VersionOption {
   releaseTime: string
 }
 
+/** 现在装得上的加载器。列表由后端给——能装什么是后端知道的事。 */
+export interface LoaderOption {
+  kind: string
+  label: string
+}
+
 interface CoreInstance {
   id: string
   name: string
@@ -53,6 +59,7 @@ class InstanceStore {
 
   versions = $state<VersionOption[]>([])
   versionsLoading = $state(false)
+  loaders = $state<LoaderOption[]>([])
 
   current = $derived(this.list.find((item) => item.id === this.selectedId) ?? this.list[0])
 
@@ -105,10 +112,21 @@ class InstanceStore {
     }
   }
 
-  async create(name: string, gameVersion: string): Promise<Instance> {
+  /** 装得上哪些加载器。只拉一次。 */
+  async loadLoaders(): Promise<LoaderOption[]> {
+    if (this.loaders.length > 0 || !inTauri()) return this.loaders
+    try {
+      this.loaders = await invoke<LoaderOption[]>('installable_loaders')
+    } catch {
+      // 拿不到就只给原版：少一个选项，好过给一个点了会失败的选项。
+    }
+    return this.loaders
+  }
+
+  async create(name: string, gameVersion: string, loader = 'vanilla'): Promise<Instance> {
     const created: CoreInstance = inTauri()
-      ? await invoke<CoreInstance>('create_instance', { name, gameVersion })
-      : { id: `preview-${Date.now()}`, name, gameVersion, loader: 'vanilla' }
+      ? await invoke<CoreInstance>('create_instance', { name, gameVersion, loader })
+      : { id: `preview-${Date.now()}`, name, gameVersion, loader }
     const instance: Instance = {
       id: created.id,
       name: created.name,

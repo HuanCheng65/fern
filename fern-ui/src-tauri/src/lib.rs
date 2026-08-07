@@ -21,10 +21,59 @@ async fn list_versions() -> Result<Vec<fern_core::VersionOption>, String> {
     fern_core::list_versions().await.map_err(|error| format!("{error:#}"))
 }
 
+/// 建实例。`loader` 是 `vanilla` / `fabric` / `quilt`。
+///
+/// 加载器版本可以不给——不给就取最新的稳定版，这是绝大多数人想要的那个，
+/// 不该逼着每个人先去理解「loader 版本」是什么。
 #[tauri::command]
-fn create_instance(name: String, game_version: String) -> Result<fern_core::InstanceProfile, String> {
+async fn create_instance(
+    name: String,
+    game_version: String,
+    loader: Option<String>,
+    loader_version: Option<String>,
+) -> Result<fern_core::InstanceProfile, String> {
     let paths = fern_core::DataPaths::for_current_user().map_err(|error| error.to_string())?;
-    fern_core::create_instance(&paths, &name, &game_version).map_err(|error| format!("{error:#}"))
+    let kind = parse_loader(loader.as_deref())?;
+    let version = match (kind, loader_version) {
+        (fern_core::LoaderKind::Vanilla, _) => None,
+        (_, Some(version)) if !version.is_empty() => Some(version),
+        (kind, _) => Some(
+            fern_core::latest_loader_version(kind, &game_version)
+                .await
+                .map_err(|error| format!("{error:#}"))?,
+        ),
+    };
+    fern_core::create_instance_with_loader(&paths, &name, &game_version, kind, version.as_deref())
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 这个游戏版本上装得了的加载器版本。
+#[tauri::command]
+async fn list_loader_versions(
+    loader: String,
+    game_version: String,
+) -> Result<Vec<fern_core::LoaderVersion>, String> {
+    let kind = parse_loader(Some(&loader))?;
+    if kind == fern_core::LoaderKind::Vanilla {
+        return Ok(Vec::new());
+    }
+    fern_core::list_loader_versions(kind, &game_version)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 现在装得上的加载器，给创建面板用。硬编码在界面里的话，加一种就要改两处。
+#[tauri::command]
+fn installable_loaders() -> Vec<fern_core::LoaderOption> {
+    fern_core::installable_loaders()
+}
+
+fn parse_loader(loader: Option<&str>) -> Result<fern_core::LoaderKind, String> {
+    let Some(loader) = loader.filter(|value| !value.is_empty()) else {
+        return Ok(fern_core::LoaderKind::Vanilla);
+    };
+    serde_json::from_value(serde_json::Value::String(loader.to_owned()))
+        .map_err(|_| format!("不认识的加载器：{loader}"))
 }
 
 #[tauri::command]
@@ -214,6 +263,8 @@ pub fn run() {
             list_instances,
             list_versions,
             create_instance,
+            list_loader_versions,
+            installable_loaders,
             offline_account,
             detect_java,
             list_java_runtimes,
