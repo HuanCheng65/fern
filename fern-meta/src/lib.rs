@@ -232,6 +232,24 @@ impl Rule {
     }
 }
 
+/// `1.20.4` → `(1, 20, 4)`。快照、预发布这类比不了的返回 `None`。
+///
+/// 版本号是启动协议的一部分：哪一代 LWJGL、哪一版 log4j、要哪个 Java，全靠
+/// 它来分。放在这里而不是各处各写一遍。
+pub fn release_ordinal(version: &str) -> Option<(u16, u16, u16)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = match parts.next() {
+        Some(patch) => patch.parse().ok()?,
+        None => 0,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
 pub fn rules_allow(rules: Option<&[Rule]>, context: &RuleContext) -> bool {
     let Some(rules) = rules else { return true };
     let mut allowed = false;

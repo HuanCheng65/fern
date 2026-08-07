@@ -23,6 +23,8 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
+use fern_meta::release_ordinal;
+
 use crate::{DataPaths, LoaderKind};
 
 /// 一个能用来启动游戏的 Java。
@@ -444,21 +446,6 @@ fn collect_children(root: &Path, homes: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(root).into_iter().flatten().flatten() {
         homes.push(entry.path());
     }
-}
-
-/// `1.20.4` → `(1, 20, 4)`。快照、预发布这类比不了的返回 `None`。
-fn release_ordinal(version: &str) -> Option<(u16, u16, u16)> {
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = match parts.next() {
-        Some(patch) => patch.parse().ok()?,
-        None => 0,
-    };
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((major, minor, patch))
 }
 
 #[cfg(test)]

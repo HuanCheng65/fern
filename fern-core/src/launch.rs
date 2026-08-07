@@ -8,11 +8,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_meta::{Library, RuleContext, VersionMetadata, rules_allow};
+use fern_meta::{Library, RuleContext, VersionMetadata, release_ordinal, rules_allow};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 
-use crate::{DataPaths, java};
+use crate::{DataPaths, java, tuning};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -223,7 +223,19 @@ pub async fn launch_instance(
                 .to_string_lossy(),
         );
     }
-    let (jvm_arguments, game_arguments) = metadata.resolved_arguments(&context);
+    let (mut jvm_arguments, game_arguments) = metadata.resolved_arguments(&context);
+    // Mojang 为受 Log4Shell 影响的版本准备了替换版 log4j 配置，我们一直在
+    // 下载它，却从来没把启用它的那个参数加上去——文件躺在磁盘上，游戏并不
+    // 知道。`argument` 是 `-Dlog4j.configurationFile=${path}`，`path` 上面
+    // 刚刚指好。
+    if let Some(logging) = metadata
+        .logging
+        .as_ref()
+        .and_then(|logging| logging.client.as_ref())
+    {
+        jvm_arguments.push(logging.argument.clone());
+    }
+    jvm_arguments.extend(platform_arguments(&version_id, &jvm_arguments));
     let required_java_major = metadata
         .java_version
         .as_ref()
@@ -240,6 +252,18 @@ pub async fn launch_instance(
     }
     let java_binary = runtime.path.clone();
     let java_major = runtime.major;
+
+    // 堆大小和 GC 放在挑完 Java 之后：G1 那组参数只对 17 以上给，而堆大小
+    // 要看这个实例的 mods 目录有多大。
+    let heap = tuning::heap_megabytes(
+        tuning::physical_memory_bytes(),
+        tuning::mods_profile(&game_directory),
+        profile.settings.max_memory_mb,
+    );
+    if let Some(argument) = tuning::heap_argument(&jvm_arguments, heap) {
+        jvm_arguments.push(argument);
+    }
+    jvm_arguments.extend(tuning::gc_arguments(java_major, &jvm_arguments));
     let plan = LaunchPlan {
         java_binary: java_binary.clone(),
         working_directory: game_directory,
@@ -370,6 +394,37 @@ fn resolve_java_runtime(
         };
         anyhow!("需要 Java {} 或更新的版本，{found}", requirement.minimum)
     })
+}
+
+/// 元数据没说、但这个平台和版本的组合非有不可的 JVM 参数（文档 §5.2）。
+///
+/// 只补两条。不预先堆参数：每一条都要能说清为什么，说不清的就该等到有人真的
+/// 报了问题再加。
+fn platform_arguments(version_id: &str, existing: &[String]) -> Vec<String> {
+    let mut extra = Vec::new();
+    let ordinal = release_ordinal(version_id);
+
+    // macOS 上 LWJGL 3 硬性要求渲染跑在第一个线程上，不加就是启动即闪退。
+    // 1.13 之后的元数据 rules 里带了这一条，所以通常轮不到我们；1.13 之前用
+    // 的是 LWJGL 2，加了反而不对——所以两头都要判。
+    if cfg!(target_os = "macos")
+        && ordinal.is_some_and(|version| version >= (1, 13, 0))
+        && !existing
+            .iter()
+            .any(|argument| argument == "-XstartOnFirstThread")
+    {
+        extra.push("-XstartOnFirstThread".to_owned());
+    }
+
+    // Log4Shell（CVE-2021-44228）。1.7 到 1.18.1 的 log4j 会解析日志文本里的
+    // JNDI 查找——一条聊天消息就足以让客户端去远端拉一个类回来执行。Mojang
+    // 的正解是换一份配置文件（logging.client，上面刚加过），这个开关是第二
+    // 道；两道一起上才盖得住那些没有 logging 段的版本。
+    if ordinal.is_some_and(|version| ((1, 7, 0)..=(1, 18, 1)).contains(&version)) {
+        extra.push("-Dlog4j2.formatMsgNoLookups=true".to_owned());
+    }
+
+    extra
 }
 
 fn filter_jvm_arguments(arguments: Vec<String>, java_major: u16) -> Vec<String> {
@@ -563,6 +618,79 @@ mod tests {
         assert!(arguments.iter().any(|argument| argument == "-cp"));
         assert!(arguments.iter().any(|argument| argument == "FernPlayer"));
         assert_eq!(arguments.last().map(String::as_str), Some("FernPlayer"));
+    }
+
+    /// natives 解压此前没有任何覆盖，而它同时负责两件容易出事的事：按
+    /// `extract.exclude` 排除 META-INF，以及挡住 jar 里指向外面的路径。
+    #[tokio::test]
+    async fn native_extraction_honours_excludes_and_refuses_to_escape() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let root = std::env::temp_dir().join(format!("fern-natives-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create test root");
+        let jar_path = root.join("natives.jar");
+
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&jar_path).expect("create jar"));
+        let options = SimpleFileOptions::default();
+        for (name, body) in [
+            ("META-INF/MANIFEST.MF", &b"manifest"[..]),
+            ("liblwjgl.so", &b"native code"[..]),
+            ("../escaped.so", &b"should not land outside"[..]),
+        ] {
+            writer.start_file(name, options).expect("start entry");
+            writer.write_all(body).expect("write entry");
+        }
+        writer.finish().expect("finish jar");
+
+        let destination = root.join("natives");
+        let library = Library {
+            name: "org.lwjgl:lwjgl-platform:2.9.4".to_owned(),
+            extract: Some(fern_meta::ExtractRule {
+                exclude: vec!["META-INF/".to_owned()],
+            }),
+            ..Library::default()
+        };
+        extract_native_jar(&jar_path, &destination, &library)
+            .await
+            .expect("extract natives");
+
+        assert!(destination.join("liblwjgl.so").is_file());
+        assert!(!destination.join("META-INF/MANIFEST.MF").exists());
+        assert!(!root.join("escaped.so").exists());
+
+        std::fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[test]
+    fn log4shell_mitigation_covers_exactly_the_affected_versions() {
+        let affected = |version: &str| {
+            platform_arguments(version, &[])
+                .iter()
+                .any(|argument| argument == "-Dlog4j2.formatMsgNoLookups=true")
+        };
+        assert!(affected("1.7.10"));
+        assert!(affected("1.12.2"));
+        assert!(affected("1.18.1"));
+        assert!(!affected("1.18.2"));
+        assert!(!affected("1.21.1"));
+        assert!(!affected("1.6.4"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn lwjgl3_versions_get_the_main_thread_flag_only_when_metadata_forgot() {
+        let has_flag = |version: &str, existing: &[String]| {
+            platform_arguments(version, existing)
+                .iter()
+                .any(|argument| argument == "-XstartOnFirstThread")
+        };
+        assert!(has_flag("1.13", &[]));
+        // 元数据已经给了就别给第二遍。
+        assert!(!has_flag("1.21.1", &["-XstartOnFirstThread".to_owned()]));
+        // LWJGL 2 的版本加了反而不对。
+        assert!(!has_flag("1.12.2", &[]));
     }
 
     #[test]

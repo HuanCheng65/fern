@@ -12,6 +12,7 @@ mod launch;
 mod prepare;
 mod runtime;
 mod settings;
+mod tuning;
 
 pub use catalog::{VersionOption, create_instance, list_instances, list_versions};
 pub use data::DataPaths;
@@ -37,6 +38,7 @@ pub use settings::{
     AccountKind, AccountSettings, DownloadSettings, Settings, SourcePreference,
     current as current_settings, load as load_settings, save as save_settings,
 };
+pub use tuning::{ModsProfile, heap_megabytes, physical_memory_bytes};
 
 /// Marker for the Pearl integration boundary.
 ///

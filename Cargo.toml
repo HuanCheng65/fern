@@ -20,7 +20,9 @@ sha1 = "0.10.6"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tokio = { version = "1.46.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
-zip = "2.2.2"
+# 只解 natives jar：Mojang 发的全是标准 deflate。默认特性会拖进 bzip2、
+# lzma、zstd 三个 C 依赖，既没人用，又让交叉编译要一整套 C 工具链。
+zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 codegen-units = 1
