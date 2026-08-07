@@ -28,6 +28,12 @@ pub struct PrepareResult {
 #[derive(Debug, Deserialize)]
 struct AssetObjectIndex {
     objects: HashMap<String, AssetObject>,
+    /// 1.6.x：资源要按原名摆一份出来，游戏不认按内容寻址的那套。
+    #[serde(default, rename = "virtual")]
+    is_virtual: bool,
+    /// 1.5.x 及更早：那一份要摆进实例的 `resources/`。
+    #[serde(default)]
+    map_to_resources: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +120,8 @@ pub async fn prepare_instance(
 
     let context = current_rule_context();
     let mut tasks = Vec::new();
+    // 远古版本下完还要再摆一份，见 materialize_legacy_assets。
+    let mut legacy_assets: Option<(String, AssetObjectIndex)> = None;
     // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。
     if let Some(client) = metadata
         .downloads
@@ -165,7 +173,7 @@ pub async fn prepare_instance(
         .await?;
         let asset_index: AssetObjectIndex =
             serde_json::from_slice(&index_bytes).context("parse asset index")?;
-        for object in asset_index.objects.into_values() {
+        for object in asset_index.objects.values() {
             if object.hash.len() < 2 {
                 continue;
             }
@@ -177,10 +185,11 @@ pub async fn prepare_instance(
             tasks.push(DownloadTask::new(
                 paths.assets.join("objects").join(prefix).join(&object.hash),
                 &url,
-                object.hash,
+                &object.hash,
                 object.size,
             )?);
         }
+        legacy_assets = Some((index.id.clone(), asset_index));
     }
 
     let mut unique = HashSet::new();
@@ -195,6 +204,10 @@ pub async fn prepare_instance(
         message: "开始补全文件".to_owned(),
     });
     downloader.download_all(tasks, events).await?;
+
+    if let Some((index_id, index)) = legacy_assets {
+        materialize_legacy_assets(paths, instance_id, &index_id, &index, events).await?;
+    }
 
     // Java 也是这个实例缺的文件之一，补全就该把它补上。放在这里而不是启动
     // 时：启动那一步不该再有几百兆的下载，而补全本来就是「跑一遍直到齐活」。
@@ -213,6 +226,62 @@ pub async fn prepare_instance(
     runtime::ensure_java(paths, component, &requirement, events).await?;
 
     Ok(result)
+}
+
+/// 1.6.x 及更早的资源布局。
+///
+/// 现代版本按内容寻址（`assets/objects/ab/abcdef…`），全局共享、多实例零重复。
+/// 老版本不认这套，它要的是一棵按原名摆好的目录树。索引里的两个开关说明摆去
+/// 哪儿：`virtual` 摆进共享的 `assets/virtual/<索引名>`，`map_to_resources`
+/// 摆进这个实例自己的 `resources/`。
+///
+/// 用复制而不是硬链接：跨文件系统的硬链接会失败，而这些版本的资源总共也就
+/// 几十兆，为省这点空间去处理一堆平台差异不划算。
+async fn materialize_legacy_assets(
+    paths: &DataPaths,
+    instance_id: &str,
+    index_id: &str,
+    index: &AssetObjectIndex,
+    events: &UnboundedSender<DownloadEvent>,
+) -> Result<()> {
+    let root = if index.map_to_resources {
+        paths.game_directory(instance_id).join("resources")
+    } else if index.is_virtual {
+        paths.assets.join("virtual").join(index_id)
+    } else {
+        return Ok(());
+    };
+
+    let _ = events.send(DownloadEvent::Status {
+        message: "整理旧版资源".to_owned(),
+    });
+
+    for (name, object) in &index.objects {
+        if object.hash.len() < 2 {
+            continue;
+        }
+        // 名字来自索引文件，会被直接拼成路径。
+        let destination = fern_download::safe_join(&root, Path::new(name))?;
+        // 已经摆好而且大小对得上就跳过——补全要能反复跑，不该每次都重抄一遍。
+        if tokio::fs::metadata(&destination)
+            .await
+            .is_ok_and(|metadata| metadata.len() == object.size)
+        {
+            continue;
+        }
+        let source = paths
+            .assets
+            .join("objects")
+            .join(&object.hash[..2])
+            .join(&object.hash);
+        if let Some(parent) = destination.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::copy(&source, &destination)
+            .await
+            .with_context(|| format!("摆放 {name}"))?;
+    }
+    Ok(())
 }
 
 fn task_from_info(path: PathBuf, info: &DownloadInfo) -> Result<DownloadTask> {

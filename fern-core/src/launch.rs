@@ -196,6 +196,12 @@ pub async fn launch_instance(
 
     let credentials = offline_credentials(player_name);
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
+    let legacy_assets = metadata
+        .asset_index
+        .as_ref()
+        .map(|index| paths.assets.join("virtual").join(&index.id))
+        .filter(|path| path.is_dir())
+        .unwrap_or_else(|| paths.assets.clone());
     let game_directory = paths.game_directory(instance_id);
     tokio::fs::create_dir_all(&game_directory).await?;
     variables = variables
@@ -213,6 +219,16 @@ pub async fn launch_instance(
         .insert(
             "version_type",
             metadata.kind.as_deref().unwrap_or("release"),
+        )
+        // 1.7.3 之前用 ${game_assets} 指向一份按原名摆好的资源目录（见
+        // prepare 里的 materialize_legacy_assets）。摆过就用那份，没摆过就
+        // 退回资源根目录——新版本根本不读这个变量。
+        .insert("game_assets", legacy_assets.to_string_lossy())
+        // 同样是老版本才有的：${auth_session} 是 "token:<令牌>:<uuid>"。
+        // 离线模式没有真的会话，给一个占位串，格式对得上就行。
+        .insert(
+            "auth_session",
+            format!("token:{}:{}", credentials.access_token, credentials.uuid),
         )
         .insert("natives_directory", natives_directory.to_string_lossy())
         .insert("launcher_name", "Fern")
