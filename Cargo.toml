@@ -11,6 +11,7 @@ rust-version = "1.97"
 [workspace.dependencies]
 anyhow = "1.0.98"
 base64 = "0.22.1"
+flate2 = "1.0"
 fern-download = { path = "fern-download" }
 fern-meta = { path = "fern-meta" }
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
@@ -20,6 +21,7 @@ reqwest = { version = "0.12.22", default-features = false, features = ["json", "
 regex = "1.11.1"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
+tar = "0.4"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tokio = { version = "1.46.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }

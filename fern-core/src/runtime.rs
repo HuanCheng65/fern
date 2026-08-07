@@ -102,19 +102,19 @@ pub async fn ensure_java(
     let index: HashMap<String, HashMap<String, Vec<RuntimeEntry>>> =
         serde_json::from_slice(&index_bytes).context("解析 Mojang 运行时清单")?;
 
-    let platform = platform_key().ok_or_else(|| {
-        anyhow!(
-            "Mojang 没有为 {}-{} 发布运行时，请在实例设置里指定一个 Java {} 的路径",
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-            requirement.minimum
-        )
-    })?;
-    let entry = index
-        .get(platform)
+    // Mojang 只为自己发行的平台组合提供运行时。落在外面（目前是
+    // linux-aarch64）就去 Adoptium 拉一份 Temurin——文档 §4.3 说的兜底。
+    let entry = match platform_key()
+        .and_then(|platform| index.get(platform))
         .and_then(|components| components.get(&component))
         .and_then(|entries| entries.first())
-        .ok_or_else(|| anyhow!("Mojang 的 {platform} 运行时里没有 {component}"))?;
+    {
+        Some(entry) => entry,
+        None => {
+            let install_root = adoptium::install(paths, requirement.minimum, events).await?;
+            return finish(&install_root, requirement, "Temurin");
+        }
+    };
 
     let manifest_bytes = downloader
         .fetch(&entry.manifest.url)
@@ -164,13 +164,18 @@ pub async fn ensure_java(
         create_link(&path, &target).await?;
     }
 
-    let mut runtime = java::probe(&install_root)
+    finish(&install_root, requirement, &component)
+}
+
+/// 装完之后统一确认一遍：读得出来，而且真的够新。
+fn finish(install_root: &Path, requirement: &JavaRequirement, what: &str) -> Result<JavaRuntime> {
+    let mut runtime = java::probe(install_root)
         .with_context(|| format!("下载完成后仍然读不出 {} 里的 Java", install_root.display()))?;
     // 是我们下的，就该由我们管：设置页要能列出来、能删掉，选择时也优先。
     runtime.managed = true;
     if runtime.major < requirement.minimum {
         return Err(anyhow!(
-            "{component} 装出来的是 Java {}，达不到这个版本要求的 Java {}",
+            "{what} 装出来的是 Java {}，达不到这个版本要求的 Java {}",
             runtime.major,
             requirement.minimum
         ));
@@ -324,5 +329,226 @@ mod tests {
         assert!(!installed.exists());
 
         std::fs::remove_dir_all(root).expect("remove test root");
+    }
+}
+
+/// Adoptium 兜底（文档 §4.3）。
+///
+/// Mojang 只为它自己发行的平台组合提供运行时，linux-aarch64 就不在其中。
+/// 那时候去 Adoptium 拉一份 Temurin：它按 os/arch/major 提供最新的 LTS，
+/// 覆盖到了 Mojang 没覆盖的地方。
+///
+/// 这是兜底不是首选。能用 Mojang 的就用 Mojang 的——那和官方启动器装的是同
+/// 一份，玩家遇到问题时能和别人对得上。
+mod adoptium {
+    use std::path::{Path, PathBuf};
+
+    use anyhow::{Context, Result, anyhow};
+    use fern_download::{DownloadClient, DownloadEvent};
+    use serde::Deserialize;
+    use sha2::{Digest, Sha256};
+    use tokio::sync::mpsc::UnboundedSender;
+
+    use crate::{DataPaths, settings::source_order};
+
+    #[derive(Debug, Deserialize)]
+    struct Asset {
+        binary: Binary,
+        release_name: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Binary {
+        package: Package,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Package {
+        link: String,
+        name: String,
+        size: u64,
+        #[serde(default)]
+        checksum: String,
+    }
+
+    /// Adoptium 的架构叫法。和 Rust 的 `consts::ARCH` 不完全一致。
+    fn architecture() -> Option<&'static str> {
+        match std::env::consts::ARCH {
+            "x86_64" => Some("x64"),
+            "aarch64" => Some("aarch64"),
+            "arm" => Some("arm"),
+            "x86" => Some("x86"),
+            "powerpc64" => Some("ppc64le"),
+            "s390x" => Some("s390x"),
+            _ => None,
+        }
+    }
+
+    fn operating_system() -> Option<&'static str> {
+        match std::env::consts::OS {
+            "linux" => Some("linux"),
+            "macos" => Some("mac"),
+            "windows" => Some("windows"),
+            _ => None,
+        }
+    }
+
+    /// 装一份 Temurin JRE，返回安装目录。
+    pub async fn install(
+        paths: &DataPaths,
+        major: u16,
+        events: &UnboundedSender<DownloadEvent>,
+    ) -> Result<PathBuf> {
+        let (os, arch) = operating_system()
+            .zip(architecture())
+            .ok_or_else(|| adoptium_unavailable(major))?;
+        let url = format!(
+            "https://api.adoptium.net/v3/assets/latest/{major}/hotspot\
+             ?architecture={arch}&image_type=jre&os={os}&vendor=eclipse"
+        );
+
+        let _ = events.send(DownloadEvent::Status {
+            message: format!("向 Adoptium 查询 Java {major}"),
+        });
+        // 不走 DownloadClient 的镜像重写：Adoptium 不在任何镜像上，rewrite
+        // 对它是恒等的，但重试和源健康度仍然用得上。
+        let downloader = DownloadClient::new(source_order(), 4);
+        let listing = downloader
+            .fetch(&url)
+            .await
+            .with_context(|| format!("查询 Adoptium 的 Java {major}"))?;
+        let assets: Vec<Asset> =
+            serde_json::from_slice(&listing).context("解析 Adoptium 的响应")?;
+        let asset = assets
+            .into_iter()
+            .next()
+            .ok_or_else(|| adoptium_unavailable(major))?;
+
+        let install_root = paths
+            .runtimes
+            .join(format!("temurin-{}", asset.release_name));
+        if crate::java::probe(&install_root).is_ok() {
+            return Ok(install_root);
+        }
+
+        let _ = events.send(DownloadEvent::Status {
+            message: format!(
+                "下载 Temurin {} （{} MB）",
+                asset.release_name,
+                asset.binary.package.size / (1024 * 1024)
+            ),
+        });
+        let archive = downloader
+            .fetch(&asset.binary.package.link)
+            .await
+            .context("下载 Temurin")?;
+
+        if !asset.binary.package.checksum.is_empty() {
+            let actual = Sha256::digest(&archive)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            if !actual.eq_ignore_ascii_case(&asset.binary.package.checksum) {
+                return Err(anyhow!("Temurin 的校验和对不上"));
+            }
+        }
+
+        let _ = events.send(DownloadEvent::Status {
+            message: "解压 Java 运行时".to_owned(),
+        });
+        let name = asset.binary.package.name.clone();
+        let root = install_root.clone();
+        tokio::task::spawn_blocking(move || unpack(&archive, &name, &root)).await??;
+
+        Ok(install_root)
+    }
+
+    fn adoptium_unavailable(major: u16) -> anyhow::Error {
+        anyhow!(
+            "找不到适用于 {}-{} 的 Java {major}，请自行安装后在实例设置里指定路径",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    }
+
+    /// 解压，并把顶层那一层目录剥掉。
+    ///
+    /// Temurin 的包解出来是 `jdk-21.0.12+8-jre/bin/java`，多一层。剥掉之后
+    /// 目录结构就和 Mojang 的运行时一致，`probe` 那边不必分两种情况。
+    fn unpack(archive: &[u8], name: &str, destination: &Path) -> Result<()> {
+        if name.ends_with(".zip") {
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
+                .context("读取 Temurin 压缩包")?;
+            for index in 0..zip.len() {
+                let mut entry = zip.by_index(index)?;
+                if !entry.is_file() {
+                    continue;
+                }
+                let Some(relative) = strip_top_level(entry.name()) else {
+                    continue;
+                };
+                let path = fern_download::safe_join(destination, Path::new(&relative))?;
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let mut target = std::fs::File::create(&path)?;
+                std::io::copy(&mut entry, &mut target)?;
+            }
+            return Ok(());
+        }
+
+        let decoder = flate2::read::GzDecoder::new(archive);
+        let mut tar = tar::Archive::new(decoder);
+        tar.set_preserve_permissions(true);
+        for entry in tar.entries().context("读取 Temurin 压缩包")? {
+            let mut entry = entry?;
+            let path_in_archive = entry.path()?.to_string_lossy().into_owned();
+            let Some(relative) = strip_top_level(&path_in_archive) else {
+                continue;
+            };
+            // 压缩包来自网络，条目名不能原样拼路径。
+            let path = fern_download::safe_join(destination, Path::new(&relative))?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            entry
+                .unpack(&path)
+                .with_context(|| format!("解压 {relative}"))?;
+        }
+        Ok(())
+    }
+
+    /// `jdk-21.0.12+8-jre/bin/java` → `bin/java`。顶层目录本身返回 `None`。
+    fn strip_top_level(path: &str) -> Option<String> {
+        let normalised = path.replace('\\', "/");
+        let (_, rest) = normalised.split_once('/')?;
+        (!rest.is_empty() && !rest.ends_with('/')).then(|| rest.to_owned())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_top_level_directory_is_stripped() {
+            assert_eq!(
+                strip_top_level("jdk-21.0.12+8-jre/bin/java").as_deref(),
+                Some("bin/java")
+            );
+            assert_eq!(
+                strip_top_level("jdk-21.0.12+8-jre/lib/server/libjvm.so").as_deref(),
+                Some("lib/server/libjvm.so")
+            );
+            // 顶层目录本身和目录条目都不该产生文件。
+            assert_eq!(strip_top_level("jdk-21.0.12+8-jre"), None);
+            assert_eq!(strip_top_level("jdk-21.0.12+8-jre/bin/"), None);
+        }
+
+        #[test]
+        fn adoptium_knows_this_machines_platform() {
+            // 认不出来时会退化成一句「请自行安装」，那对主流平台是不可接受的。
+            assert!(operating_system().is_some());
+            assert!(architecture().is_some());
+        }
     }
 }

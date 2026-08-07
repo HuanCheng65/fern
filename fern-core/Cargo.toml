@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+flate2.workspace = true
 fern-download.workspace = true
 fern-meta.workspace = true
 keyring.workspace = true
@@ -19,6 +20,7 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tar.workspace = true
 tokio.workspace = true
 zip.workspace = true
 
