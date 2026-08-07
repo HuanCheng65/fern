@@ -74,6 +74,13 @@ print('没注册:', sorted(c-r), '| 没定义:', sorted(r-c))"
 - **`src/styles/tokens.css` 是设计系统的唯一来源。** 间距、字号、圆角、动效
   全走 CSS 变量，不要在组件里写魔数。浮层统一用 `Overlay.svelte`，玻璃、影子、
   进出动画只在那里定义一次。
+- **图标是算出来的，不是画出来的。** 标志的全部几何是 7×9 网格上的八段走线
+  （`fern-ui/src/lib/mark.ts` 与 `docs/fern-brand-system.html`）。改了走线要跑
+  `python3 .github/make-icons.py` 重新生成应用图标和 favicon，不要手工导出
+  PNG——那样迟早和规范对不上。
+- **品牌色不是界面色板。** `--pine` `--paper` `--fern` `--sprout` 只用在身份该
+  出现的地方（图标、字标、还没有背景可学时的那一帧）。界面的颜色由背景层生成
+  并注入，把 `--accent` 写死成蕨绿等于把「UI 向背景学色彩」这条设计原则关掉。
 - **`components/Backdrop.svelte` 不要动。** 它每隔几秒会重写 `:root` 上的色板
   变量，所以主题变量写在 `document.body.style` 上才不会被盖掉。
 - **文案用中性书面语。** 不口语、不劝导、一句话说完一件事。「显卡驱动起不来」

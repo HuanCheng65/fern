@@ -30,8 +30,15 @@ export interface Theme {
   motion: Motion
 }
 
-/** 强调色预设直接用群系色板的高光段，换背景也不会脱节。 */
+/**
+ * 强调色预设直接用群系色板的高光段，换背景也不会脱节。
+ *
+ * 头一个是品牌色本身（见 docs/fern-brand-system.html 03）——它是「我不要跟着
+ * 背景走，我要这个启动器本来的样子」这个选择的落点。默认档仍然是跟随背景：
+ * 出厂时 UI 向背景学色彩，那是这套设计的根。
+ */
 export const ACCENT_PRESETS: { key: string; name: string; value: string }[] = [
+  { key: 'sprout', name: '嫩芽', value: '#bfe4b2' },
   { key: 'ocean', name: '深海', value: '#bce6dc' },
   { key: 'jungle', name: '丛林', value: '#e0ebc2' },
   { key: 'nether', name: '下界', value: '#efb44c' },

@@ -30,6 +30,21 @@
     monospace;
 
   /*
+   * 品牌色（见 docs/fern-brand-system.html 03）。系统只有四个值。
+   *
+   * 它们是**身份**，不是界面色板——界面的颜色由背景层生成并注入（下面那组
+   * `--c*`），这是「UI 向背景学色彩」那条设计哲学的落点。所以品牌色只出现在
+   * 身份该出现的地方：应用图标、字标、还没有背景可学时的那一帧。把 --accent
+   * 写死成蕨绿，等于把这个启动器最核心的那条设计原则关掉。
+   *
+   * 取用规则：深底配嫩芽、浅底配蕨绿、蕨绿底配纸白。标志不用渐变，不新增颜色。
+   */
+  --pine: #0e2018;
+  --paper: #f6f4ec;
+  --fern: #35714a;
+  --sprout: #bfe4b2;
+
+  /*
    * 由背景层注入（components/Backdrop.svelte）。这里的值只是第一帧画出来
    * 之前的样子。--c4 是强调色，--on-accent 是压在它上面的文字色。
    */
@@ -138,7 +153,8 @@ body {
   font-size: var(--t-body);
   line-height: 1.5;
   color: var(--ink);
-  background: #06080a;
+  /* 背景层铺开之前的那一层底。用墨松而不是一个中性的近黑：第一帧也是品牌。 */
+  background: var(--pine);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   /* 桌面应用不是网页：文本不该能被随手拖蓝一片。可选中的地方单独开。 */

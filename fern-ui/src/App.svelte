@@ -15,6 +15,7 @@
   import Backdrop from './components/Backdrop.svelte'
   import TopBar from './components/TopBar.svelte'
   import CommandPalette, { type PaletteAction } from './components/CommandPalette.svelte'
+  import Mark from './components/Mark.svelte'
   import CrashReport from './components/CrashReport.svelte'
   import GameLog from './components/GameLog.svelte'
   import WindowFrame from './components/WindowFrame.svelte'
@@ -184,7 +185,13 @@
   <Backdrop {seed} particles={theme.particles} parallax={theme.parallax} {away} />
 
   {#if !ready}
-    <!-- 背景已经在画了，这里只是等一次读盘，不额外放加载动画。 -->
+    <!--
+      等一次读盘。背景层这时还没有色板可交，所以这一帧只有品牌自己的颜色：
+      墨松底上的嫩芽。它同时是唯一一处「先于任何内容」的界面。
+    -->
+    <div class="boot">
+      <Mark size={30} spinning />
+    </div>
   {:else if setupOpen}
     <Setup
       ondone={(create) => {
@@ -285,6 +292,14 @@
     border-radius: inherit;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
     pointer-events: none;
+  }
+
+  /* 读盘那一帧。只有标志，没有别的。 */
+  .boot {
+    display: grid;
+    place-items: center;
+    flex: 1;
+    color: var(--sprout);
   }
 
   .stage {

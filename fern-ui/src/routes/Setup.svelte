@@ -14,6 +14,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { fly } from 'svelte/transition'
   import { ArrowLeft, ArrowRight, Check, Plus } from 'lucide-svelte'
+  import Mark from '../components/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource, type AccountKind, type DownloadSource } from '../lib/prefs.svelte'
   import { inTauri } from '../lib/instances.svelte'
@@ -113,7 +114,14 @@
   {#key step}
     <div class="screen" in:fly={enter}>
       {#if step === 'welcome'}
-        <div class="mark" aria-hidden="true"><span></span></div>
+        <!--
+          第一次打开还没有实例，也就没有背景可学色彩——所以这一屏用品牌自己
+          的两个值：墨松底上的嫩芽（见 docs/fern-brand-system.html 03）。
+        -->
+        <div class="lockup">
+          <Mark size={54} />
+          <span class="word">fern</span>
+        </div>
         <h1 class="t-display hero">万千世界，<br /><em>一个入口。</em></h1>
         <p class="lede">欢迎使用 Fern。几步设置之后，就可以出发了。</p>
         <div class="actions">
@@ -257,23 +265,20 @@
     width: min(560px, 100%);
   }
 
-  .mark {
-    position: relative;
-    width: 46px;
-    height: 46px;
+  /* 纵排字标：标志与字之间一格半（见 docs/fern-brand-system.html 04）。 */
+  .lockup {
+    display: grid;
+    justify-items: start;
+    gap: var(--s3);
     margin-bottom: var(--s5);
-    border-radius: var(--r2);
-    background: var(--accent);
-    box-shadow: 0 14px 44px -10px var(--accent-soft);
-    transform: rotate(-8deg);
+    color: var(--sprout);
   }
 
-  .mark span {
-    position: absolute;
-    inset: 13px;
-    border-radius: 4px;
-    background: var(--c0);
-    opacity: 0.55;
+  .word {
+    color: var(--paper);
+    font-size: var(--t-h2);
+    font-weight: 650;
+    letter-spacing: -0.015em;
   }
 
   .hero {
