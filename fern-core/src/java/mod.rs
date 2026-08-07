@@ -12,6 +12,12 @@
 //!
 //! 这一层对用户是隐形的：选哪个 Java 不该是一道题。只有用户在实例设置里
 //! 明确指定了路径，我们才照做——那时候他要的是控制权，不是建议。
+//!
+//! 这个文件是声明层与发现层；发现层在 Windows 上还要读注册表，那部分在
+//! `registry.rs`。下载层在 `runtime.rs`。
+
+pub(crate) mod registry;
+pub(crate) mod runtime;
 
 use std::{
     collections::HashSet,
@@ -475,7 +481,7 @@ fn system_java_homes() -> Vec<PathBuf> {
     {
         // 注册表是唯一能找到「装在非默认目录、又不在 PATH 上」那些 JDK 的
         // 办法，而 Windows 的安装器让人选目录，改到别的盘去很常见。
-        homes.extend(crate::registry::java_homes());
+        homes.extend(crate::java::registry::java_homes());
 
         for variable in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
             let Some(base) = env::var_os(variable).map(PathBuf::from) else {
@@ -547,10 +553,10 @@ fn collect_children(root: &Path, homes: &mut Vec<PathBuf>) {
 pub fn add_path(paths: &DataPaths, path: &Path) -> Result<JavaRuntime> {
     let mut runtime = probe(path)?;
     let home = runtime.home.clone();
-    let mut settings = crate::settings::load(paths);
+    let mut settings = crate::data::settings::load(paths);
     if !settings.java.extra_paths.contains(&home) {
         settings.java.extra_paths.push(home);
-        crate::settings::save(paths, &settings)?;
+        crate::data::settings::save(paths, &settings)?;
     }
     runtime.added = true;
     Ok(runtime)
@@ -558,11 +564,11 @@ pub fn add_path(paths: &DataPaths, path: &Path) -> Result<JavaRuntime> {
 
 /// 不再登记某个手动加进来的位置。只是从名单上划掉，不动磁盘上的任何东西。
 pub fn forget_path(paths: &DataPaths, home: &Path) -> Result<()> {
-    let mut settings = crate::settings::load(paths);
+    let mut settings = crate::data::settings::load(paths);
     let before = settings.java.extra_paths.len();
     settings.java.extra_paths.retain(|entry| entry != home);
     if settings.java.extra_paths.len() != before {
-        crate::settings::save(paths, &settings)?;
+        crate::data::settings::save(paths, &settings)?;
     }
     Ok(())
 }

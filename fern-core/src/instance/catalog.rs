@@ -10,9 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     DataPaths, InstanceId, InstanceProfile,
-    metacache::{self, Freshness},
-    prepare::MANIFEST_SLUG,
-    settings::source_order,
+    data::{
+        metacache::{self, Freshness},
+        settings::source_order,
+    },
+    launch::prepare::MANIFEST_SLUG,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

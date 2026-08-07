@@ -1,3 +1,14 @@
+//! 数据层：东西在磁盘上的哪里、用户的偏好是什么、拉下来的元数据还新不新。
+//!
+//! 三个文件是一条线上的三个问题——`mod.rs` 说**位置**（`DataPaths` 是全仓库
+//! 唯一一份目录布局），`settings.rs` 说**偏好**，`metacache.rs` 说**时效**。
+//!
+//! 别的层都依赖这一层。反过来只有一处：`settings` 里那份旧的账户字段还引着
+//! 名册的类型，那是迁移用的遗留结构，迁完就没有了。
+
+pub(crate) mod metacache;
+pub(crate) mod settings;
+
 use std::{env, fs, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};

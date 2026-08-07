@@ -16,8 +16,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths,
+    data::settings::source_order,
     java::{self, JavaRequirement, JavaRuntime},
-    settings::source_order,
 };
 
 const RUNTIME_INDEX_URL: &str = "https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json";
@@ -106,7 +106,7 @@ pub async fn ensure_java(
         .map(str::to_owned)
         .unwrap_or_else(|| component_for(requirement.minimum).to_owned());
     // 这个名字来自版本 JSON，而它要同时变成安装目录名和缓存文件名。
-    if !crate::version::is_safe_id(&component) {
+    if !crate::launch::version::is_safe_id(&component) {
         return Err(anyhow!("运行时组件名无法作为目录名：{component}"));
     }
     let install_root = paths.runtimes.join(&component);
@@ -117,12 +117,12 @@ pub async fn ensure_java(
 
     let downloader = DownloadClient::new(source_order(), 64);
     // 这份索引一年动不了几次，而且 URL 本身就带着内容哈希——一天一次足够。
-    let index_bytes = crate::metacache::mutable(
+    let index_bytes = crate::data::metacache::mutable(
         &downloader,
         paths,
         "java-runtime-index.json",
         RUNTIME_INDEX_URL,
-        crate::metacache::Freshness::Within(std::time::Duration::from_secs(24 * 60 * 60)),
+        crate::data::metacache::Freshness::Within(std::time::Duration::from_secs(24 * 60 * 60)),
     )
     .await
     .context("读取 Mojang 运行时清单")?
@@ -146,7 +146,7 @@ pub async fn ensure_java(
 
     // 文件清单带 sha1，是不可变的。缓存它的意义在重装/换实例时：同一份运行时
     // 的清单不会因为换了个实例就变。
-    let manifest_bytes = crate::metacache::immutable(
+    let manifest_bytes = crate::data::metacache::immutable(
         &downloader,
         &paths.cache.join(format!("java-runtime-{component}.json")),
         &entry.manifest.url,
@@ -383,7 +383,7 @@ mod adoptium {
     use sha2::{Digest, Sha256};
     use tokio::sync::mpsc::UnboundedSender;
 
-    use crate::{DataPaths, settings::source_order};
+    use crate::{DataPaths, data::settings::source_order};
 
     #[derive(Debug, Deserialize)]
     struct Asset {

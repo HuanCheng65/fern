@@ -41,7 +41,7 @@ pub enum SourcePreference {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AccountSettings {
-    pub kind: crate::accounts::AccountKind,
+    pub kind: crate::account::roster::AccountKind,
     pub player_name: String,
 }
 
@@ -248,7 +248,8 @@ mod tests {
         let physical = Some(32 * 1024 * 1024 * 1024u64);
 
         // 什么都没说的实例，整份跟着全局。
-        let plain = crate::settings::effective(&InstanceSettings::default(), &defaults, physical);
+        let plain =
+            crate::data::settings::effective(&InstanceSettings::default(), &defaults, physical);
         assert_eq!(plain.garbage_collector, GarbageCollector::Z);
         assert_eq!(plain.resolution.map(|r| r.width), Some(1600));
         assert_eq!(plain.memory_ceiling_mb, 6144);
@@ -256,7 +257,7 @@ mod tests {
         assert_eq!(plain.jvm_arguments, vec!["-Dfoo=1", "-XX:+Bar"]);
 
         // 说了的那几项归实例。
-        let special = crate::settings::effective(
+        let special = crate::data::settings::effective(
             &InstanceSettings {
                 garbage_collector: Some(GarbageCollector::G1),
                 ..InstanceSettings::default()
@@ -269,7 +270,7 @@ mod tests {
         assert_eq!(special.resolution.map(|r| r.width), Some(1600));
 
         // 全局也没说时才落到内置默认。
-        let bare = crate::settings::effective(
+        let bare = crate::data::settings::effective(
             &InstanceSettings::default(),
             &GameDefaults::default(),
             physical,

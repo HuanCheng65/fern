@@ -16,6 +16,15 @@
 //! 之前这三种是在 `launch.rs` 里一个 match 里就地展开的，登录相关的逻辑
 //! 混在拼命令行的中间。搬到这里之后，`launch` 只需要问「凭据是什么、要不要
 //! 额外的 JVM 参数」。
+//!
+//! 这一层的其余部分：名册在 `roster.rs`（账户是复数，见文档 §3.4），两种要
+//! 联网的登录各占一个文件（`microsoft.rs`、`yggdrasil.rs`，离线那种不需要谁
+//! 来实现），令牌的保管处是 `credentials.rs`——只有它碰系统钥匙串。
+
+pub(crate) mod credentials;
+pub(crate) mod microsoft;
+pub(crate) mod roster;
+pub(crate) mod yggdrasil;
 
 use std::path::PathBuf;
 
@@ -23,13 +32,9 @@ use anyhow::{Context, Result, anyhow};
 use fern_download::DownloadEvent;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    Credentials, DataPaths,
-    accounts::{self, AccountKind, AccountRecord, Secret},
-    auth,
-    launch::offline_credentials,
-    microsoft,
-};
+use crate::{Credentials, DataPaths, launch::offline_credentials};
+
+use roster::{AccountKind, AccountRecord, Secret};
 
 /// 这次启动用谁的身份。
 ///
@@ -47,7 +52,7 @@ pub enum Account {
     /// 外置登录。`injector` 在 `ensure_fresh` 之后才有值。
     Yggdrasil {
         id: String,
-        session: auth::YggdrasilSession,
+        session: yggdrasil::YggdrasilSession,
         injector: Option<PathBuf>,
         prefetched: String,
     },
@@ -57,7 +62,7 @@ impl Account {
     /// 名册里当前那一个。
     pub fn active(paths: &DataPaths) -> Result<Self> {
         let record =
-            accounts::active(paths).ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
+            roster::active(paths).ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
         Self::load(&record)
     }
 
@@ -78,7 +83,7 @@ impl Account {
                         record.player_name
                     )
                 };
-                match (kind, accounts::secret(&record.id)?.ok_or_else(missing)?) {
+                match (kind, roster::secret(&record.id)?.ok_or_else(missing)?) {
                     (AccountKind::Microsoft, Secret::Microsoft(session)) => Ok(Self::Microsoft {
                         id: record.id.clone(),
                         session,
@@ -122,16 +127,16 @@ impl Account {
                 injector,
                 prefetched,
             } => {
-                let fresh = auth::ensure_fresh(session)
+                let fresh = yggdrasil::ensure_fresh(session)
                     .await
                     .context("外置登录令牌刷新失败，请重新登录")?;
                 if &fresh != session {
                     crate::store_secret(id, &Secret::Yggdrasil(fresh.clone()))?;
                     *session = fresh;
                 }
-                *injector = Some(auth::ensure_injector(paths, events).await?);
+                *injector = Some(yggdrasil::ensure_injector(paths, events).await?);
                 // 预取失败不该拦住启动：injector 自己会去请求一次，只是慢一点。
-                *prefetched = auth::prefetched(&session.api_root)
+                *prefetched = yggdrasil::prefetched(&session.api_root)
                     .await
                     .unwrap_or_default();
                 Ok(())
@@ -182,7 +187,7 @@ impl Account {
                 injector: Some(injector),
                 prefetched,
                 ..
-            } => auth::jvm_arguments(injector, &session.api_root, prefetched),
+            } => yggdrasil::jvm_arguments(injector, &session.api_root, prefetched),
             // 没跑过 ensure_fresh 就没有 injector，那时候一个参数都不该给：
             // 给了一半（有 prefetched 没有 agent）比一个都不给更难查。
             _ => Vec::new(),
@@ -194,8 +199,8 @@ impl Account {
 mod tests {
     use super::*;
 
-    fn yggdrasil() -> auth::YggdrasilSession {
-        auth::YggdrasilSession {
+    fn yggdrasil() -> yggdrasil::YggdrasilSession {
+        yggdrasil::YggdrasilSession {
             api_root: "https://littleskin.cn/api/yggdrasil".to_owned(),
             access_token: "token".to_owned(),
             client_token: "client".to_owned(),
@@ -225,7 +230,7 @@ mod tests {
         // 皮肤站的角色名可以是中文、可以超过 16 位，我们不该拦。
         let remote = Account::Yggdrasil {
             id: "a".to_owned(),
-            session: auth::YggdrasilSession {
+            session: yggdrasil::YggdrasilSession {
                 player_name: "一个很长的中文角色名字".to_owned(),
                 ..yggdrasil()
             },

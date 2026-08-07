@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::crash::CrashReport;
 use crate::job::JobEvent;
+use crate::launch::crash::CrashReport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

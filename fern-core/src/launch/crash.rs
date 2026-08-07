@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// 规则表跟着二进制走。用户装的是一个启动器，不是一个需要配套数据目录的东西。
-const RULES: &str = include_str!("../rules/crash.json");
+const RULES: &str = include_str!("../../rules/crash.json");
 
 /// 尾部保留多少字节交给界面。够看清最后一段栈，又不至于把 IPC 塞爆。
 const EXCERPT_BYTES: usize = 8 * 1024;

@@ -13,11 +13,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    DataPaths, Job, java, loader,
-    metacache::{self, Freshness},
-    rules, runtime,
-    settings::source_order,
-    version,
+    DataPaths, Job,
+    data::{
+        metacache::{self, Freshness},
+        settings::source_order,
+    },
+    java::{self, runtime},
+    launch::{loader, rules, version},
 };
 
 /// 版本清单在缓存目录里的名字。补全和「新建实例」的版本列表读的是同一份。

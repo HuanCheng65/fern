@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, settings::source_order};
+use crate::{DataPaths, data::settings::source_order};
 
 /// authlib-injector 的发布清单。BMCLAPI 上有镜像，国内用户占比高，直接用它。
 const INJECTOR_LATEST: &str =

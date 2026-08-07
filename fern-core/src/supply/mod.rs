@@ -9,6 +9,11 @@
 //! 搜索条件全部由调用方明确给出，这里不去问「当前实例是什么」。补给站是一个
 //! 独立的地方：先按实例过滤，等于把浏览和「给这个实例装东西」压成了一件事，
 //! 于是想看看有什么就得先有一个实例。要不要装得上是**标注**，不是过滤器。
+//!
+//! 整合包是这一层的另一条支线，在 `modpack.rs`：装它不是「装东西到某个实例」，
+//! 是**建一个实例**。
+
+pub(crate) mod modpack;
 
 use anyhow::{Context, Result, anyhow};
 use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
@@ -598,7 +603,7 @@ pub async fn fetch_primary_file(
     tokio::fs::create_dir_all(directory).await?;
     let destination = fern_download::safe_join(directory, std::path::Path::new(&file.filename))?;
     let task = DownloadTask::new(destination.clone(), &file.url, &file.hashes.sha1, file.size)?;
-    DownloadClient::new(crate::settings::source_order(), 4)
+    DownloadClient::new(crate::data::settings::source_order(), 4)
         .download_all(vec![task], events)
         .await?;
     Ok(destination)
@@ -695,7 +700,7 @@ pub async fn install(
     } else {
         "下载文件".to_owned()
     });
-    let downloader = DownloadClient::new(crate::settings::source_order(), 8);
+    let downloader = DownloadClient::new(crate::data::settings::source_order(), 8);
     downloader.download_all(tasks, events).await?;
     Ok(installed)
 }

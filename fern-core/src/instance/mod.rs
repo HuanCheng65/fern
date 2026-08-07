@@ -1,3 +1,15 @@
+//! 实例层：一个实例是什么，以及它的目录里有什么。
+//!
+//! `mod.rs` 是模型——`InstanceProfile` 落盘长什么样由它说了算；`catalog.rs`
+//! 是对这些模型的增删改查（建、删、改名、复制、读运行时状况）。其余三个各读
+//! 游戏目录里的一类东西：`mods.rs` 还管启用与禁用，`saves.rs` 和 `servers.rs`
+//! 只读——删存档、改服务器列表这种事交给文件管理器和游戏自己。
+
+pub(crate) mod catalog;
+pub(crate) mod mods;
+pub(crate) mod saves;
+pub(crate) mod servers;
+
 use std::{fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};

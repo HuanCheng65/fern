@@ -211,7 +211,7 @@ async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::source_order;
+    use crate::data::settings::source_order;
 
     /// 解析得了但连不上的地址。用它是为了证明「命中缓存时一次网络都没发」：
     /// 真去请求了，测试就会失败而不是变慢。

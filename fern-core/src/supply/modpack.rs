@@ -229,7 +229,7 @@ async fn lay_out(game: &Path, archive_path: &Path, index: Index, job: &crate::Jo
 
     job.step(format!("下载整合包的 {} 个文件", tasks.len()));
     if !tasks.is_empty() {
-        DownloadClient::new(crate::settings::source_order(), 8)
+        DownloadClient::new(crate::data::settings::source_order(), 8)
             .download_all(tasks, events)
             .await?;
     }
@@ -259,7 +259,7 @@ pub async fn install_from_modrinth(
     job.expect(1);
     job.step("下载整合包");
     let cache = paths.root.join("cache/modpacks");
-    let archive = crate::modrinth::fetch_primary_file(version_id, &cache, &job.downloads()).await?;
+    let archive = crate::supply::fetch_primary_file(version_id, &cache, &job.downloads()).await?;
     install(paths, &archive, name, job).await
 }
 

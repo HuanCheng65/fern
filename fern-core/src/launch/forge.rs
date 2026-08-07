@@ -27,7 +27,12 @@ use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
 use serde::Deserialize;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, LoaderKind, java, runtime, settings::source_order, version};
+use crate::{
+    DataPaths, LoaderKind,
+    data::settings::source_order,
+    java::{self, runtime},
+    launch::version,
+};
 
 /// 装完留下的标记。存的是安装器的版本，将来换版本能看出来。
 const MARKER: &str = ".fern-installed";
@@ -181,7 +186,7 @@ pub(crate) fn installer_url(
 }
 
 fn display(kind: LoaderKind) -> &'static str {
-    crate::loader::display_name(kind)
+    crate::launch::loader::display_name(kind)
 }
 
 fn slug(kind: LoaderKind) -> &'static str {

@@ -1,3 +1,23 @@
+//! 启动层：从「点了启动」到「进程跑起来」之间的一切。
+//!
+//! 文件的顺序就是事情发生的顺序：`prepare` 补全文件（加载器那一段交给
+//! `loader` 与 `forge`），`version` 把带 `inheritsFrom` 的几份 JSON 合成一份，
+//! `rules` 决定这台机器该认哪些条目，`tuning` 决定给多少内存、用什么 GC，
+//! 本文件把这些拼成命令行并管住进程，游戏跑起来之后的输出归 `gamelog` 与
+//! `crash`。
+//!
+//! **补全与启动必须读同一份合并后的元数据**（`version::resolve`）。两边各算
+//! 各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
+
+pub(crate) mod crash;
+pub(crate) mod forge;
+pub(crate) mod gamelog;
+pub(crate) mod loader;
+pub(crate) mod prepare;
+pub(crate) mod rules;
+pub(crate) mod tuning;
+pub(crate) mod version;
+
 use std::{
     collections::HashMap,
     fs::File,
@@ -18,10 +38,9 @@ use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    Account, DataPaths, LaunchStage, LauncherEvent, crash, gamelog, gamelog::LogParser, java,
-    rules, tuning, version,
-};
+use crate::{Account, DataPaths, LaunchStage, LauncherEvent, java};
+
+use gamelog::LogParser;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -402,7 +421,7 @@ pub async fn launch_instance(
     append_launch_log(&launch_log, &format!("started pid={}", child.id()))?;
     // 进程起来了才算玩过。写不进去不该让已经跑起来的游戏被判失败——排序
     // 差一次，比启动被一个写盘错误打断好。
-    if let Err(error) = crate::catalog::touch_played(paths, instance_id) {
+    if let Err(error) = crate::instance::catalog::touch_played(paths, instance_id) {
         append_launch_log(&launch_log, &format!("last-played not recorded: {error}"))?;
     }
 

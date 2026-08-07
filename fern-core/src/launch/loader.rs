@@ -15,9 +15,11 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths, LoaderKind,
-    metacache::{self, Freshness},
-    settings::source_order,
-    version,
+    data::{
+        metacache::{self, Freshness},
+        settings::source_order,
+    },
+    launch::version,
 };
 
 /// 版本列表在缓存目录里的名字。
@@ -219,7 +221,8 @@ pub async fn install(
 ) -> Result<String> {
     // NeoForge 和 Forge 要在本地跑安装器，是完全不同的一条路。
     if matches!(kind, LoaderKind::NeoForge | LoaderKind::Forge) {
-        return crate::forge::install(paths, kind, game_version, loader_version, events).await;
+        return crate::launch::forge::install(paths, kind, game_version, loader_version, events)
+            .await;
     }
     let expected_id = version_id(kind, game_version, loader_version);
     if version::read_one(paths, &expected_id).is_ok() {
@@ -345,7 +348,7 @@ mod tests {
             let reachable = match kind {
                 LoaderKind::Vanilla => true,
                 LoaderKind::NeoForge | LoaderKind::Forge => {
-                    crate::forge::installer_url(kind, "1.21.1", "1.0").is_ok()
+                    crate::launch::forge::installer_url(kind, "1.21.1", "1.0").is_ok()
                 }
                 other => meta_root(other).is_ok(),
             };

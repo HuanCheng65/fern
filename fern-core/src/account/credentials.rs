@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::auth::YggdrasilSession;
+use crate::account::yggdrasil::YggdrasilSession;
 
 const SERVICE: &str = "fern-launcher";
 /// 单账户时代的两个固定键。只有迁移还会读它们（见 accounts.rs），读得出来
@@ -26,7 +26,7 @@ fn session_entry(id: &str) -> String {
 }
 
 /// 存一个账户的令牌。
-pub fn store_secret(id: &str, secret: &crate::accounts::Secret) -> Result<()> {
+pub fn store_secret(id: &str, secret: &crate::account::roster::Secret) -> Result<()> {
     let json = serde_json::to_string(secret).context("序列化登录信息")?;
     entry(&session_entry(id))?
         .set_password(&json)
@@ -34,7 +34,7 @@ pub fn store_secret(id: &str, secret: &crate::accounts::Secret) -> Result<()> {
 }
 
 /// 读回来。没有条目返回 `None`——离线账户本来就没有，那是正常状态。
-pub fn load_secret(id: &str) -> Result<Option<crate::accounts::Secret>> {
+pub fn load_secret(id: &str) -> Result<Option<crate::account::roster::Secret>> {
     let entry = entry(&session_entry(id))?;
     match entry.get_password() {
         Ok(json) => Ok(serde_json::from_str(&json).ok()),
@@ -85,7 +85,7 @@ pub fn clear_session() -> Result<()> {
     }
 }
 
-pub fn load_microsoft_session() -> Result<Option<crate::microsoft::MicrosoftSession>> {
+pub fn load_microsoft_session() -> Result<Option<crate::account::microsoft::MicrosoftSession>> {
     let entry = entry(MICROSOFT_ENTRY)?;
     match entry.get_password() {
         Ok(json) => Ok(serde_json::from_str(&json).ok()),

@@ -25,7 +25,10 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::{DataPaths, auth::YggdrasilSession, credentials, microsoft::MicrosoftSession};
+use crate::{
+    DataPaths,
+    account::{credentials, microsoft::MicrosoftSession, yggdrasil::YggdrasilSession},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -138,7 +141,7 @@ pub fn save(paths: &DataPaths, roster: &Roster) -> Result<()> {
 /// 遗留的那两条留在原地，至少还有救。能读出来的才搬走并删掉旧键——令牌不该
 /// 同时躺在两个地方。
 fn migrate(paths: &DataPaths) -> Roster {
-    let legacy = crate::settings::load(paths).account;
+    let legacy = crate::data::settings::load(paths).account;
     let mut roster = Roster::default();
 
     if !legacy.player_name.trim().is_empty()
@@ -213,7 +216,7 @@ fn adopt(
     api_root: Option<String>,
     secret: Secret,
 ) -> Result<AccountRecord> {
-    let id = crate::catalog::token()?;
+    let id = crate::instance::catalog::token()?;
     credentials::store_secret(&id, &secret)?;
     Ok(AccountRecord {
         id,
@@ -232,7 +235,7 @@ fn adopt(
 fn offline_record(player_name: &str) -> Result<AccountRecord> {
     let credentials = crate::launch::offline_credentials(player_name);
     Ok(AccountRecord {
-        id: crate::catalog::token()?,
+        id: crate::instance::catalog::token()?,
         kind: AccountKind::Offline,
         player_name: credentials.player_name,
         uuid: credentials.uuid,
