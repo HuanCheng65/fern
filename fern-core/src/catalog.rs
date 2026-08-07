@@ -140,6 +140,13 @@ pub struct InstanceRuntime {
     /// 现在会选中的那一个。为空说明得先下一个。
     pub java: Option<crate::JavaRuntime>,
     pub mods_count: u32,
+    /// 这个实例最终生效的那份设置里，界面要显示「跟随全局」时该说的那些值。
+    ///
+    /// 实例设置面板必须说得出「不改的话会怎样」——「跟随全局」四个字本身不
+    /// 解释任何事，把全局解析出来的结果摆在旁边才行。
+    pub defaults: crate::GameDefaults,
+    /// 交给游戏的内存上限，MB。滑杆的右端就是它。
+    pub memory_ceiling_mb: u32,
 }
 
 /// 不联网就能算出来的那部分。版本要求取自已经落盘的元数据，没补全过的实例
@@ -152,13 +159,17 @@ pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<Instance
     let game_directory = paths.game_directory(instance_id);
     let mods = crate::mods_profile(&game_directory);
     let physical = crate::physical_memory_bytes();
+    let defaults = crate::current_settings().game;
+    let ceiling = crate::heap_ceiling(physical, defaults.memory_ceiling_mb);
 
     Ok(InstanceRuntime {
-        automatic_memory_mb: crate::heap_megabytes(physical, mods, None),
+        automatic_memory_mb: crate::heap_megabytes(physical, mods, None, ceiling),
         physical_memory_mb: physical.map_or(0, |bytes| (bytes / (1024 * 1024)) as u32),
         requirement,
         java: crate::select_java(&crate::discover_java(Some(paths)), &requirement),
         mods_count: mods.count,
+        defaults,
+        memory_ceiling_mb: ceiling,
     })
 }
 

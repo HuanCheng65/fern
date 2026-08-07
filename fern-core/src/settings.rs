@@ -51,6 +51,77 @@ pub struct DownloadSettings {
     pub source: SourcePreference,
 }
 
+/// 所有实例的起点。
+///
+/// 实例设置回答「这一个要不要特别一点」，这里回答「一般情况下是什么样」。
+/// 没有这一层的话，每建一个实例都要把同样的选择再做一遍，而人只会做一次，
+/// 之后的实例全都带着一份自己没选过的默认值。
+///
+/// 只放**没有自动算法**的东西，加上那一条自动算法唯一需要人来定的量。
+/// 内存不是「默认多少 MB」——那会和实例里的「自动」打架，两个都在说
+/// 「我不管你决定」，答案却不一样。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GameDefaults {
+    /// 这台机器上最多把多少内存交给游戏，MB。`None` 是物理内存的一半。
+    ///
+    /// 这是自动分配那套算法里唯一一个**只有用户知道答案**的量：机器上还跑着
+    /// 什么，只有他清楚。其余的参数（基线取四分之一、大整合包抬到 8 G）是我们
+    /// 的判断，摆出来只会变成一排没人敢动的开关。
+    ///
+    /// 它同时夹住自动算出来的值和实例里手填的值——一个数字一个意思。想给某个
+    /// 实例更多，就是在决定多分一点机器给游戏，该抬的是这条线。
+    pub memory_ceiling_mb: Option<u32>,
+    /// 不填就是 G1。
+    pub garbage_collector: Option<crate::GarbageCollector>,
+    /// 实例没指定时的游戏窗口尺寸。
+    pub resolution: Option<crate::Resolution>,
+    /// 额外 JVM 参数，原样一行，按空白切开。
+    ///
+    /// 不做引号解析：真正的 shell 引号规则是一大片表面积，而这个框在实践中
+    /// 装的是 `-XX:+Foo -Dbar=1`。带空格的值请写进实例设置以外的地方。
+    pub jvm_arguments: String,
+}
+
+/// 一个实例最终生效的那份。
+///
+/// 三层：实例说了算 → 全局默认 → 内置默认。求值只在这里做一次，`launch` 和
+/// 设置界面读的是同一个结果——两边各算各的，界面上写着 G1 实际跑着 ZGC 这种
+/// 事就是这么来的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveSettings {
+    /// 手动指定的堆。`None` 表示按自动算。
+    pub max_memory_mb: Option<u32>,
+    /// 交给游戏的内存上限，MB。已经算进物理内存的兜底。
+    pub memory_ceiling_mb: u32,
+    pub garbage_collector: crate::GarbageCollector,
+    pub resolution: Option<crate::Resolution>,
+    pub process_priority: crate::ProcessPriority,
+    pub jvm_arguments: Vec<String>,
+}
+
+pub fn effective(
+    instance: &crate::InstanceSettings,
+    defaults: &GameDefaults,
+    physical_bytes: Option<u64>,
+) -> EffectiveSettings {
+    EffectiveSettings {
+        max_memory_mb: instance.max_memory_mb,
+        memory_ceiling_mb: crate::heap_ceiling(physical_bytes, defaults.memory_ceiling_mb),
+        garbage_collector: instance
+            .garbage_collector
+            .or(defaults.garbage_collector)
+            .unwrap_or_default(),
+        resolution: instance.resolution.or(defaults.resolution),
+        process_priority: instance.process_priority.unwrap_or_default(),
+        jvm_arguments: defaults
+            .jvm_arguments
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -58,6 +129,8 @@ pub struct Settings {
     pub appearance: serde_json::Value,
     pub account: AccountSettings,
     pub download: DownloadSettings,
+    /// 所有实例的起点。实例设置只写它要偏离的那几项。
+    pub game: GameDefaults,
     /// 首次启动向导走完过一次。
     pub setup_done: bool,
     /// 游戏窗口开出来之后把启动器收起来（文档 §5.4 末句）。
@@ -73,6 +146,7 @@ impl Default for Settings {
             appearance: serde_json::Value::Object(serde_json::Map::new()),
             account: AccountSettings::default(),
             download: DownloadSettings::default(),
+            game: GameDefaults::default(),
             setup_done: false,
             minimize_on_launch: false,
         }
@@ -143,6 +217,54 @@ mod tests {
         assert_eq!(read.appearance["density"], "compact");
 
         fs::remove_dir_all(root).expect("remove test data root");
+    }
+
+    #[test]
+    fn an_instance_only_writes_down_what_it_wants_to_differ_on() {
+        use crate::{GarbageCollector, InstanceSettings, Resolution};
+
+        let defaults = GameDefaults {
+            memory_ceiling_mb: Some(6144),
+            garbage_collector: Some(GarbageCollector::Z),
+            resolution: Some(Resolution {
+                width: 1600,
+                height: 900,
+            }),
+            jvm_arguments: "-Dfoo=1  -XX:+Bar".to_owned(),
+        };
+        let physical = Some(32 * 1024 * 1024 * 1024u64);
+
+        // 什么都没说的实例，整份跟着全局。
+        let plain = crate::settings::effective(&InstanceSettings::default(), &defaults, physical);
+        assert_eq!(plain.garbage_collector, GarbageCollector::Z);
+        assert_eq!(plain.resolution.map(|r| r.width), Some(1600));
+        assert_eq!(plain.memory_ceiling_mb, 6144);
+        // 参数按空白切开，连续空白不该切出空串。
+        assert_eq!(plain.jvm_arguments, vec!["-Dfoo=1", "-XX:+Bar"]);
+
+        // 说了的那几项归实例。
+        let special = crate::settings::effective(
+            &InstanceSettings {
+                garbage_collector: Some(GarbageCollector::G1),
+                ..InstanceSettings::default()
+            },
+            &defaults,
+            physical,
+        );
+        assert_eq!(special.garbage_collector, GarbageCollector::G1);
+        // 没说的仍然跟全局，不会因为说了一项就整份脱钩。
+        assert_eq!(special.resolution.map(|r| r.width), Some(1600));
+
+        // 全局也没说时才落到内置默认。
+        let bare = crate::settings::effective(
+            &InstanceSettings::default(),
+            &GameDefaults::default(),
+            physical,
+        );
+        assert_eq!(bare.garbage_collector, GarbageCollector::G1);
+        assert_eq!(bare.resolution, None);
+        assert_eq!(bare.memory_ceiling_mb, 16384);
+        assert!(bare.jvm_arguments.is_empty());
     }
 
     #[test]

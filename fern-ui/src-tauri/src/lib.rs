@@ -781,6 +781,17 @@ async fn microsoft_login(app: tauri::AppHandle) -> Result<fern_core::AccountReco
     .await?
 }
 
+/// 这台机器有多少内存，以及现在交给游戏的上限在哪。
+#[tauri::command]
+async fn memory_budget() -> Result<fern_core::MemoryBudget, String> {
+    off_thread(|| {
+        Ok(fern_core::memory_budget(
+            fern_core::current_settings().game.memory_ceiling_mb,
+        ))
+    })
+    .await?
+}
+
 /// 这台机器上的 Java。设置页要能看见 Fern 到底会用哪一个。
 #[tauri::command]
 async fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
@@ -834,6 +845,7 @@ pub fn run() {
             set_instance_account,
             microsoft_login,
             yggdrasil_login,
+            memory_budget,
             list_java_runtimes,
             remove_java_runtime,
             instance_runtime,

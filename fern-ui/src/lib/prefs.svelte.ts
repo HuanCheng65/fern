@@ -12,7 +12,7 @@
  * 第一次替用户按下的那一下，不是一个每次启动都要重新解析的状态。
  */
 
-import { patch, snapshot } from './persist'
+import { emptyGameDefaults, patch, snapshot, type GameDefaults } from './persist'
 
 export type DownloadSource = 'official' | 'bmclapi'
 
@@ -35,6 +35,13 @@ export function suggestedSource(): DownloadSource {
 
 class PrefsStore {
   downloadSource = $state<DownloadSource>('official')
+  /**
+   * 所有实例的起点。
+   *
+   * 这一层的存在理由：没有它，每建一个实例都要把同样的选择再做一遍，而人
+   * 只会做一次，之后的实例全都带着一份自己没选过的默认值。
+   */
+  game = $state<GameDefaults>(emptyGameDefaults())
   setupDone = $state(false)
   minimizeOnLaunch = $state(false)
 
@@ -42,10 +49,18 @@ class PrefsStore {
   hydrate() {
     const doc = snapshot()
     this.downloadSource = doc.download.source === 'bmclapi' ? 'bmclapi' : 'official'
+    this.game = { ...emptyGameDefaults(), ...(doc.game ?? {}) }
     this.setupDone = doc.setupDone === true
     this.minimizeOnLaunch = doc.minimizeOnLaunch === true
   }
 
+
+  /** 改一项全局默认。整份写回去，Rust 那边的 serde 只认完整的一段。 */
+  setGame(change: Partial<GameDefaults>) {
+    this.game = { ...this.game, ...change }
+    const game = this.game
+    patch((doc) => (doc.game = game))
+  }
 
   setDownloadSource(source: DownloadSource) {
     this.downloadSource = source

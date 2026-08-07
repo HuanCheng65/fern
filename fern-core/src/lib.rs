@@ -35,10 +35,9 @@ mod version;
 pub use account::Account;
 pub use accounts::{
     AccountKind, AccountRecord, Roster, Secret, active as active_account,
-    for_instance as account_for_instance,
-    add_offline as add_offline_account, adopt_session as adopt_account, list as list_accounts,
-    remove as remove_account, rename_offline as rename_offline_account,
-    set_active as set_active_account,
+    add_offline as add_offline_account, adopt_session as adopt_account,
+    for_instance as account_for_instance, list as list_accounts, remove as remove_account,
+    rename_offline as rename_offline_account, set_active as set_active_account,
 };
 pub use auth::{
     YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
@@ -95,10 +94,14 @@ pub use prepare::{PrepareResult, prepare_instance};
 pub use runtime::{ensure_java, remove as remove_runtime};
 pub use saves::{SaveEntry, list as list_saves};
 pub use settings::{
-    AccountSettings, DownloadSettings, Settings, SourcePreference, current as current_settings,
-    load as load_settings, save as save_settings,
+    AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,
+    current as current_settings, effective as effective_settings, load as load_settings,
+    save as save_settings,
 };
-pub use tuning::{ModsProfile, heap_megabytes, mods_profile, physical_memory_bytes};
+pub use tuning::{
+    MemoryBudget, ModsProfile, heap_ceiling, heap_megabytes, memory_budget, mods_profile,
+    physical_memory_bytes,
+};
 pub use version::{effective_id as effective_version_id, resolve as resolve_version};
 
 /// Marker for the Pearl integration boundary.

@@ -19,10 +19,28 @@ export interface SettingsDoc {
   appearance: Record<string, unknown>
   account: { kind: string; playerName: string }
   download: { source: string }
+  /** 所有实例的起点。实例设置只写它要偏离的那几项。 */
+  game: GameDefaults
   setupDone: boolean
   /** 游戏窗口开出来之后把启动器收起来。 */
   minimizeOnLaunch: boolean
 }
+
+export interface GameDefaults {
+  /** 交给游戏的内存上限，MB。null 是「物理内存的一半」。 */
+  memoryCeilingMb: number | null
+  garbageCollector: 'g1' | 'z' | null
+  resolution: { width: number; height: number } | null
+  /** 额外 JVM 参数，原样一行。 */
+  jvmArguments: string
+}
+
+export const emptyGameDefaults = (): GameDefaults => ({
+  memoryCeilingMb: null,
+  garbageCollector: null,
+  resolution: null,
+  jvmArguments: '',
+})
 
 const FALLBACK_KEY = 'fern.settings'
 const SAVE_DELAY = 300
@@ -31,6 +49,7 @@ export const emptyDoc = (): SettingsDoc => ({
   appearance: {},
   account: { kind: 'offline', playerName: '' },
   download: { source: 'official' },
+  game: emptyGameDefaults(),
   setupDone: false,
   minimizeOnLaunch: false,
 })

@@ -33,6 +33,14 @@
     requirement: { minimum: number; maximum: number | null }
     java: JavaRuntime | null
     modsCount: number
+    /** 全局默认。「跟随全局」四个字本身不解释任何事，得说得出它是什么。 */
+    defaults: {
+      memoryCeilingMb: number | null
+      garbageCollector: 'g1' | 'z' | null
+      resolution: { width: number; height: number } | null
+      jvmArguments: string
+    }
+    memoryCeilingMb: number
   }
 
   interface InstanceSettings {
@@ -75,8 +83,15 @@
   let loading = $state(true)
   let error = $state('')
 
-  /** 滑杆的上限：机器的一半，和后端的封顶是同一条线。 */
-  const ceiling = $derived(Math.max(2048, Math.floor((runtime?.physicalMemoryMb ?? 8192) / 2)))
+  /**
+   * 滑杆的上限就是设置里那条线，和后端封顶用的是同一个数。
+   *
+   * 所以这根滑杆推到头之后没有旁路——想给更多就是想多分一点机器给游戏，
+   * 该去改那条线，而不是在这里绕过它。
+   */
+  const ceiling = $derived(runtime?.memoryCeilingMb ?? 4096)
+  /** 全局选的那个回收器，「跟随全局」要说得出是哪一个。 */
+  const globalGc = $derived(runtime?.defaults.garbageCollector ?? 'g1')
   const memoryAuto = $derived(settings.maxMemoryMb === null)
   const memoryValue = $derived(settings.maxMemoryMb ?? runtime?.automaticMemoryMb ?? 2048)
 
@@ -188,7 +203,9 @@
             {#if runtime && runtime.modsCount > 0}
               {runtime.modsCount} 个模组 · 物理内存 {Math.round(runtime.physicalMemoryMb / 1024)} GB
             {:else}
-              物理内存 {Math.round((runtime?.physicalMemoryMb ?? 0) / 1024)} GB，上限为其一半
+              物理内存 {Math.round((runtime?.physicalMemoryMb ?? 0) / 1024)} GB，交给游戏至多 {Math.round(
+                ceiling / 1024,
+              )} GB
             {/if}
           </span>
           <button
@@ -234,18 +251,24 @@
           <ChevronRight size={13} strokeWidth={2} class={advanced ? 'turned' : ''} />高级
         </button>
         {#if advanced}
+          <!--
+            三档而不是两档：「跟随全局」和「G1」不是一回事——前者是「我不管」，
+            以后改了全局它跟着变；后者是「就要 G1」。把它们合成一个选项，等于
+            让一次沉默变成一次表态。
+          -->
           <div class="row-head adv">
             <span class="label">垃圾回收器</span>
-            <span class="t-quiet">默认 G1。ZGC 停顿更短，但占用更多内存与 CPU。</span>
+            <span class="t-quiet">ZGC 停顿更短，但占用更多内存与 CPU。</span>
           </div>
           <Choice
             label="垃圾回收器"
-            value={settings.garbageCollector ?? 'g1'}
+            value={settings.garbageCollector ?? 'inherit'}
             onchange={(next) => {
-              settings.garbageCollector = next === 'g1' ? null : 'z'
+              settings.garbageCollector = next === 'inherit' ? null : (next as 'g1' | 'z')
               void persist()
             }}
             options={[
+              { value: 'inherit', label: `跟随全局（${globalGc === 'z' ? 'ZGC' : 'G1'}）` },
               { value: 'g1', label: 'G1' },
               { value: 'z', label: 'ZGC' },
             ]}

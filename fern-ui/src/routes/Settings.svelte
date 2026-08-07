@@ -10,6 +10,15 @@
    * 文件」这类项要么点了没反应，要么根本是写死的说明文字——设置页里的
    * 假开关比没有这一页更伤，因为它会让人以为自己已经配置过了。
    *
+   * **什么该进这一页**，三条排除线（见 docs/UI_DESIGN.md 十三）：
+   *
+   *   属于某个实例的     → 实例设置
+   *   属于某一次操作的   → 就地解决（岛、对话框）
+   *   剩下的、跨实例跨会话的才在这里
+   *
+   * 「游戏」那一节是所有实例的**起点**，不是它们的替代品：实例设置回答
+   * 「这一个要不要特别一点」，这里回答「一般情况下是什么样」。
+   *
    * 外观这一节是文档里「个性化出口」的第一批：改动写进主题状态，立刻
    * 全局生效，序列化出来就是一份可以贴给别人的主题码。
    */
@@ -24,7 +33,14 @@
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
-  type SectionId = 'appearance' | 'account' | 'download' | 'data'
+  type SectionId =
+    | 'appearance'
+    | 'account'
+    | 'game'
+    | 'java'
+    | 'download'
+    | 'data'
+    | 'about'
 
   interface Props {
     /** 打开时落在哪一节。空串就是第一节。 */
@@ -37,8 +53,11 @@
   const sections: { id: SectionId; label: string }[] = [
     { id: 'appearance', label: '外观' },
     { id: 'account', label: '账户' },
+    { id: 'game', label: '游戏' },
+    { id: 'java', label: 'Java' },
     { id: 'download', label: '下载' },
     { id: 'data', label: '数据' },
+    { id: 'about', label: '关于' },
   ]
 
   let section = $state<SectionId>('appearance')
@@ -54,6 +73,36 @@
   >([])
   let runtimeError = $state('')
 
+  /** 这台机器有多少内存，以及现在那条线在哪。 */
+  let budget = $state({ physicalMb: 0, ceilingMb: 0 })
+  const GIGABYTE = 1024
+  /** 滑杆读的是 GB：内存这件事上没人以 MB 为单位思考。 */
+  const gigabytes = (mb: number) => Math.round((mb / GIGABYTE) * 10) / 10
+  const ceilingGb = $derived(gigabytes(prefs.game.memoryCeilingMb ?? budget.ceilingMb))
+  const custom = $derived(prefs.game.memoryCeilingMb !== null)
+  const resolution = $derived(prefs.game.resolution)
+
+  function setCeiling(gb: number) {
+    prefs.setGame({ memoryCeilingMb: Math.round(gb * GIGABYTE) })
+    void refreshBudget()
+  }
+
+  async function refreshBudget() {
+    if (!inTauri()) return
+    try {
+      budget = await invoke('memory_budget')
+    } catch {
+      // 读不到就把这一行留空，别编一个数出来。
+    }
+  }
+
+  function setResolution(width: number, height: number) {
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return
+    prefs.setGame({
+      resolution: { width: Math.max(320, Math.round(width)), height: Math.max(240, Math.round(height)) },
+    })
+  }
+
   let themeCode = $state('')
   let copied = $state(false)
   let importError = $state('')
@@ -68,6 +117,7 @@
       .catch((error) => (pathError = String(error)))
     void loadRuntimes()
     void accounts.load()
+    void refreshBudget()
   })
 
 
@@ -265,36 +315,114 @@
             </span>
             <AccountList />
           </div>
-        {:else if section === 'download'}
+        {:else if section === 'game'}
+          <!--
+            这一节是所有实例的起点，不是它们的替代品。放在这里的判据只有一条：
+            它是不是「一般情况下该是什么样」——只对某一个实例成立的东西属于
+            实例设置。
+          -->
+          <div class="row stack">
+            <span class="label">
+              交给游戏的内存
+              <small>
+                自动分配的堆和实例里手填的值都被这条线夹住。
+                {#if budget.physicalMb}
+                  这台机器共 {gigabytes(budget.physicalMb)} GB，默认给游戏一半。
+                {/if}
+              </small>
+            </span>
+            <div class="slider-row">
+              <input
+                class="slider"
+                type="range"
+                min="2"
+                max={Math.max(4, gigabytes(budget.physicalMb || 8192))}
+                step="0.5"
+                value={ceilingGb}
+                oninput={(event) => setCeiling(Number(event.currentTarget.value))}
+              />
+              <span class="t-mono amount">{ceilingGb} GB</span>
+              <button
+                class="btn btn--link"
+                disabled={!custom}
+                onclick={() => {
+                  prefs.setGame({ memoryCeilingMb: null })
+                  void refreshBudget()
+                }}
+              >
+                默认
+              </button>
+            </div>
+          </div>
+
           <div class="row">
             <span class="label">
-              下载源
-              <small
-                >根据系统区域建议使用 {sourceName[suggestedSource()]}。当前源失败时将自动切换到另一个源。</small
-              >
+              垃圾回收器
+              <small>ZGC 停顿更短，但占用更多内存与 CPU。实例可以单独覆盖。</small>
             </span>
             <Choice
-              label="下载源"
-              value={prefs.downloadSource}
-              onchange={(value) => prefs.setDownloadSource(value)}
+              label="垃圾回收器"
+              value={prefs.game.garbageCollector ?? 'g1'}
+              onchange={(value) => prefs.setGame({ garbageCollector: value as 'g1' | 'z' })}
               options={[
-                { value: 'official', label: '官方源' },
-                { value: 'bmclapi', label: 'BMCLAPI' },
+                { value: 'g1', label: 'G1' },
+                { value: 'z', label: 'ZGC' },
               ]}
             />
           </div>
-        {:else}
+
           <div class="row stack">
-            <span class="label">数据目录</span>
-            <p class="path t-mono selectable">{paths.root || '—'}</p>
+            <span class="label">
+              游戏窗口
+              <small>不指定就交给游戏自己记住的尺寸。</small>
+            </span>
+            <div class="slider-row">
+              <Choice
+                label="游戏窗口"
+                value={resolution ? 'custom' : 'default'}
+                onchange={(value) =>
+                  prefs.setGame({ resolution: value === 'custom' ? { width: 1280, height: 720 } : null })}
+                options={[
+                  { value: 'default', label: '由游戏决定' },
+                  { value: 'custom', label: '指定尺寸' },
+                ]}
+              />
+              {#if resolution}
+                <input
+                  class="input size"
+                  type="number"
+                  value={resolution.width}
+                  oninput={(event) =>
+                    setResolution(Number(event.currentTarget.value), resolution.height)}
+                />
+                <span class="t-quiet">×</span>
+                <input
+                  class="input size"
+                  type="number"
+                  value={resolution.height}
+                  oninput={(event) =>
+                    setResolution(resolution.width, Number(event.currentTarget.value))}
+                />
+              {/if}
+            </div>
           </div>
+
           <div class="row stack">
-            <span class="label">日志目录</span>
-            <p class="path t-mono selectable">{paths.logs || '—'}</p>
-            <button class="btn btn--ghost open" onclick={() => void openLogs()}>
-              <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
-            </button>
+            <span class="label">
+              额外 JVM 参数
+              <small>
+                排在 Fern 自己那几个之后，所以同名的开关以你写的为准。按空格分开，不解析引号。
+              </small>
+            </span>
+            <input
+              class="input t-mono"
+              value={prefs.game.jvmArguments}
+              spellcheck="false"
+              placeholder="-XX:+UseStringDeduplication"
+              oninput={(event) => prefs.setGame({ jvmArguments: event.currentTarget.value })}
+            />
           </div>
+
           <div class="row">
             <span class="label">
               启动后最小化
@@ -310,10 +438,13 @@
               ]}
             />
           </div>
-          {#if pathError}<div class="alert">{pathError}</div>{/if}
+        {:else if section === 'java'}
           <!-- Java 平时是隐形的；能看见的唯一理由是它占了地方，要能删。 -->
           <div class="row stack">
-            <span class="label">Java 运行时</span>
+            <span class="label">
+              已安装的运行时
+              <small>缺什么会在首次启动那个实例时自动补上，这一层不需要照看。</small>
+            </span>
             {#if runtimes.length === 0}
               <p class="t-quiet">未找到可用的 Java，首次启动游戏时将自动下载。</p>
             {:else}
@@ -337,6 +468,38 @@
             {/if}
             {#if runtimeError}<div class="alert">{runtimeError}</div>{/if}
           </div>
+        {:else if section === 'download'}
+          <div class="row">
+            <span class="label">
+              下载源
+              <small
+                >根据系统区域建议使用 {sourceName[suggestedSource()]}。当前源失败时将自动切换到另一个源。</small
+              >
+            </span>
+            <Choice
+              label="下载源"
+              value={prefs.downloadSource}
+              onchange={(value) => prefs.setDownloadSource(value)}
+              options={[
+                { value: 'official', label: '官方源' },
+                { value: 'bmclapi', label: 'BMCLAPI' },
+              ]}
+            />
+          </div>
+        {:else if section === 'data'}
+          <div class="row stack">
+            <span class="label">数据目录</span>
+            <p class="path t-mono selectable">{paths.root || '—'}</p>
+          </div>
+          <div class="row stack">
+            <span class="label">日志目录</span>
+            <p class="path t-mono selectable">{paths.logs || '—'}</p>
+            <button class="btn btn--ghost open" onclick={() => void openLogs()}>
+              <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
+            </button>
+          </div>
+          {#if pathError}<div class="alert">{pathError}</div>{/if}
+        {:else}
           <div class="row">
             <span class="label">版本</span>
             <span class="t-mono value">Fern 0.1.0</span>
@@ -485,6 +648,30 @@
     inset: -6px;
     opacity: 0;
     cursor: pointer;
+  }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .slider {
+    flex: 1;
+    min-width: 0;
+    accent-color: var(--accent);
+  }
+
+  .amount {
+    flex: none;
+    min-width: 5ch;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  .size {
+    width: 88px;
   }
 
   .code-row {

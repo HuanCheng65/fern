@@ -175,9 +175,17 @@ pub async fn launch_instance(
         .clone()
         .ok_or_else(|| anyhow!("version {version_id} has no main class"))?;
 
+    // 实例没说的跟全局默认，全局也没说的才是内置默认。求值只做这一次——启动
+    // 按一份、界面显示另一份，就会出现「设置里写着 G1，实际跑的是 ZGC」。
+    let effective = crate::effective_settings(
+        &profile.settings,
+        &crate::current_settings().game,
+        tuning::physical_memory_bytes(),
+    );
+
     stage(LaunchStage::CheckingFiles);
     let context = rules::context(rules::Features {
-        custom_resolution: profile.settings.resolution.is_some(),
+        custom_resolution: effective.resolution.is_some(),
         ..rules::Features::default()
     });
     let natives_directory = paths.game_directory(instance_id).join("natives");
@@ -256,7 +264,7 @@ pub async fn launch_instance(
         .insert("launcher_version", env!("CARGO_PKG_VERSION"))
         .insert("clientid", "")
         .insert("auth_xuid", "");
-    if let Some(resolution) = &profile.settings.resolution {
+    if let Some(resolution) = &effective.resolution {
         variables = variables
             .insert("resolution_width", resolution.width.to_string())
             .insert("resolution_height", resolution.height.to_string());
@@ -320,16 +328,20 @@ pub async fn launch_instance(
     let heap = tuning::heap_megabytes(
         tuning::physical_memory_bytes(),
         tuning::mods_profile(&game_directory),
-        profile.settings.max_memory_mb,
+        effective.max_memory_mb,
+        effective.memory_ceiling_mb,
     );
     if let Some(argument) = tuning::heap_argument(&jvm_arguments, heap) {
         jvm_arguments.push(argument);
     }
     jvm_arguments.extend(tuning::gc_arguments(
         java_major,
-        profile.settings.garbage_collector.unwrap_or_default(),
+        effective.garbage_collector,
         &jvm_arguments,
     ));
+    // 用户自己那几个排在最后：同一个开关出现两次时 JVM 认后面的，所以他写的
+    // 永远能盖掉我们给的。
+    jvm_arguments.extend(effective.jvm_arguments.iter().cloned());
     stage(LaunchStage::BuildingCommand);
     let plan = LaunchPlan {
         java_binary: java_binary.clone(),
@@ -371,10 +383,7 @@ pub async fn launch_instance(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    apply_priority(
-        &mut command,
-        profile.settings.process_priority.unwrap_or_default(),
-    );
+    apply_priority(&mut command, effective.process_priority);
     let mut child = command
         .spawn()
         .with_context(|| format!("start Java from {}", java_binary.display()))?;

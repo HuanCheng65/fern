@@ -18,18 +18,61 @@ pub struct ModsProfile {
 
 const MEGABYTE: u64 = 1024 * 1024;
 
+/// 读不到物理内存时按 8 G 算：这是现在最常见的配置，猜错的代价也只是默认值
+/// 不够贴合，用户还能在设置里改。
+fn physical_megabytes(physical_bytes: Option<u64>) -> u32 {
+    physical_bytes.map_or(8192, |bytes| (bytes / MEGABYTE) as u32)
+}
+
+/// 设置页要回答的那两个数。
+///
+/// 「上限」两个字本身不解释任何事——只有把这台机器有多少、现在这条线在哪
+/// 一起摆出来，用户才知道要不要动它。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBudget {
+    pub physical_mb: u32,
+    pub ceiling_mb: u32,
+}
+
+pub fn memory_budget(preference: Option<u32>) -> MemoryBudget {
+    let physical = physical_memory_bytes();
+    MemoryBudget {
+        physical_mb: physical_megabytes(physical),
+        ceiling_mb: heap_ceiling(physical, preference),
+    }
+}
+
+/// 这台机器上最多把多少内存交给游戏，MB。
+///
+/// 默认是物理内存的一半——给游戏留下的不能比留给系统的多，否则换页带来的卡顿
+/// 比堆不够还难受。这条线是整套自动分配里**唯一一个只有用户知道答案**的量
+/// （机器上还跑着什么只有他清楚），所以它是设置里那一行；其余参数是我们的判断。
+///
+/// 2 G 的地板不是偏好，是「低于这个数游戏根本起不来」。
+pub fn heap_ceiling(physical_bytes: Option<u64>, preference: Option<u32>) -> u32 {
+    let physical_mb = physical_megabytes(physical_bytes);
+    match preference {
+        // 设成超过整台机器的值没有意义——那不是「多给一点」，是保证换页。
+        Some(chosen) => chosen.clamp(2048, physical_mb),
+        None => (physical_mb / 2).max(2048),
+    }
+}
+
 /// 决定 `-Xmx`，单位 MB。
 ///
-/// 基线是物理内存的四分之一、不低于 2 G，上限是物理内存的一半——给游戏留下
-/// 的不能比留给系统的多，否则换页带来的卡顿比堆不够还难受。
+/// 基线是物理内存的四分之一、不低于 2 G，封顶是 `ceiling`。
 ///
-/// `manual` 是实例设置里的滑杆。用户明确要了就照做，只在上限那里拦一下：
-/// 填一个超过物理内存的数，游戏会直接起不来，那不是他想要的结果。
-pub fn heap_megabytes(physical_bytes: Option<u64>, mods: ModsProfile, manual: Option<u32>) -> u32 {
-    // 读不到物理内存时按 8 G 算：这是现在最常见的配置，猜错的代价也只是
-    // 默认值不够贴合，用户还能在设置里改。
-    let physical_mb = physical_bytes.map_or(8192, |bytes| (bytes / MEGABYTE) as u32);
-    let ceiling = (physical_mb / 2).max(2048);
+/// `manual` 是实例设置里的滑杆。用户明确要了就照做，只在上限那里拦一下——
+/// 上限是同一条线，所以「这个实例要更多」和「多分一点机器给游戏」是同一件事，
+/// 不该有一条能绕过它的旁路。
+pub fn heap_megabytes(
+    physical_bytes: Option<u64>,
+    mods: ModsProfile,
+    manual: Option<u32>,
+    ceiling: u32,
+) -> u32 {
+    let physical_mb = physical_megabytes(physical_bytes);
 
     if let Some(manual) = manual {
         return manual.clamp(512, ceiling);
@@ -173,25 +216,32 @@ mod tests {
 
     const GIGABYTE: u64 = 1024 * MEGABYTE;
 
+    /// 没有偏好时的那条线，也就是这些用例的默认上限。
+    fn half(physical: u64) -> u32 {
+        heap_ceiling(Some(physical), None)
+    }
+
     #[test]
     fn baseline_is_a_quarter_of_physical_memory_with_a_two_gig_floor() {
+        let plain = ModsProfile::default();
         assert_eq!(
-            heap_megabytes(Some(16 * GIGABYTE), ModsProfile::default(), None),
+            heap_megabytes(Some(16 * GIGABYTE), plain, None, half(16 * GIGABYTE)),
             4096
         );
         // 4 G 的机器算出来是 1 G，抬到下限。
         assert_eq!(
-            heap_megabytes(Some(4 * GIGABYTE), ModsProfile::default(), None),
+            heap_megabytes(Some(4 * GIGABYTE), plain, None, half(4 * GIGABYTE)),
             2048
         );
     }
 
     #[test]
-    fn never_hands_the_game_more_than_half_the_machine() {
+    fn never_hands_the_game_more_than_half_the_machine_by_default() {
+        let plain = ModsProfile::default();
         // 2 G 的机器：下限 2 G 和上限 1 G 冲突，上限自己也有个 2 G 的底，
         // 否则算出来的堆会小到游戏根本起不来。
         assert_eq!(
-            heap_megabytes(Some(2 * GIGABYTE), ModsProfile::default(), None),
+            heap_megabytes(Some(2 * GIGABYTE), plain, None, half(2 * GIGABYTE)),
             2048
         );
         // 大整合包想要 8 G，但机器只有 8 G，只能给 4 G。
@@ -199,7 +249,10 @@ mod tests {
             count: 300,
             bytes: 2 * GIGABYTE,
         };
-        assert_eq!(heap_megabytes(Some(8 * GIGABYTE), heavy, None), 4096);
+        assert_eq!(
+            heap_megabytes(Some(8 * GIGABYTE), heavy, None, half(8 * GIGABYTE)),
+            4096
+        );
     }
 
     #[test]
@@ -213,26 +266,58 @@ mod tests {
             count: 250,
             bytes: 1500 * MEGABYTE,
         };
-        assert_eq!(heap_megabytes(Some(32 * GIGABYTE), plain, None), 8192);
-        assert_eq!(heap_megabytes(Some(32 * GIGABYTE), medium, None), 8192);
-        assert_eq!(heap_megabytes(Some(32 * GIGABYTE), large, None), 8192);
+        let big = half(32 * GIGABYTE);
+        assert_eq!(heap_megabytes(Some(32 * GIGABYTE), plain, None, big), 8192);
+        assert_eq!(heap_megabytes(Some(32 * GIGABYTE), medium, None, big), 8192);
+        assert_eq!(heap_megabytes(Some(32 * GIGABYTE), large, None, big), 8192);
         // 在小内存机器上才看得出档位的差别。
-        assert_eq!(heap_megabytes(Some(16 * GIGABYTE), plain, None), 4096);
-        assert_eq!(heap_megabytes(Some(16 * GIGABYTE), medium, None), 6144);
-        assert_eq!(heap_megabytes(Some(16 * GIGABYTE), large, None), 8192);
+        let mid = half(16 * GIGABYTE);
+        assert_eq!(heap_megabytes(Some(16 * GIGABYTE), plain, None, mid), 4096);
+        assert_eq!(heap_megabytes(Some(16 * GIGABYTE), medium, None, mid), 6144);
+        assert_eq!(heap_megabytes(Some(16 * GIGABYTE), large, None, mid), 8192);
     }
 
     #[test]
-    fn a_manual_setting_wins_but_still_cannot_exceed_the_machine() {
+    fn a_manual_setting_wins_but_never_escapes_the_ceiling() {
+        let plain = ModsProfile::default();
+        let mid = half(16 * GIGABYTE);
         assert_eq!(
-            heap_megabytes(Some(16 * GIGABYTE), ModsProfile::default(), Some(3072)),
+            heap_megabytes(Some(16 * GIGABYTE), plain, Some(3072), mid),
             3072
         );
-        // 32 G 的实例设置装不进 16 G 的机器。
+        // 实例里填 32 G 不是一条绕过那条线的旁路：想要更多，该抬的是那条线。
         assert_eq!(
-            heap_megabytes(Some(16 * GIGABYTE), ModsProfile::default(), Some(32768)),
+            heap_megabytes(Some(16 * GIGABYTE), plain, Some(32768), mid),
             8192
         );
+    }
+
+    #[test]
+    fn the_ceiling_is_the_one_number_the_user_owns() {
+        // 抬高之后，自动值和手填值一起松绑——它就是「最多给游戏多少」这一个
+        // 意思，不该只对其中一条生效。
+        let raised = heap_ceiling(Some(32 * GIGABYTE), Some(24576));
+        assert_eq!(raised, 24576);
+        let large = ModsProfile {
+            count: 250,
+            bytes: 1500 * MEGABYTE,
+        };
+        assert_eq!(
+            heap_megabytes(Some(32 * GIGABYTE), large, Some(20480), raised),
+            20480
+        );
+
+        // 压低之后连自动值也让步：这台机器上还跑着别的东西，只有用户知道。
+        let lowered = heap_ceiling(Some(32 * GIGABYTE), Some(4096));
+        assert_eq!(
+            heap_megabytes(Some(32 * GIGABYTE), large, None, lowered),
+            4096
+        );
+
+        // 设成超过整台机器没有意义——那不是「多给一点」，是保证换页。
+        assert_eq!(heap_ceiling(Some(8 * GIGABYTE), Some(64 * 1024)), 8192);
+        // 低到游戏起不来也不行。
+        assert_eq!(heap_ceiling(Some(32 * GIGABYTE), Some(256)), 2048);
     }
 
     #[test]
