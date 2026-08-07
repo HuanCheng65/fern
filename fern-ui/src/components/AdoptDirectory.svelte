@@ -10,6 +10,11 @@
    * 是可以随便试的：添加错了把实例删掉即可，那个目录不受影响。这句话要写在
    * 界面上——「导入」在别的启动器里通常意味着复制几十 GB。
    *
+   * **默认全选，一次提交。** 上一版每行一个「添加」按钮，一个装了十几个版本
+   * 的目录就是十几次点击，每次还重扫一遍。而选中一个现成目录的人想做的是换
+   * 启动器，不是挑版本——全要才是常态，只要其中几个是例外。所以默认勾上所有
+   * 还没添加的，想去掉的自己去掉。
+   *
    * 目录用系统选择器选，不让用户手打路径。
    */
   import { invoke } from '@tauri-apps/api/core'
@@ -53,7 +58,13 @@
   let directory = $state('')
   let versions = $state<ExternalVersion[] | null>(null)
   let skipped = $state<SkippedVersion[]>([])
-  let busy = $state('')
+  /** 勾选了哪些版本 id。用数组而不是 Set：几十条的量，可读比省事重要。 */
+  let chosen = $state<string[]>([])
+  let busy = $state<'' | 'scan' | 'add'>('')
+  /** 添加到第几个了。一次几十份实例描述很快，但不该是一段没有交代的空白。 */
+  let done = $state(0)
+  /** 哪几个没添加成功，以及为什么。剩下的照常添加，不因为一个失败全盘停下。 */
+  let failures = $state<{ id: string; reason: string }[]>([])
   let error = $state('')
   /**
    * 使用 Fern 的共享资源与依赖库。
@@ -76,10 +87,17 @@
     forge: 'Forge',
   }
 
+  /** 还能添加的那些。已添加的留在列表里，但它们不是选项。 */
+  const available = $derived((versions ?? []).filter((item) => !item.attached))
+  const attachedCount = $derived((versions ?? []).length - available.length)
+  const allChosen = $derived(available.length > 0 && chosen.length === available.length)
+
   async function choose() {
     if (!inTauri()) return
     const picked = await open({ directory: true, multiple: false, title: '选择游戏目录' })
     if (typeof picked !== 'string') return
+    // 换了目录，上一个目录里那些失败就不再说明什么了。
+    failures = []
     await scan(picked)
   }
 
@@ -88,10 +106,12 @@
     error = ''
     versions = null
     skipped = []
+    // 不清 failures：添加完会重扫一次，清了就等于没报过。
     try {
       const result = await invoke<ExternalScan>('scan_game_directory', { path })
       versions = result.versions
       skipped = result.skipped
+      chosen = result.versions.filter((item) => !item.attached).map((item) => item.id)
       // 选中的目录里正好有一个 `.minecraft` 时读的是它，后续的添加也用它。
       directory = result.root
     } catch (cause) {
@@ -102,34 +122,55 @@
     }
   }
 
-  async function attach(version: ExternalVersion) {
-    busy = version.id
+  function toggle(id: string) {
+    chosen = chosen.includes(id) ? chosen.filter((item) => item !== id) : [...chosen, id]
+  }
+
+  function toggleAll() {
+    chosen = allChosen ? [] : available.map((item) => item.id)
+  }
+
+  async function add() {
+    const wanted = [...chosen]
+    busy = 'add'
     error = ''
-    try {
-      const created = await invoke<{ id: string; name: string }>('attach_game_version', {
-        path: directory,
-        versionId: version.id,
-        sharedLibraries: shared,
-      })
-      await instances.load()
-      notices.say({
-        title: `已添加 ${created.name}`,
-        detail: '游戏文件保留在原位置。',
-        action: {
-          label: '打开',
-          run: () => {
-            instances.select(created.id)
-            nav.enter('instances', created.id)
-          },
-        },
-      })
-      // 重新扫描：刚添加的那一个现在应显示为已添加。
-      await scan(directory)
-    } catch (cause) {
-      error = String(cause)
-    } finally {
-      busy = ''
+    failures = []
+    done = 0
+    let last: { id: string; name: string } | undefined
+    for (const id of wanted) {
+      try {
+        last = await invoke<{ id: string; name: string }>('attach_game_version', {
+          path: directory,
+          versionId: id,
+          sharedLibraries: shared,
+        })
+        done += 1
+      } catch (cause) {
+        failures.push({ id, reason: String(cause) })
+      }
     }
+    await instances.load()
+    const added = done
+    busy = ''
+    // 重新扫描：刚添加的那些现在应显示为已添加，勾选也随之清空。
+    await scan(directory)
+    if (added === 0 || !last) return
+    const target = last
+    notices.say({
+      title: added === 1 ? `已添加 ${target.name}` : `已添加 ${added} 个版本`,
+      detail: '游戏文件保留在原位置。',
+      action: {
+        label: '打开',
+        run: () => {
+          if (added === 1) {
+            instances.select(target.id)
+            nav.enter('instances', target.id)
+          } else {
+            nav.go('instances')
+          }
+        },
+      },
+    })
   }
 
   // 首次启动时已经发现了一个目录，直接扫给用户看，不必再让他选一遍。
@@ -140,11 +181,11 @@
 
 <div class="adopt">
   <p class="lead">
-    选择一个 <code class="t-mono">.minecraft</code> 目录，Fern 会列出其中的版本。添加后可以照常补全文件、安装模组与启动；游戏文件保留在原位置，不会移动或复制，该目录仍可由原启动器使用。
+    选择一个 <code class="t-mono">.minecraft</code> 目录，Fern 会列出其中的版本并默认全部添加。添加后可以照常补全文件、安装模组与启动；游戏文件保留在原位置，不会移动或复制，该目录仍可由原启动器使用。
   </p>
 
   <div class="picker">
-    <button class="btn btn--ghost" disabled={busy === 'scan'} onclick={() => void choose()}>
+    <button class="btn btn--ghost" disabled={busy !== ''} onclick={() => void choose()}>
       <FolderOpen size={14} strokeWidth={1.8} />{directory ? '更换目录' : '选择目录'}
     </button>
     {#if directory}
@@ -158,8 +199,51 @@
     {#if versions.length === 0}
       <p class="t-quiet">该目录中没有可用的版本。</p>
     {:else}
+      <div class="summary">
+        <span class="t-quiet">
+          {versions.length} 个版本{attachedCount > 0 ? `，其中 ${attachedCount} 个已添加` : ''}
+        </span>
+        {#if available.length > 1}
+          <button class="toggle-all" disabled={busy !== ''} onclick={toggleAll}>
+            {allChosen ? '全部取消' : '全部选中'}
+          </button>
+        {/if}
+      </div>
+
+      <ul class="versions">
+        {#each versions as version (version.id)}
+          <li class="row" class:off={!version.attached && !chosen.includes(version.id)}>
+            <label class="pick">
+              <input
+                type="checkbox"
+                checked={version.attached || chosen.includes(version.id)}
+                disabled={version.attached || busy !== ''}
+                onchange={() => toggle(version.id)}
+              />
+              <span class="text">
+                <strong>{version.id}</strong>
+                <small class="t-mono">
+                  {version.gameVersion}
+                  {#if version.loader !== 'vanilla'}
+                    · {LOADER_LABEL[version.loader] ?? version.loader}{version.loaderVersion
+                      ? ` ${version.loaderVersion}`
+                      : ''}
+                  {/if}
+                  · {ISOLATION_LABEL[version.isolation]}
+                  {#if version.saves > 0}· {version.saves} 个存档{/if}
+                  {#if version.mods > 0}· {version.mods} 个模组{/if}
+                </small>
+              </span>
+            </label>
+            {#if version.attached}
+              <span class="t-quiet done">已添加</span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+
       <label class="shared">
-        <input type="checkbox" bind:checked={shared} />
+        <input type="checkbox" bind:checked={shared} disabled={busy !== ''} />
         <span>
           使用 Fern 的共享资源与依赖库
           <small>
@@ -168,37 +252,26 @@
         </span>
       </label>
 
-      <ul class="versions">
-        {#each versions as version (version.id)}
-          <li class="row">
-            <span class="text">
-              <strong>{version.id}</strong>
-              <small class="t-mono">
-                {version.gameVersion}
-                {#if version.loader !== 'vanilla'}
-                  · {LOADER_LABEL[version.loader] ?? version.loader}{version.loaderVersion
-                    ? ` ${version.loaderVersion}`
-                    : ''}
-                {/if}
-                · {ISOLATION_LABEL[version.isolation]}
-                {#if version.saves > 0}· {version.saves} 个存档{/if}
-                {#if version.mods > 0}· {version.mods} 个模组{/if}
-              </small>
-            </span>
-            {#if version.attached}
-              <span class="t-quiet done">已添加</span>
-            {:else}
-              <button
-                class="btn btn--ghost"
-                disabled={busy !== ''}
-                onclick={() => void attach(version)}
-              >
-                {busy === version.id ? '添加中' : '添加'}
-              </button>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+      <div class="commit">
+        <button
+          class="btn btn--primary"
+          disabled={chosen.length === 0 || busy !== ''}
+          onclick={() => void add()}
+        >
+          {busy === 'add' ? `正在添加 ${done}/${chosen.length}` : `添加 ${chosen.length} 个版本`}
+        </button>
+      </div>
+
+      {#if failures.length > 0}
+        <div class="alert">
+          <p>{failures.length} 个版本未能添加：</p>
+          <ul>
+            {#each failures as item (item.id)}
+              <li><span class="t-mono">{item.id}</span> — {item.reason}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
     {/if}
 
     <!--
@@ -253,6 +326,25 @@
     white-space: nowrap;
   }
 
+  .summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin-bottom: calc(var(--s4) * -1);
+    font-size: var(--t-small);
+  }
+
+  .toggle-all {
+    color: var(--ink-3);
+    font-size: var(--t-small);
+    transition: color var(--t-fast) var(--ease);
+  }
+
+  .toggle-all:hover:not(:disabled) {
+    color: var(--ink);
+  }
+
   .shared {
     display: flex;
     align-items: flex-start;
@@ -294,10 +386,24 @@
     box-shadow: none;
   }
 
+  /* 没勾上的仍然读得清，只是退到后面去。 */
+  .row.off .text {
+    opacity: 0.55;
+  }
+
+  .pick {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    flex: 1;
+    min-width: 0;
+  }
+
   .text {
     display: grid;
     gap: 1px;
     min-width: 0;
+    transition: opacity var(--t-fast) var(--ease);
   }
 
   .text strong {
@@ -314,9 +420,27 @@
     font-size: var(--t-micro);
   }
 
+  .commit {
+    display: flex;
+    justify-content: flex-start;
+  }
+
   .done {
     flex: none;
     font-size: var(--t-small);
+  }
+
+  .alert ul {
+    display: grid;
+    gap: 2px;
+    margin: var(--s2) 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--t-micro);
+  }
+
+  .alert p {
+    margin: 0;
   }
 
   /* 收起来的次要信息：多数时候不看，扫不出东西时是唯一的线索。 */
