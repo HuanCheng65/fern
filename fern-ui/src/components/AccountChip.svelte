@@ -90,7 +90,8 @@
     display: flex;
     align-items: center;
     gap: var(--s2);
-    padding: 4px var(--s3) 4px 4px;
+    /* 左右不对称：左边贴着头像，右边是文字，两侧留一样多会显得头像掉在外面。 */
+    padding: var(--s1) var(--s4) var(--s1) var(--s1);
     border-radius: 999px;
     background: var(--glass);
     -webkit-backdrop-filter: blur(18px);
@@ -112,6 +113,12 @@
     height: 20px;
     overflow: hidden;
     border-radius: 999px;
+  }
+
+  /* 芯片和启动键并排，一样高；头像跟着长满，否则它像掉在一个空盒子里。 */
+  .chip .face {
+    width: 32px;
+    height: 32px;
   }
 
   .face.empty {

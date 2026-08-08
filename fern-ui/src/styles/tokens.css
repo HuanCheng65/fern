@@ -180,7 +180,7 @@ body.frameless {
   align-items: center;
   justify-content: center;
   gap: var(--s2);
-  min-height: 38px;
+  min-height: var(--control);
   padding: 0 var(--s4);
   border-radius: var(--r1);
   font-size: var(--t-body);
@@ -209,7 +209,7 @@ body.frameless {
 }
 
 .btn--primary {
-  min-height: 44px;
+  min-height: var(--control-lg);
   padding: 0 var(--s5);
   color: var(--accent-ink);
   background: var(--accent);
