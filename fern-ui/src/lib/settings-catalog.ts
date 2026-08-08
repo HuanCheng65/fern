@@ -151,13 +151,13 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   {
     id: 'about/diagnostics',
     label: '诊断信息',
-    note: '版本、系统与运行环境。反馈问题时附上它。',
+    note: '版本、系统与运行环境。反馈问题时请一并附上。',
     keywords: 'diagnostics report bug 诊断 反馈 报错 版本 系统',
     stack: true,
   },
   {
     id: 'about/update',
-    label: '检查更新',
+    label: '更新',
     keywords: 'update upgrade 更新 升级 新版本 检查',
     stack: true,
   },

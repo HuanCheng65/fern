@@ -788,7 +788,7 @@
                       disabled={updates.applying}
                       onclick={() => void updates.apply()}
                     >
-                      {ui.about.update.update}
+                      {ui.about.update.apply}
                     </button>
                   {:else}
                     <!--
@@ -819,7 +819,7 @@
 
           <SettingRow id="about/channel" found={focused === 'about/channel'}>
             <Choice
-              label="更新通道"
+              label={ui.about.update.channel}
               value={updates.channel}
               onchange={(next) => updates.setChannel(next === 'beta' ? 'beta' : 'stable')}
               options={[

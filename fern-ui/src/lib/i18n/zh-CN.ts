@@ -253,11 +253,7 @@ const backend = {
 const ui = {
   about: {
     tagline: '一个 Minecraft 启动器。',
-    // 「构建」而不是「版本」：版本号相同的两次构建是常事，哈希才对得上。
-    build: '构建',
     unknownBuild: '未知构建',
-    diagnostics: '诊断信息',
-    diagnosticsNote: '反馈问题时请附上这段内容，可以省去几轮来回确认。',
     copy: '复制',
     copied: '已复制',
     repository: '源码仓库',
@@ -273,14 +269,14 @@ const ui = {
       noRelease: '该通道尚未发布版本。',
       available: '可更新至',
       critical: '安全更新，建议尽快安装。',
-      update: '更新',
+      apply: '更新',
       updating: '正在更新',
       download: '下载',
       // 更新已装好，但要重启才生效。
       installed: '更新已安装，重启后生效。',
       restart: '立即重启',
       // 有游戏正在运行时不给重启按钮，并说明原因。
-      restartBlocked: '有游戏正在运行，退出后再重启 Fern。',
+      restartBlocked: '有游戏正在运行，请在游戏退出后重启 Fern。',
       // 由包管理器安装的版本不自更新。
       managed: '该版本由系统包管理器安装，请通过包管理器更新。',
       // 从测试版切回稳定版时出现。不写清楚，用户会以为切换未生效。
@@ -290,11 +286,12 @@ const ui = {
       automatic: '自动检查',
       automaticOn: '开启',
       automaticOff: '关闭',
+      channel: '更新通道',
       channelStable: '稳定版',
       channelBeta: '测试版',
     },
-    license: '本软件为自由软件，依 GNU 通用公共许可证第 3 版或更新版本发布。',
-    licenseFork: '修改版不得沿用 Fern 的名称、字标与图标。',
+    license: '本软件是自由软件，依 GNU 通用公共许可证第 3 版或更新版本发布。',
+    licenseFork: '修改版不得使用 Fern 的名称、字标与图标。',
     notOfficial:
       'Fern 不是 Minecraft 的官方产品，与 Mojang Studios 及 Microsoft 无关。',
     author: 'Astral Studio',
