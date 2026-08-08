@@ -108,7 +108,13 @@ id 和参数（`crash.<规则 id>` / `preflight.<类型>`），句子在
 - **图标是算出来的，不是画出来的。** 标志的全部几何是 7×9 网格上的八段走线
   （`fern-ui/src/lib/mark.ts` 与 `docs/fern-brand-system.html`）。改了走线要跑
   `python3 .github/make-icons.py` 重新生成应用图标和 favicon，不要手工导出
-  PNG——那样迟早和规范对不上。
+  PNG——那样迟早和规范对不上。**macOS 那份是例外**：`icons/macos/compiled/` 下的
+  `Assets.car` 和 `Fern.icns` 是 Icon Composer 的产物，脚本只生成喂给它的
+  `Fern.icon/Assets/fern-mark.svg`，剩下一步要在 macOS 上手工重新导出。走线一变
+  脚本就会提醒——不导出的话，Linux 和 Windows 换了新标志，macOS 还是旧的。
+- **平台专属的东西不要写在 `tauri.conf.json` 里。** `bundle.icon` 是安全的，
+  打包器按平台挑；`bundle.resources` 不是，写在公共 conf 里三个平台无条件全带。
+  那 1.7MB 的 `Assets.car` 曾经就这么跟着 deb 和 Windows 一起发。
 - **品牌色不是界面色板。** `--pine` `--paper` `--fern` `--sprout` 只用在身份该
   出现的地方（图标、字标、还没有背景可学时的那一帧）。界面的颜色由背景层生成
   并注入，把 `--accent` 写死成蕨绿等于把「UI 向背景学色彩」这条设计原则关掉。

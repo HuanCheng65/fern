@@ -17,5 +17,10 @@
         "hiddenTitle": true
       }
     ]
+  },
+  "bundle": {
+    "resources": {
+      "icons/macos/compiled/Assets.car": "Assets.car"
+    }
   }
 }
