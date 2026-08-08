@@ -1,0 +1,20 @@
+#! loader=forge mc=1.19.2 scope=report
+---- Minecraft Crash Report ----
+// Oops.
+
+Time: 2024-11-12 23:03:38
+Description: Mod loading error has occurred
+
+...
+Stacktrace:
+	at net.minecraftforge.logging.CrashReportExtender.lambda$dumpModLoadingCrashReport$7(CrashReportExtender.java:58) ~[forge-1.19.2-43.4.2-universal.jar%23136!/:?] {re:classloading}
+-- MOD minecolonies --
+Details:
+	Mod File: /root/MinecraftServerForge1.19.2-43.4.2/mods/minecolonies-1.19.2-1.1.628-BETA.jar
+	Failure message: Mod minecolonies requires domum_ornamentum 1.19-1.0.141-BETA or above
+		Currently, domum_ornamentum is 1.19-1.0.107-RELEASE
+	Mod Version: 1.19.2-1.1.628-BETA
+	Mod Issue URL: https://github.com/ldtteam/minecolonies/issues/new/choose
+	Exception message: MISSING EXCEPTION MESSAGE
+Stacktrace:
+	at net.minecraftforge.logging.CrashReportExtender.lambda$dumpModLoadingCrashReport$7(CrashReportExtender.java:58) ~[forge-1.19.2-43.4.2-universal.jar%23136!/:?] {re:classloading}

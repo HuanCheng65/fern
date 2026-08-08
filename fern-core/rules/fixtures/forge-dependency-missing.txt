@@ -1,0 +1,20 @@
+#! loader=forge mc=1.16.5 scope=report
+---- Minecraft Crash Report ----
+// My bad.
+
+Time: 8/28/24 7:56 PM
+Description: Mod loading error has occurred
+
+...
+
+
+-- MOD dynamic_fps --
+Details:
+	Mod File: dynamic-fps-3.4.3+minecraft-1.16.5-forge.jar
+	Failure message: Mod dynamic_fps requires cloth-config 1 or above
+		Currently, cloth-config is not installed
+	Mod Version: 3.4.3
+	Mod Issue URL: https://github.com/juliand665/Dynamic-FPS/issues
+	Exception message: MISSING EXCEPTION MESSAGE
+
+-- MOD chaosawakens --

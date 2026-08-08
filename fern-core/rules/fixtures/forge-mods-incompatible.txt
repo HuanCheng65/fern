@@ -1,0 +1,20 @@
+#! loader=forge mc=1.20.1 scope=report
+---- Minecraft Crash Report ----
+// My bad.
+
+Time: 2025-09-21 19:53:02
+Description: Mod loading error has occurred
+
+...
+	Mod Issue URL: https://github.com/PepperCode1/Continuity/issues
+	Exception message: MISSING EXCEPTION MESSAGE
+
+-- NO MOD INFO AVAILABLE --
+Details:
+	Mod File: NO FILE INFO
+	Failure message: Some of your mods are incompatible with the game or each other!
+		A potential solution has been determined, this may resolve your problem:
+		   - Replace mod Fabric Language Kotlin (fabric_language_kotlin) 1.11.0+kotlin.2.0.0 with mod Fabric Language Kotlin (fabric_language_kotlin), version 1.12.3+kotlin.2.0.21 or later.
+		More details:
+		   - mod Fragmentum (fragmentum) 0.0.52 requires version 1.12.3+kotlin.2.0.21 or later of mod Fabric Language Kotlin (fabric_language_kotlin), but only the wrong version is present: 1.11.0+kotlin.2.0.0!
+		   - mod Obscure Tooltips (obscure_tooltips) 3.0.0 requires version 1.12.3+kotlin.2.0.21 or later of mod Fabric Language Kotlin (fabric_language_kotlin), but only the wrong version is present: 1.11.0+kotlin.2.0.0!

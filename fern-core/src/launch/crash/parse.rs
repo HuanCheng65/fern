@@ -92,6 +92,21 @@ pub struct NativeFrame {
     pub library: Option<String>,
 }
 
+/// Forge 一系在崩溃报告里自报的「是这个模组挂了」。
+///
+/// 它写成一个 `-- MOD <modid> --` 段。**这是加载器自己给出的归因**，不用翻栈，
+/// 也不用本地装着那个 jar——分析一段别人贴过来的日志时同样有效。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedMod {
+    pub mod_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// 那句 `Failure message:`，加载器写给人看的。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 /// 从证据里提取到的一切。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +124,8 @@ pub struct Facts {
     pub java: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_frame: Option<NativeFrame>,
+    /// 加载器自己点名的那些模组。
+    pub failed_mods: Vec<FailedMod>,
 }
 
 impl Facts {
@@ -139,6 +156,7 @@ fn read_report(text: &str, facts: &mut Facts) {
     facts.chain = throwables(text);
 
     let sections = Sections::parse(text);
+    facts.failed_mods = sections.failed_mods();
     let Some(details) = sections.get("System Details") else {
         return;
     };
@@ -307,6 +325,24 @@ impl<'a> Sections<'a> {
             .iter()
             .find(|(section, _)| *section == name)
             .map(|(_, body)| *body)
+    }
+
+    /// `-- MOD <modid> --` 那些段。
+    fn failed_mods(&self) -> Vec<FailedMod> {
+        self.0
+            .iter()
+            .filter_map(|(name, body)| {
+                let mod_id = name.strip_prefix("MOD ")?.trim();
+                let details = Indented::parse(body);
+                Some(FailedMod {
+                    mod_id: mod_id.to_owned(),
+                    file: details.get("Mod File").map(str::to_owned),
+                    // Failure message 常常跨行（第二行是「Currently, …」），
+                    // 这里只要第一行——完整的那段在原文里，规则去读。
+                    message: details.get("Failure message").map(str::to_owned),
+                })
+            })
+            .collect()
     }
 }
 

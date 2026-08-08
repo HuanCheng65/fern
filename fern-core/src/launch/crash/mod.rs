@@ -124,6 +124,19 @@ pub fn known_in(mods_directory: &Path) -> Vec<Known> {
         .collect()
 }
 
+/// 一份文本里能指认出的模组。
+///
+/// 不需要本地装着那些 jar：加载器自己点的名和失败的 mixin 配置都写在文本里。
+/// 给「粘一段日志给我看看」那类入口用，也给语料统计用。
+pub fn attribute_crash(text: &str) -> Vec<Suspect> {
+    let facts = parse::extract(&parse::Evidence {
+        report: Some(text),
+        console: text,
+        hs_err: None,
+    });
+    suspect::identify(&facts, &[])
+}
+
 /// 一份文本里能认出的原因。给界面上「粘一段日志给我看看」那类入口用。
 pub fn diagnose(text: &str, context: rules::Context) -> Vec<Diagnosis> {
     rules::apply(

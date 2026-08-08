@@ -59,6 +59,23 @@ const backend = {
     title: '缺少前置模组',
     detail: '有模组要求的前置没有安装，或者版本不符。日志中该行之后列出了具体条目。',
   },
+  'crash.forge-dependency-missing': {
+    title: '缺少前置模组：{dependency}',
+    detail: '{mod} 需要 {dependency}（{requirement}），当前实例中没有安装。',
+  },
+  'crash.forge-dependency-version': {
+    title: '{dependency} 版本不符',
+    detail: '{mod} 需要 {dependency} {requirement}，当前安装的是 {current}。',
+  },
+  'crash.forge-mod-failed-to-load': {
+    title: '{mod} 加载失败',
+    detail:
+      '{mod} 在加载过程中出错，游戏因此没能启动。日志中该模组的段落里有具体的异常。移除它或更换版本可以继续。',
+  },
+  'crash.forge-mods-incompatible': {
+    title: '模组之间不兼容',
+    detail: '有模组与游戏版本或彼此不兼容。日志中列出了具体是哪些。',
+  },
   'crash.duplicate-mod': {
     title: '{name} 安装了多份',
     detail: '同一个模组存在多个文件，加载器无法确定使用哪一个。删除多余的一份：{path}',

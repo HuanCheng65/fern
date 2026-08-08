@@ -8,8 +8,12 @@
 //! **模组自己的包名从来不混淆**——而要归因的正是模组，所以混淆对这一层不构成
 //! 问题。
 //!
-//! Mixin 的失败单独走一条：它的消息里直接写着 mixin 配置名（`sodium.mixins.json`），
-//! 前缀就是 modid，比翻栈更准。
+//! 三条证据，从确凿到间接：
+//!
+//! 1. **加载器自己点名的**（Forge 的 `-- MOD <modid> --` 段）。这是最硬的一条，
+//!    不用翻栈，也不要求本地装着那个 jar。
+//! 2. **失败的 mixin 配置**（`sodium.mixins.json`），前缀就是 modid。
+//! 3. **栈帧的包名**落在某个已装模组的包里。
 
 use serde::{Deserialize, Serialize};
 
@@ -43,13 +47,15 @@ pub struct Suspect {
     pub reason: Reason,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Reason {
-    /// 栈帧的包名落在它的包里。
-    Stack,
+    /// 加载器自己在崩溃报告里点了它的名。
+    Declared,
     /// 失败的 mixin 配置是它的。
     Mixin,
+    /// 栈帧的包名落在它的包里。
+    Stack,
 }
 
 /// 这个模组自报的包前缀。
@@ -68,7 +74,20 @@ pub struct Known {
 pub fn identify(facts: &Facts, known: &[Known]) -> Vec<Suspect> {
     let mut suspects: Vec<Suspect> = Vec::new();
 
-    // 先看 mixin：它说得出名字，不用猜。
+    // 加载器自己点的名最硬，排在最前面。本地没装那个 jar 也照样成立——分析
+    // 别人贴过来的日志时只有这一条能用。
+    for failed in &facts.failed_mods {
+        let entry = known.iter().find(|entry| entry.mod_id == failed.mod_id);
+        suspects.push(Suspect {
+            mod_id: failed.mod_id.clone(),
+            name: entry.map_or_else(|| failed.mod_id.clone(), |entry| entry.name.clone()),
+            version: entry.and_then(|entry| entry.version.clone()),
+            depth: 0,
+            reason: Reason::Declared,
+        });
+    }
+
+    // 再看 mixin：它说得出名字，不用猜。
     for throwable in &facts.chain {
         let Some(message) = &throwable.message else {
             continue;
@@ -103,7 +122,13 @@ pub fn identify(facts: &Facts, known: &[Known]) -> Vec<Suspect> {
         }
     }
 
-    suspects.sort_by_key(|suspect| suspect.depth);
+    // 同一个模组只留一条，理由取最硬的那个（枚举的顺序就是硬度）。
+    suspects.sort_by(|left, right| {
+        left.depth
+            .cmp(&right.depth)
+            .then_with(|| left.reason.cmp(&right.reason))
+    });
+    suspects.dedup_by(|later, earlier| later.mod_id == earlier.mod_id);
     suspects
 }
 
@@ -185,6 +210,29 @@ mod tests {
         let suspects = identify(&facts, &[sodium()]);
         assert_eq!(suspects[0].mod_id, "sodium");
         assert_eq!(suspects[0].reason, Reason::Mixin);
+    }
+
+    /// 加载器自己点了名，本地有没有装那个 jar 都不影响。
+    #[test]
+    fn the_loader_naming_a_mod_is_enough_on_its_own() {
+        let report = "---- Minecraft Crash Report ----\n\
+             Description: Mod loading error has occurred\n\n\
+             -- MOD sodium --\n\
+             Details:\n\
+             \tMod File: sodium-0.6.0.jar\n\
+             \tFailure message: Sodium (sodium) has failed to load correctly\n";
+        let facts = extract(&Evidence {
+            report: Some(report),
+            console: "",
+            hs_err: None,
+        });
+        assert_eq!(facts.failed_mods[0].mod_id, "sodium");
+
+        // 本地装着它时用它的展示名和版本，没装就退回 modid。
+        let named = identify(&facts, &[sodium()]);
+        assert_eq!(named[0].name, "Sodium");
+        assert_eq!(named[0].reason, Reason::Declared);
+        assert_eq!(identify(&facts, &[])[0].name, "sodium");
     }
 
     #[test]

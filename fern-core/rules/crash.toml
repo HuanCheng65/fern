@@ -69,6 +69,39 @@ level = "generic"
 loader = ["forge", "neoforge"]
 match = '''Missing or unsupported mandatory dependencies'''
 
+# Forge 一系把加载失败写成一个 `-- MOD <modid> --` 段，里面的 Failure message
+# 是给人看的一句话。语料里这三条加起来占了「模组加载失败」的绝大多数。
+
+# 前置没装。「Currently, X is not installed」是判据，缺了它就分不清是没装还是
+# 版本不对，而这两件事的处理方式不一样。
+[[rule]]
+id = "forge-dependency-missing"
+level = "named"
+loader = ["forge", "neoforge"]
+match = '''Failure message: Mod (?<mod>[\w-]+) requires (?<dependency>[\w-]+) (?<requirement>[^\n]+)\s*\n\s*Currently, [\w-]+ is not installed'''
+action = { kind = "install-mod", query = "{dependency}" }
+
+# 前置装了，但版本不对。这一条不给「去安装」——用户已经有它了，要做的是换版本。
+[[rule]]
+id = "forge-dependency-version"
+level = "named"
+loader = ["forge", "neoforge"]
+match = '''Failure message: Mod (?<mod>[\w-]+) requires (?<dependency>[\w-]+) (?<requirement>[^\n]+)\s*\n\s*Currently, [\w-]+ is (?<current>[^\n]+)'''
+
+# 某个模组自己在加载时抛了异常。具体原因在它那一段的栈里，但说出是谁已经解决
+# 了大半——用户接下来要做的就是去掉它或者换个版本。
+[[rule]]
+id = "forge-mod-failed-to-load"
+level = "named"
+loader = ["forge", "neoforge"]
+match = '''Failure message: (?<mod>[^\n(]+?) \((?<modid>[\w-]+)\) has failed to load correctly'''
+
+[[rule]]
+id = "forge-mods-incompatible"
+level = "generic"
+loader = ["forge", "neoforge"]
+match = '''Some of your mods are incompatible with the game or each other!'''
+
 # ── 重复装了同一个模组 ────────────────────────────────────────────────────
 
 [[rule]]

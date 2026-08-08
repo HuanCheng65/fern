@@ -17,11 +17,13 @@ GitHub 的代码搜索单次查询最多返回 1000 条，所以本来就得切�
 """
 
 import argparse
+import concurrent.futures
 import json
 import pathlib
 import re
 import subprocess
 import sys
+import time
 
 MARKER = "---- Minecraft Crash Report ----"
 
@@ -77,9 +79,16 @@ def self_test() -> int:
     return 1 if failures else 0
 
 
-def search(query: str, per_page: int = 100, pages: int = 10):
+# 代码搜索的配额很紧（每分钟十次上下），翻页之间必须歇一会儿，否则后面几档
+# 全部空手而回。
+SEARCH_PAUSE = 7.0
+
+
+def search(query: str, per_page: int = 100, pages: int = 3):
     """GitHub 代码搜索。要 `gh auth login`。"""
     for page in range(1, pages + 1):
+        if page > 1:
+            time.sleep(SEARCH_PAUSE)
         result = subprocess.run(
             ["gh", "api", "-X", "GET", "search/code",
              "-f", f"q={query}", "-f", f"per_page={per_page}", "-f", f"page={page}"],
@@ -101,25 +110,39 @@ def raw_url(item: dict) -> str:
             .replace("/blob/", "/"))
 
 
-def collect(target: pathlib.Path) -> int:
+def fetch_one(job) -> bool:
+    """下一份，脱敏，落盘。返回是否真的存下了。"""
+    url, path = job
+    if path.exists():
+        return False
+    fetched = subprocess.run(["curl", "-sSL", "--max-time", "30", url],
+                             capture_output=True, text=True)
+    text = fetched.stdout
+    # 只要真的是崩溃报告。
+    if MARKER not in text:
+        return False
+    path.write_text(scrub(text), encoding="utf-8")
+    return True
+
+
+def collect(target: pathlib.Path, pages: int, workers: int) -> int:
     target.mkdir(parents=True, exist_ok=True)
-    saved = 0
+    jobs = {}
     for version in VERSIONS:
         query = f'"{MARKER}" "Minecraft Version: {version}" path:crash-reports'
-        print(f"{version} …")
-        for item in search(query):
-            url = raw_url(item)
-            fetched = subprocess.run(["curl", "-sSL", url], capture_output=True, text=True)
-            text = fetched.stdout
-            # 只要真的是崩溃报告，而且别把同一份存两遍。
-            if MARKER not in text:
-                continue
-            name = f"{version}-{item['sha'][:12]}.txt"
-            path = target / name
-            if path.exists():
-                continue
-            path.write_text(scrub(text), encoding="utf-8")
-            saved += 1
+        found = 0
+        for item in search(query, pages=pages):
+            # 按 blob 的 sha 去重：同一份报告常常被 fork 到好几个仓库。
+            jobs[item["sha"]] = (raw_url(item), target / f"{version}-{item['sha'][:12]}.txt")
+            found += 1
+        print(f"  {version}：搜到 {found}")
+        time.sleep(SEARCH_PAUSE)
+
+    print(f"去重后 {len(jobs)} 份，开始下载…")
+    saved = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for ok in pool.map(fetch_one, jobs.values()):
+            saved += 1 if ok else 0
     print(f"存了 {saved} 份到 {target}")
     return 0
 
@@ -128,10 +151,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target", nargs="?", default="corpus")
     parser.add_argument("--self-test", action="store_true", help="只验脱敏规则")
+    parser.add_argument("--pages", type=int, default=3, help="每个版本翻几页，一页 100 条")
+    parser.add_argument("--workers", type=int, default=16, help="同时下几份")
     arguments = parser.parse_args()
     if arguments.self_test:
         return self_test()
-    return collect(pathlib.Path(arguments.target))
+    return collect(pathlib.Path(arguments.target), arguments.pages, arguments.workers)
 
 
 if __name__ == "__main__":

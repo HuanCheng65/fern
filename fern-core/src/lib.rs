@@ -84,7 +84,7 @@ pub use java::{
 pub use job::{Job, JobEvent};
 pub use launch::crash::{
     Action as FixAction, CrashReport, Diagnosis, Level as DiagnosisLevel, Reason as SuspectReason,
-    Suspect, diagnose as diagnose_crash, rules::Context as CrashContext,
+    Suspect, attribute_crash, diagnose as diagnose_crash, rules::Context as CrashContext,
 };
 pub use launch::preflight::{Finding, Severity, check as preflight_instance};
 

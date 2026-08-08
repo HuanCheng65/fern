@@ -25,6 +25,9 @@ fn main() {
     };
 
     let mut total = 0usize;
+    // 认不出原因、但仍然说得出「崩在谁那里」的那些。这才是归因的增量。
+    let mut named_without_rule = 0usize;
+    let mut mod_frame_without_rule = 0usize;
     let mut hits: BTreeMap<String, usize> = BTreeMap::new();
     // 根因异常类 → 几份没命中的，以及其中几个文件名做样本。
     let mut misses: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
@@ -35,11 +38,23 @@ fn main() {
         };
         total += 1;
         // 语料里既有崩溃报告也有控制台日志，一律当控制台喂进去——规则的 scope
-        // 守卫会自己挑。加载器和版本未知，所以只跑不带守卫的那些规则。
-        let found = fern_core::diagnose_crash(&text, Default::default());
+        // 守卫会自己挑。
+        //
+        // 加载器和版本要从报告里认出来：不认的话 `Default` 是原版，带 loader
+        // 守卫的规则一条都不会被考虑，覆盖率会被系统性地低估。
+        let found = fern_core::diagnose_crash(&text, context_of(&text));
         if let Some(first) = found.first() {
             *hits.entry(first.id.clone()).or_default() += 1;
             continue;
+        }
+        // 归因和规则无关，所以要单独数：认不出原因、但说得出崩在谁那里，对
+        // 用户仍然是有用的一句话。
+        if !fern_core::attribute_crash(&text).is_empty() {
+            named_without_rule += 1;
+        } else if has_mod_frame(&text) {
+            // 栈里有非原版的帧。语料里没有对应的 jar，所以这里只是上界——真实
+            // 场景下那些 jar 就在本地，能落到具体某个模组上。
+            mod_frame_without_rule += 1;
         }
         let cluster = root_exception(&text).unwrap_or_else(|| "（没有异常行）".to_owned());
         let record = misses.entry(cluster).or_default();
@@ -67,6 +82,9 @@ fn main() {
     if misses.is_empty() {
         return;
     }
+    println!(
+        "\n认不出原因的那些里：\n  {named_without_rule:>5}  报告里已经点了名，直接说得出是谁\n  {mod_frame_without_rule:>5}  栈里有非原版的帧，本地装着那个 jar 时能落到具体模组"
+    );
     println!("\n未命中 {}，按根因异常聚类：", total - matched);
     let mut clusters: Vec<_> = misses.into_iter().collect();
     clusters.sort_by_key(|(_, (count, _))| std::cmp::Reverse(*count));
@@ -76,6 +94,53 @@ fn main() {
             println!("            {sample}");
         }
     }
+}
+
+/// 栈里有没有一帧不属于原版、JDK 或加载器自己。
+///
+/// 有的话，本地装着那些 jar 时就能归因到具体模组；语料里没有 jar，所以这只是
+/// 一个上界。
+fn has_mod_frame(text: &str) -> bool {
+    const NOT_A_MOD: [&str; 10] = [
+        "java.",
+        "javax.",
+        "jdk.",
+        "sun.",
+        "com.sun.",
+        "net.minecraft.",
+        "com.mojang.",
+        "org.spongepowered.asm.",
+        "net.fabricmc.loader.",
+        "cpw.mods.",
+    ];
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("at "))
+        .filter_map(|frame| frame.split('(').next())
+        .any(|class| {
+            class.contains('.') && !NOT_A_MOD.iter().any(|prefix| class.starts_with(prefix))
+        })
+}
+
+/// 从报告里认出加载器和游戏版本。
+///
+/// 崩溃报告自己带着这两样：`Minecraft Version:` 是一行键值，而模组表的**写法**
+/// 就说明了加载器——Fabric 写 `Fabric Mods:`，Forge 一系写 `Mod List:` 的竖线表。
+fn context_of(text: &str) -> fern_core::CrashContext {
+    let minecraft = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Minecraft Version:"))
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default();
+    let loader = if text.contains("Fabric Mods:") || text.contains("net.fabricmc.loader") {
+        fern_core::LoaderKind::Fabric
+    } else if text.contains("neoforge") || text.contains("net.neoforged") {
+        fern_core::LoaderKind::NeoForge
+    } else if text.contains("Mod List:") || text.contains("net.minecraftforge") {
+        fern_core::LoaderKind::Forge
+    } else {
+        fern_core::LoaderKind::Vanilla
+    };
+    fern_core::CrashContext { loader, minecraft }
 }
 
 /// 最后一个 `Caused by:`，没有就是第一条异常。归因和聚类看的都是它。
