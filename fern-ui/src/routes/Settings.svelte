@@ -39,6 +39,7 @@
   import { ui } from '../lib/i18n'
   import { expand } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
+  import { launch } from '../lib/launch.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { updates } from '../lib/update.svelte'
   import { inTauri } from '../lib/instances.svelte'
@@ -238,6 +239,8 @@
   const sourceName = { official: '官方源', bmclapi: 'BMCLAPI' } as const
 
   const REPOSITORY = 'https://github.com/HuanCheng65/fern'
+  /** 需要人自己挑一个包时才用得上。平常的落点是清单里那个确切的文件。 */
+  const DOWNLOADS = 'https://dl.fern.huanchengfly.top'
 
   /** 交给系统浏览器。后端只放行 https。 */
   const openInBrowser = (url: string) => void invoke('open_external', { url })
@@ -724,7 +727,14 @@
           -->
           <SettingRow id="about/update" found={focused === 'about/update'}>
             <p class="update-state">
-              {#if updates.checking}
+              {#if updates.installed}
+                {ui.about.update.installed}
+              {:else if updates.applying}
+                {ui.about.update.updating}{#if updates.progress !== undefined}
+                  · {Math.round(updates.progress * 100)}%{/if}
+              {:else if updates.error}
+                {updates.error}
+              {:else if updates.checking}
                 {ui.about.update.checking}
               {:else if updates.failed}
                 {ui.about.update.failed}
@@ -732,28 +742,68 @@
                 {ui.about.update.available}
                 <strong>{updates.decision.version}</strong>
                 {#if updates.decision.critical}<br /><span class="t-quiet">{ui.about.update.critical}</span>{/if}
+                {#if !updates.selfUpdate}<br /><span class="t-quiet">{ui.about.update.managed}</span>{/if}
               {:else if updates.decision?.kind === 'ahead_of_channel'}
                 {ui.about.update.aheadOfChannel}
               {:else if updates.decision?.kind === 'needs_full_download'}
                 {ui.about.update.needsFullDownload}
               {:else if updates.decision?.kind === 'no_build'}
                 {ui.about.update.noBuild}
+              {:else if updates.decision?.kind === 'no_release'}
+                {ui.about.update.noRelease}
               {:else if updates.decision}
                 {ui.about.update.upToDate}
               {/if}
             </p>
+            {#if updates.decision?.kind === 'available' && updates.decision.notes}
+              <!-- 更新日志。来自清单的 notes，由 CHANGELOG.md 那一节生成。 -->
+              <pre class="notes selectable">{updates.decision.notes}</pre>
+            {/if}
             <div class="links">
-              <button
-                class="btn btn--ghost"
-                disabled={updates.checking}
-                onclick={() => void updates.check()}
-              >
-                {ui.about.update.check}
-              </button>
-              {#if updates.decision && updates.decision.kind !== 'up_to_date' && updates.decision.kind !== 'held_back'}
-                <button class="btn btn--link" onclick={() => openInBrowser(`${REPOSITORY}/releases`)}>
-                  {ui.about.update.download}
+              {#if updates.installed}
+                <!--
+                  重启由用户按，不自动。装好的那一刻他可能正在游戏里——
+                  Fern 退出会不会带走游戏进程取决于 process.rs，赌不起。
+                -->
+                {#if Object.keys(launch.games).length > 0}
+                  <span class="t-quiet">{ui.about.update.restartBlocked}</span>
+                {:else}
+                  <button class="btn btn--ghost" onclick={() => updates.restart()}>
+                    {ui.about.update.restart}
+                  </button>
+                {/if}
+              {:else}
+                <button
+                  class="btn btn--ghost"
+                  disabled={updates.checking || updates.applying}
+                  onclick={() => void updates.check()}
+                >
+                  {ui.about.update.check}
                 </button>
+                {#if updates.decision?.kind === 'available'}
+                  {@const url = updates.decision.url}
+                  {#if updates.selfUpdate}
+                    <button
+                      class="btn btn--link"
+                      disabled={updates.applying}
+                      onclick={() => void updates.apply()}
+                    >
+                      {ui.about.update.update}
+                    </button>
+                  {:else}
+                    <!--
+                      包管理器装的那一份不自更新。落点是清单里的那个地址——
+                      本平台的那一个文件，不是一个要人自己找的页面。
+                    -->
+                    <button class="btn btn--link" onclick={() => openInBrowser(url)}>
+                      {ui.about.update.download}
+                    </button>
+                  {/if}
+                {:else if updates.decision?.kind === 'needs_full_download'}
+                  <button class="btn btn--link" onclick={() => openInBrowser(DOWNLOADS)}>
+                    {ui.about.update.download}
+                  </button>
+                {/if}
               {/if}
             </div>
             <Choice
@@ -987,6 +1037,17 @@
   }
 
   /* 检查更新那一行的状态句。行高对齐旁边的按钮，别让这一行比其它行矮一截。 */
+  /* 更新日志。等宽 + 保留换行：它是一份列表，不是一段话。 */
+  .notes {
+    margin: 0;
+    max-height: 12em;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 0.85em;
+    line-height: 1.6;
+    color: var(--ink-quiet, inherit);
+  }
+
   .update-state {
     margin: 0;
     align-self: center;

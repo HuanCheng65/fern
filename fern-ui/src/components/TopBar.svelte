@@ -18,6 +18,7 @@
    */
   import { ArrowLeft, Settings } from 'lucide-svelte'
   import Island from './Island.svelte'
+  import { updates } from '../lib/update.svelte'
   import Mark from 'fern-kit/Mark.svelte'
   import { platform } from '../lib/frame.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
@@ -117,10 +118,15 @@
     -->
     <Island />
 
+    <!--
+      有新版本时在这里点一个点。不弹窗、不横幅、不加一行文字——更新是启动器
+      自己的事，而玩家在意的是游戏。这一点也是「有更新」在界面上唯一的痕迹。
+    -->
     <button
       class="btn btn--icon"
-      aria-label="设置"
-      title="设置"
+      class:marked={updates.available}
+      aria-label={updates.available ? '设置（有新版本）' : '设置'}
+      title={updates.available ? '设置（有新版本）' : '设置'}
       onclick={() => nav.toggle('settings')}
     >
       <Settings size={16} strokeWidth={1.8} />
@@ -300,5 +306,21 @@
     nav {
       gap: var(--s4);
     }
+  }
+
+  /* 一个点，不是一个数字：数量在这里没有意义，有没有才有。 */
+  .marked {
+    position: relative;
+  }
+
+  .marked::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent, currentColor);
   }
 </style>

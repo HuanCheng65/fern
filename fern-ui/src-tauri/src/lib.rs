@@ -193,6 +193,9 @@ fn about() -> About {
         platform: fern_core::platform(),
         // 「只有我这台打不开」十有八九是它。用户自己查不到，我们查得到。
         webview: tauri::webview_version().unwrap_or_default(),
+        // deb 装的那一份不自更新（见 docs/fern-update-design.md §4），界面要据此
+        // 换一个按钮，而不是给出一个按下去会解释自己为什么不行的按钮。
+        self_update: fern_core::update_install() != fern_core::UpdateInstall::SystemPackage,
     }
 }
 
@@ -204,6 +207,7 @@ struct About {
     built: &'static str,
     platform: String,
     webview: String,
+    self_update: bool,
 }
 
 /// 这个通道上有没有更新。
@@ -212,8 +216,9 @@ struct About {
 /// 两者相等（见那里的 `the_two_version_numbers_must_agree`），但拿去比大小的
 /// 应该是自更新真正认的那一个，而不是碰巧相等的另一个。
 ///
-/// 现在只回答「有没有」。下载和落盘是下一步的事（见 docs/fern-update-design.md §9），
-/// 所以这一步没有引入更新器插件——P0 一个新插件都不需要。
+/// 这一步只回答「有没有」，用的是我们自己的清单（`fern-core` 的 `update`）。
+/// 装是 `update_apply` 的事，那里才轮到更新器插件。分开的理由是清单里有插件
+/// 不认识的字段（`rollout` / `critical` / `minVersion`），而它们决定要不要装。
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> Result<fern_core::UpdateDecision, String> {
     let version = app.package_info().version.to_string();
@@ -222,6 +227,92 @@ async fn check_update(app: tauri::AppHandle) -> Result<fern_core::UpdateDecision
     fern_core::check_for_update(&paths()?, &version)
         .await
         .map_err(|error| format!("{error:#}"))
+}
+
+/// 下载并装上新版本。**装完不重启**——重启由用户按（见 `update_restart`）。
+///
+/// 分工是查过插件源码之后定的（docs/fern-update-design.md §3）：下载和验签用它的，
+/// 因为 `download` 在返回字节之前就验完签了；落盘只有 Windows 是我们自己做的，
+/// 因为它在 Windows 上只认安装器，会把便携 exe 当安装器从临时目录跑起来，
+/// 磁盘上什么都不会变。
+#[tauri::command]
+async fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let install = fern_core::update_install();
+    if install == fern_core::UpdateInstall::SystemPackage {
+        // 界面本来就不该给出这个按钮。真到了这里，说清楚为什么而不是去弹提权框。
+        return Err("这份 Fern 由系统包管理器安装，请通过包管理器更新。".to_owned());
+    }
+    // 便携版可能被放在只读目录、U 盘、网络盘里。**先试写再下载**：下了几十兆
+    // 才发现写不进去，比一开始就说清楚糟得多。
+    if install == fern_core::UpdateInstall::PortableExecutable {
+        fern_core::writable_beside_executable().map_err(|error| format!("{error:#}"))?;
+    }
+
+    let version = app.package_info().version.to_string();
+    let channel = fern_core::update_channel(&paths()?, &version);
+    let endpoint = channel
+        .manifest_url(fern_core::UPDATE_ENDPOINT)
+        .parse()
+        .map_err(|error| format!("更新地址无效：{error}"))?;
+
+    // 端点在运行时给，不写死在 tauri.conf.json 里——通道是用户设置，
+    // 而配置文件是编译期的。用 `app.updater_builder()` 而不是直接构造
+    // `UpdaterBuilder`：后者在 Windows 上会因为 current_exe_args 为空而 panic。
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|error| format!("{error}"))?
+        .build()
+        .map_err(|error| format!("{error}"))?;
+
+    let Some(update) = updater.check().await.map_err(|error| format!("{error}"))? else {
+        return Err("没有可以安装的更新。".to_owned());
+    };
+
+    let progress = app.clone();
+    let mut downloaded: usize = 0;
+    let bytes = update
+        .download(
+            move |chunk, total| {
+                downloaded += chunk;
+                let _ = progress.emit(
+                    "update_progress",
+                    serde_json::json!({ "downloaded": downloaded, "total": total }),
+                );
+            },
+            || {},
+        )
+        .await
+        .map_err(|error| format!("{error}"))?;
+
+    match install {
+        fern_core::UpdateInstall::PortableExecutable => {
+            // 先落到临时文件：self_replace 要一个磁盘上的路径，而它在 Windows 上
+            // 做的是「把当前 exe 挪开腾出文件名，再把新文件放到原路径」。
+            let staged = std::env::temp_dir().join(format!("fern-{version}-update.tmp"));
+            std::fs::write(&staged, &bytes).map_err(|error| format!("写入临时文件失败：{error}"))?;
+            let replaced = self_replace::self_replace(&staged).map_err(|error| error.to_string());
+            // 无论成败都清掉临时文件；失败时原来的可执行文件还在原地。
+            let _ = std::fs::remove_file(&staged);
+            replaced?;
+        }
+        fern_core::UpdateInstall::Bundle => {
+            update.install(bytes).map_err(|error| format!("{error}"))?;
+        }
+        fern_core::UpdateInstall::SystemPackage => unreachable!("上面已经挡掉了"),
+    }
+    Ok(())
+}
+
+/// 重启，让刚装上的那一份生效。
+///
+/// 单独一个命令，因为**什么时候重启是用户的事**：更新装好的那一刻他可能正在
+/// 游戏里。界面在有游戏运行时不给这个按钮。
+#[tauri::command]
+fn update_restart(app: tauri::AppHandle) {
+    app.restart()
 }
 
 #[tauri::command]
@@ -1252,6 +1343,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        // 只用它的检查、下载与验签。落盘在 `update_apply` 里按形态分开。
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PearlSessions::default())
         .setup(|app| {
             #[cfg(not(target_os = "macos"))]
@@ -1272,6 +1365,8 @@ pub fn run() {
             app_name,
             about,
             check_update,
+            update_apply,
+            update_restart,
             data_paths,
             list_instances,
             list_versions,

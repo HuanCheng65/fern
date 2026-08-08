@@ -113,8 +113,10 @@ pub use launch::crash::{
 };
 pub use launch::preflight::{Finding, Severity, check as preflight_instance};
 pub use update::{
-    Channel as UpdateChannel, Decision as UpdateDecision, Manifest as UpdateManifest,
-    check_now as check_for_update, target as update_target,
+    Channel as UpdateChannel, DEFAULT_ENDPOINT as UPDATE_ENDPOINT, Decision as UpdateDecision,
+    Install as UpdateInstall, Manifest as UpdateManifest, check_now as check_for_update,
+    effective_channel as update_channel, install as update_install, target as update_target,
+    writable_beside_executable,
 };
 
 /// 这台机器是什么。反馈问题时的第一句话。

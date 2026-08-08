@@ -164,7 +164,7 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   {
     id: 'about/channel',
     label: '更新通道',
-    note: '测试版能早点拿到新功能，也更容易遇到问题。',
+    note: '测试版可更早获得新功能，稳定性低于稳定版。',
     keywords: 'channel beta stable 通道 测试版 稳定版 内测',
   },
   { id: 'about/links', label: '源码与反馈', keywords: 'github source issue 源码 仓库 反馈 开源' },

@@ -35,13 +35,43 @@ PLATFORMS = {
 }
 
 
+def notes_for(changelog: pathlib.Path, version: str) -> str | None:
+    """取 CHANGELOG.md 里属于这个版本的那一节。
+
+    找不到就返回 None，**不报错**：一次没写更新日志的发布仍然应该发得出去。
+    界面在没有 notes 时什么都不显示，而不是显示一句「暂无更新日志」——
+    那句话占着位置却没有信息。
+    """
+    if not changelog.exists():
+        return None
+    wanted = f"## {version}"
+    lines = changelog.read_text().splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == wanted)
+    except StopIteration:
+        return None
+    body = []
+    for line in lines[start + 1 :]:
+        if line.startswith("## "):
+            break
+        body.append(line)
+    text = "\n".join(body).strip()
+    return text or None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", required=True)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--files", required=True, type=pathlib.Path)
     parser.add_argument("--out", required=True, type=pathlib.Path)
-    parser.add_argument("--notes", default=None)
+    parser.add_argument(
+        "--changelog",
+        type=pathlib.Path,
+        default=pathlib.Path("CHANGELOG.md"),
+        help="从这里取本版本那一节当更新日志。",
+    )
+    parser.add_argument("--notes", default=None, help="直接给一段文字，覆盖 --changelog。")
     parser.add_argument(
         "--rollout",
         type=int,
@@ -81,8 +111,9 @@ def main() -> int:
         "critical": args.critical,
         "platforms": platforms,
     }
-    if args.notes:
-        manifest["notes"] = args.notes
+    notes = args.notes or notes_for(args.changelog, args.version)
+    if notes:
+        manifest["notes"] = notes
     if args.min_version:
         manifest["minVersion"] = args.min_version
 

@@ -40,6 +40,21 @@ impl Channel {
         }
     }
 
+    /// 一个版本号属于哪条通道。
+    ///
+    /// 带预发布段的构建就是测试版构建。用户没有明确选过通道时按这个走——
+    /// 一个跑着 `0.1.1-beta.2` 的人如果默认查稳定通道，只会永远看到
+    /// 「当前版本高于该通道」，而他手上这份本来就是从测试通道拿到的。
+    ///
+    /// 它只是**默认值**：用户选定之后就以他选的为准，包括从测试版切回稳定版。
+    pub fn of_version(version: &Version) -> Self {
+        if version.pre.is_empty() {
+            Channel::Stable
+        } else {
+            Channel::Beta
+        }
+    }
+
     /// 这个通道的清单地址。
     ///
     /// 通道是路径的一段，不是查询参数：静态对象存储上「一个通道」就是「一个文件」，
@@ -111,6 +126,12 @@ pub enum Decision {
         version: String,
         notes: Option<String>,
         critical: bool,
+        /// 本平台那个包的地址。
+        ///
+        /// 界面拿它当「前往下载」的落点。**不要在界面里另拼一个地址**——
+        /// 之前那一版指向 GitHub 的 Releases 页，而我们根本不往那里发布，
+        /// 于是按钮把人送到一个空页面。地址只有一个来源：清单。
+        url: String,
     },
     /// 有新版本，但灰度还没轮到这台机器。界面**什么都不该说**——
     /// 「有更新但不给你」是最招人烦的一种提示。
@@ -126,6 +147,13 @@ pub enum Decision {
     },
     /// 清单里没有这个平台的构建。ARM 的 Windows、还没开始发的架构都会走到这里。
     NoBuild { target: String },
+    /// 这个通道还一次都没发布过——服务器上根本没有那份清单。
+    ///
+    /// 这**不是错误**，虽然它长得像一个 404。一条新通道在第一次发版之前必然是
+    /// 这个样子，而把它当成网络故障，界面就会对着一个完全正常的状态说
+    /// 「没能连上更新服务器」——这件事真的发生过：稳定通道还没发过版，
+    /// 而它是默认通道，于是每个人打开设置看到的都是一句假话。
+    NoRelease,
 }
 
 /// 该不该更新。
@@ -174,6 +202,8 @@ pub fn decide(manifest: &Manifest, current: &Version, target: &str, bucket: u8) 
         version: manifest.version.to_string(),
         notes: manifest.notes.clone(),
         critical: manifest.critical,
+        // 上面第一件事就是确认这个键存在，所以这里取得到。
+        url: manifest.platforms[target].url.clone(),
     }
 }
 
@@ -201,14 +231,22 @@ pub async fn check(
     bucket: u8,
 ) -> Result<Decision> {
     let url = channel.manifest_url(endpoint);
-    let body = reqwest::Client::new()
+    let response = reqwest::Client::new()
         .get(&url)
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .with_context(|| format!("fetch {url}"))?
+        .with_context(|| format!("fetch {url}"))?;
+
+    // 通道的清单不存在，说明这条通道还没发布过任何版本。这是一个正常状态，
+    // 不是故障——静态对象存储上「还没有这个文件」的唯一表达方式就是 404。
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(Decision::NoRelease);
+    }
+
+    let body = response
         .error_for_status()
-        .with_context(|| format!("fetch {url}"))?
+        .with_context(|| format!("the update server answered with an error for {url}"))?
         .text()
         .await
         .with_context(|| format!("read {url}"))?;
@@ -242,7 +280,68 @@ pub async fn check_now(paths: &crate::DataPaths, current: &str) -> Result<Decisi
         }
     };
 
-    check(DEFAULT_ENDPOINT, settings.update.channel, &current, bucket).await
+    let channel = settings
+        .update
+        .channel
+        .unwrap_or_else(|| Channel::of_version(&current));
+    check(DEFAULT_ENDPOINT, channel, &current, bucket).await
+}
+
+/// 现在实际生效的通道。界面要显示它，而这个判断只该有一处。
+pub fn effective_channel(paths: &crate::DataPaths, current: &str) -> Channel {
+    let settings = crate::data::settings::load(paths);
+    settings.update.channel.unwrap_or_else(|| {
+        Version::parse(current)
+            .map(|version| Channel::of_version(&version))
+            .unwrap_or_default()
+    })
+}
+
+/// 这份 Fern 是以什么形态装在机器上的。决定由谁来替换文件。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Install {
+    /// Windows 的便携可执行文件。**只有这一种要我们自己落盘**：
+    /// `tauri-plugin-updater` 在 Windows 上只认安装器，会把新版本当安装器
+    /// 从临时目录跑起来，磁盘上什么都不会变（见设计文档 §2）。
+    PortableExecutable,
+    /// macOS 的 `.app` 与 Linux 的 AppImage。插件替换得了，而且它处理了
+    /// macOS 上权限不足时的提权，自己重写不划算。
+    Bundle,
+    /// 包管理器装的（deb）。**不自更新**：进程对 `/usr/bin` 没有写权限，
+    /// 而唯一的出路是在用户玩游戏时弹一个系统提权密码框。
+    SystemPackage,
+}
+
+/// 当前这份是哪一种。
+pub fn install() -> Install {
+    if cfg!(target_os = "windows") {
+        Install::PortableExecutable
+    } else if cfg!(target_os = "macos") {
+        Install::Bundle
+    } else if std::env::var_os("APPIMAGE").is_some() {
+        // AppImage 运行时会设这个变量，指向 AppImage 文件本身。
+        Install::Bundle
+    } else {
+        Install::SystemPackage
+    }
+}
+
+/// 可执行文件所在的目录能不能写。
+///
+/// 便携版会被放进 `Program Files`、下载目录、U 盘、网络盘、只读挂载点。
+/// **先试写再进下载流程**：下了几十兆才发现写不进去，比一开始就说清楚糟得多。
+///
+/// 真的建一个文件再删掉，不查权限位——权限位在网络盘和同步目录上说谎。
+pub fn writable_beside_executable() -> Result<()> {
+    let exe = std::env::current_exe().context("locate the running executable")?;
+    let directory = exe
+        .parent()
+        .context("the running executable has no parent directory")?;
+    let probe = directory.join(format!(".fern-write-probe-{}", std::process::id()));
+    std::fs::write(&probe, b"").with_context(|| format!("write to {}", directory.display()))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
 }
 
 /// 抽一个灰度分桶，0–99。
@@ -485,6 +584,68 @@ mod tests {
             Channel::Stable.manifest_url("https://dl.fern.huanchengfly.top/"),
             "https://dl.fern.huanchengfly.top/stable/manifest.json"
         );
+    }
+
+    /// 一个只回一次固定响应就关掉的 HTTP 服务器。
+    ///
+    /// 用 `std::net` 而不是 tokio 的 net：这里要的只是「把一串字节写进一个连接」，
+    /// 而 tokio 的 `net` 特性 fern-core 本来不需要——为一个测试给整个 crate
+    /// 加一项运行时能力不划算。
+    fn serve_once(response: &'static str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a test port");
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.read(&mut [0u8; 2048]);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    /// 一条还没发布过任何版本的通道。
+    ///
+    /// 这个 bug 真的发出去过：稳定通道是默认通道，而它当时一次都没发过版，
+    /// 于是每个打开设置的人都看到「没能连上更新服务器」——一句假话，
+    /// 而真相是服务器好好的，只是那个文件还不存在。
+    #[tokio::test]
+    async fn a_channel_that_never_shipped_is_not_a_network_failure() {
+        let endpoint = serve_once("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+        let decision = check(&endpoint, Channel::Stable, &at("0.1.0"), 0)
+            .await
+            .expect("404 不该变成 Err");
+        assert_eq!(decision, Decision::NoRelease);
+    }
+
+    /// 服务器真的坏了的时候仍然要是一个错误——上面那条不能把所有状态码都吞掉。
+    #[tokio::test]
+    async fn a_broken_update_server_is_still_an_error() {
+        let endpoint =
+            serve_once("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+        assert!(
+            check(&endpoint, Channel::Stable, &at("0.1.0"), 0)
+                .await
+                .is_err()
+        );
+    }
+
+    /// 装了测试版构建的人，默认就该看测试通道。
+    #[test]
+    fn a_prerelease_build_follows_the_beta_channel() {
+        assert_eq!(Channel::of_version(&at("0.1.1-beta.2")), Channel::Beta);
+        assert_eq!(Channel::of_version(&at("0.1.1")), Channel::Stable);
+    }
+
+    /// 试写要真的建一个文件：权限位在网络盘和同步目录上会说谎。
+    #[test]
+    fn the_write_probe_leaves_nothing_behind() {
+        let exe = std::env::current_exe().unwrap();
+        let directory = exe.parent().unwrap().to_path_buf();
+        let before = std::fs::read_dir(&directory).unwrap().count();
+        writable_beside_executable().expect("测试产物所在的目录总是可写的");
+        let after = std::fs::read_dir(&directory).unwrap().count();
+        assert_eq!(before, after, "试写留下了文件");
     }
 
     #[test]

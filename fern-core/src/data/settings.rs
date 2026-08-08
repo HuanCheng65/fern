@@ -102,7 +102,13 @@ pub struct JavaSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UpdateSettings {
-    pub channel: crate::update::Channel,
+    /// 用户选定的通道。`None` 表示他没选过，此时**跟随当前构建**
+    /// （见 `update::Channel::of_version`）。
+    ///
+    /// 不写成一个有默认值的枚举，因为「没选过」和「选了稳定版」要区别对待：
+    /// 装了测试版构建却默认查稳定通道，用户只会看到「当前版本高于该通道」，
+    /// 而他手上这份本来就来自测试通道。
+    pub channel: Option<crate::update::Channel>,
     /// 自动检查更新。关掉之后一个请求都不发。
     pub automatic: bool,
     /// 灰度分桶，0–99。第一次检查时抽一次，此后不变。
@@ -112,7 +118,7 @@ pub struct UpdateSettings {
 impl Default for UpdateSettings {
     fn default() -> Self {
         Self {
-            channel: crate::update::Channel::default(),
+            channel: None,
             automatic: true,
             bucket: None,
         }

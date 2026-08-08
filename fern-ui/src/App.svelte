@@ -110,7 +110,13 @@
     void hydrate().then(async (doc) => {
       theme.hydrate()
       prefs.hydrate()
-      updates.hydrate()
+      // 更新的默认通道跟随当前构建（预发布版走测试通道），所以要先拿到版本号。
+      try {
+        const build = await invoke<{ version: string; selfUpdate: boolean }>('about')
+        updates.hydrate(build)
+      } catch {
+        updates.hydrate({ version: '', selfUpdate: true })
+      }
       setupOpen = !prefs.setupDone
       ready = true
       // 0.1.0 的玩家名住在 localStorage 里，hydrate 才刚把它搬进 settings.json
