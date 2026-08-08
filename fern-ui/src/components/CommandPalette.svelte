@@ -12,7 +12,7 @@
   import { ArrowRight, CornerDownLeft, Search, X } from 'lucide-svelte'
   import Overlay from './Overlay.svelte'
   import Cover from './Cover.svelte'
-  import { palette, TYPE_LABEL, type Row } from '../lib/palette.svelte'
+  import { palette, pieces, TYPE_LABEL, type Row } from '../lib/palette.svelte'
 
   interface Props {
     onclose: () => void
@@ -87,6 +87,19 @@
     }
   }
 
+  const title = (row: Row) => (row.kind === 'subject' ? row.subject.title : row.action.title)
+
+  /**
+   * 标题下那一行小字。
+   *
+   * 命中落在看不见的别名上时（打 gc 出来「垃圾回收器」），把那个词补在末尾
+   * ——一行凭一个你看不见的词进了列表，是这里最让人困惑的情况。
+   */
+  function aside(row: Row): string {
+    const hint = row.kind === 'subject' ? row.subject.hint : row.action.hint
+    return [hint, row.via].filter(Boolean).join(' · ')
+  }
+
   /** 类型变化的地方插一条分隔线。组序由分数决定，不是固定的。 */
   function heading(index: number): string | undefined {
     const row = rows[index]
@@ -101,6 +114,12 @@
     return label === previous ? undefined : label
   }
 </script>
+
+<!--
+  打中的字加重：这一行为什么在这儿，看一眼就知道，不用猜。写成一整行是因为
+  标签之间的换行会变成真的空格，跑到标题最前面去。
+-->
+{#snippet marked(text: string, at: number[])}{#each pieces(text, at) as part}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}{/snippet}
 
 <Overlay label="命令面板" width="600px" align="top" {onclose}>
   <div class="head">
@@ -135,6 +154,7 @@
     <div class="list scroll" bind:this={listEl}>
       {#each rows as row, index (row.key)}
         {@const label = heading(index)}
+        {@const note = aside(row)}
         {#if label}<p class="group">{label}</p>{/if}
         <button
           class="row"
@@ -149,10 +169,8 @@
             <span class="glyph"><ArrowRight size={14} strokeWidth={2} /></span>
           {/if}
           <span class="text">
-            <strong>{row.kind === 'subject' ? row.subject.title : row.action.title}</strong>
-            {#if row.kind === 'subject' ? row.subject.hint : row.action.hint}
-              <small>{row.kind === 'subject' ? row.subject.hint : row.action.hint}</small>
-            {/if}
+            <strong>{@render marked(title(row), row.at)}</strong>
+            {#if note}<small>{note}</small>{/if}
           </span>
           {#if row.kind === 'action' && row.action.keys}<kbd>{row.action.keys}</kbd>{/if}
           <!-- 这一行还能往里走。只在高亮时出现——每一行都挂一个提示是噪音。 -->
@@ -293,6 +311,15 @@
     font-weight: 500;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /*
+   * 命中不换字重、不上底色：一行里出现两种粗细，会先被当成两个层级读，而它
+   * 们是同一句话。只提一档颜色。
+   */
+  .text mark {
+    background: none;
+    color: var(--accent);
   }
 
   .text small {

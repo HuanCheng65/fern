@@ -150,16 +150,27 @@ export const TYPE_LABEL: Record<SubjectType, string> = {
  * 被整个打中，而后者显然更像。
  *
  * 返回 undefined 表示没命中。空查询是「没问」，一律满分，排序交给别的项。
+ *
+ * 命中的位置一并带出来：这一列信息算出来了就不该扔——界面靠它把标题里被打中
+ * 的那几个字加重，于是「打 scf 为什么出来生存服」当场看得见，不必猜。
  */
-export function score(text: string, query: string): number | undefined {
+interface Look {
+  points: number
+  /** 命中落在 `text` 的哪几个位置。 */
+  at: number[]
+}
+
+function look(text: string, query: string): Look | undefined {
   const needle = query.trim()
-  if (!needle) return 1
+  if (!needle) return { points: 1, at: [] }
   let hit: number[] | null
   try {
     hit = match(text, needle)
   } catch {
     // 拼音那一层出了意外也不该让整个面板空掉，退回最朴素的包含判断。
-    return text.toLowerCase().includes(needle.toLowerCase()) ? 0.5 : undefined
+    const at = text.toLowerCase().indexOf(needle.toLowerCase())
+    if (at < 0) return undefined
+    return { points: 0.5, at: Array.from(needle, (_, n) => at + n) }
   }
   if (!hit || hit.length === 0) return undefined
 
@@ -174,7 +185,7 @@ export function score(text: string, query: string): number | undefined {
   const tight = points / (hit.length * 3 - 1)
   const lead = 1 - hit[0]! / span
   const covers = hit.length / span
-  return 0.6 * tight + 0.25 * lead + 0.15 * covers
+  return { points: 0.6 * tight + 0.25 * lead + 0.15 * covers, at: hit }
 }
 
 /** 副文本的分打个折。命中标题和命中别名不是一回事。 */
@@ -190,29 +201,97 @@ const ACTION = 0.9
  * 旁边还写着另外五个而掉分——按整袋算的话，「占了多少」和「离头多远」都会被
  * 那五个词稀释，稀释到比一个跨词凑出来的假命中还低。整袋也照算一次并取大者，
  * 因为首字母本来就是跨词的：`gc` 是 garbage collector 两个词的头。
+ *
+ * 赢的是哪一个词也带出来：别名不显示在界面上，一行凭一个看不见的词进了列表
+ * 是最让人困惑的情况，把那个词补在位置后面就不困惑了。
  */
-function bag(text: string, query: string): number | undefined {
-  let best = score(text, query)
+function alias(text: string, query: string): { points: number; word?: string } | undefined {
+  const whole = look(text, query)
+  // 一个词命中，整袋必然也命中（词是整袋的子串，子序列匹配对它成立）。所以
+  // 整袋都没命中就不必再逐词试——这是每次按键里最省的一刀：绝大多数条目本来
+  // 就什么都不匹配，而别名袋子有六七个词。
+  if (!whole) return undefined
+  let best = { points: whole.points, word: undefined as string | undefined }
   for (const word of text.split(/\s+/)) {
     if (!word) continue
-    const one = score(word, query)
-    if (one !== undefined && (best === undefined || one > best)) best = one
+    const one = look(word, query)
+    if (one && one.points > best.points) best = { points: one.points, word }
   }
   return best
 }
 
+/** 一行的匹配结果：分数、标题上的命中位置、以及挣来这个分的别名。 */
+export interface Rank {
+  points: number
+  /** 只记标题里的位置。别名不在界面上，没有可以加重的字。 */
+  at: number[]
+  /** 分是别名挣来的时候，是哪个词。 */
+  via?: string
+}
+
 /**
- * 一个对象有多像，取它最像的那个字段。
+ * 一个对象和一个**词**有多像，取它最像的那个字段。
  *
  * 字段各匹配各的，而不是拼成一长串——拼起来有两个后果：跨字段的子序列会凭空
  * 成立（`gc` 在「颜色 · accent color」上拼得出来，两个字母分别来自标题和别名），
  * 以及命中落在标题上还是落在别名上一样重，而人心里显然不是这么排的。
  */
-function like(title: string, aside: string | undefined, query: string): number | undefined {
-  const head = score(title, query)
-  const tail = aside ? bag(aside, query) : undefined
-  if (head === undefined && tail === undefined) return undefined
-  return Math.max(head ?? 0, (tail ?? 0) * ASIDE)
+function word(title: string, aside: string | undefined, query: string): Rank | undefined {
+  const head = look(title, query)
+  const tail = aside ? alias(aside, query) : undefined
+  const asideward = (tail?.points ?? 0) * ASIDE
+  if (!head && !tail) return undefined
+  if (head && head.points >= asideward) return { points: head.points, at: head.at }
+  return { points: asideward, at: [], via: tail?.word }
+}
+
+/**
+ * 一个对象和**整个查询**有多像。
+ *
+ * 空格是「而且」：人报一个名字报不全的时候，会再补一个限定词——「生存 fabric」
+ * 「1.20 存档」。每个词各自去找最像它的字段，词与词落在不同字段正是这么写的
+ * 意义所在（前一个是名字，后一个是版本行）。全部命中才算命中，分数取平均。
+ *
+ * 整串仍然先试一次并取大者：空格在拼音那条路上是有意义的分隔符（`sheng cun`、
+ * `rl craft`），拆开就把「这两段是连着的」这条信息丢了。
+ */
+function like(title: string, aside: string | undefined, query: string): Rank | undefined {
+  const needle = query.trim()
+  if (!needle) return { points: 1, at: [] }
+  const whole = word(title, aside, needle)
+  const parts = needle.split(/\s+/)
+  if (parts.length < 2) return whole
+
+  let sum = 0
+  const at: number[] = []
+  const via: string[] = []
+  for (const part of parts) {
+    const hit = word(title, aside, part)
+    if (!hit) return whole
+    sum += hit.points
+    at.push(...hit.at)
+    if (hit.via && !via.includes(hit.via)) via.push(hit.via)
+  }
+  const split: Rank = {
+    points: sum / parts.length,
+    at: [...new Set(at)].sort((left, right) => left - right),
+    via: via.join(' ') || undefined,
+  }
+  return whole && whole.points >= split.points ? whole : split
+}
+
+/** 把一段文本按命中切开，交给界面加重。 */
+export function pieces(text: string, at: number[]): { text: string; hit: boolean }[] {
+  if (at.length === 0) return [{ text, hit: false }]
+  const on = new Set(at)
+  const parts: { text: string; hit: boolean }[] = []
+  for (let n = 0; n < text.length; n += 1) {
+    const hit = on.has(n)
+    const last = parts[parts.length - 1]
+    if (last && last.hit === hit) last.text += text[n]!
+    else parts.push({ text: text[n]!, hit })
+  }
+  return parts
 }
 
 /**
@@ -289,9 +368,10 @@ function remember(key: string) {
   }
 }
 
+/** `at` 与 `via` 是给界面解释这一行为什么在这儿用的，见 `Rank`。 */
 export type Row =
-  | { kind: 'subject'; key: string; subject: Subject; points: number }
-  | { kind: 'action'; key: string; action: Action; points: number }
+  | { kind: 'subject'; key: string; subject: Subject; points: number; at: number[]; via?: string }
+  | { kind: 'action'; key: string; action: Action; points: number; at: number[]; via?: string }
 
 /**
  * 下钻时输入框左边挂着的那一枚。两个方向各一种：
@@ -417,6 +497,7 @@ class PaletteStore {
         key: `${subject.type}:${subject.id}`,
         subject,
         points: -1,
+        at: [],
       })
     }
     return rows
@@ -432,11 +513,13 @@ class PaletteStore {
     if ('accepts' in item) {
       const key = `action:${item.id}`
       const hit = like(item.title, item.hint, query)
+      // 动作的副文本就是它的 hint，看得见，不必再说一遍。
       return {
         kind: 'action',
         key,
         action: item,
-        points: hit === undefined ? -1 : hit * ACTION * lift(key),
+        points: hit ? hit.points * ACTION * lift(key) : -1,
+        at: hit?.at ?? [],
       }
     }
     const key = `${item.type}:${item.id}`
@@ -445,7 +528,11 @@ class PaletteStore {
       kind: 'subject',
       key,
       subject: item,
-      points: hit === undefined ? -1 : hit * lift(key),
+      points: hit ? hit.points * lift(key) : -1,
+      at: hit?.at ?? [],
+      // 只有别名看不见才需要交代。命中落在 hint 上时它就写在那一行里，
+      // 再补一遍就成了「1.20.1 · fabric · fabric」。
+      via: item.terms === undefined ? undefined : hit?.via,
     }
   }
 
@@ -464,12 +551,14 @@ class PaletteStore {
           key: `${subject.type}:${subject.id}`,
           subject,
           points: weight(`${subject.type}:${subject.id}`),
+          at: [],
         })),
       ...this.actions.map((action) => ({
         kind: 'action' as const,
         key: `action:${action.id}`,
         action,
         points: weight(`action:${action.id}`),
+        at: [],
       })),
     ]
     const recent = pool
