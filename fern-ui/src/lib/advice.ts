@@ -9,34 +9,14 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import type { FixAction } from 'fern-kit/advice'
 import { instances, inTauri } from './instances.svelte'
 import { nav } from './nav.svelte'
 import { supply } from './supply.svelte'
 import { restoreSnapshot } from './backup'
 
-export type FixAction =
-  | { kind: 'install-mod'; query: string }
-  | { kind: 'remove-mod'; file: string }
-  | { kind: 'use-java'; major: number }
-  | { kind: 'set-memory'; mb: number }
-  | { kind: 'open-path'; path: string }
-  | { kind: 'open-url'; url: string }
-  | { kind: 'restore-mods'; snapshot: string }
-
-/** 这颗按钮上写什么。返回空表示这一条现在做不了，不该有按钮。 */
-export function label(action: FixAction | undefined): string {
-  if (!action) return ''
-  switch (action.kind) {
-    case 'install-mod':
-      return '去安装'
-    case 'remove-mod':
-      return '删除'
-    case 'restore-mods':
-      return '恢复模组'
-    default:
-      return ''
-  }
-}
+// 枚举本身和按钮上的字都在 kit 里——官网要画同一条诊断，也得认识它们。
+export { label, type FixAction } from 'fern-kit/advice'
 
 /** 执行。调用方负责在之后刷新自己那一屏。 */
 export async function perform(action: FixAction, instanceId: string) {

@@ -4,9 +4,12 @@
    *
    * 崩溃分析和启动前预检查共用它——两者给出的是同一种东西（一句话加一个可选
    * 的动作），只是发生的时刻不同。
+   *
+   * 它不知道那颗按钮按下去会发生什么，只知道该不该有：`label()` 说了算。真要
+   * 做的事由调用方给（`onfix`），做的过程中的忙碌态和失败话术归这里。
    */
   import { AlertTriangle, CircleAlert } from 'lucide-svelte'
-  import { label, perform, type FixAction } from '../lib/advice'
+  import { label, type FixAction } from './advice'
 
   interface Props {
     title: string
@@ -14,12 +17,11 @@
     /** blocking 大概率起不来，warning 只是可能有问题。 */
     tone?: 'blocking' | 'warning'
     action?: FixAction
-    instanceId: string
-    /** 动作执行完之后重新检查一次。 */
-    ondone?: () => void
+    /** 真的去做那件事。不给也照样画按钮——按钮在不在是 label 决定的。 */
+    onfix?: () => Promise<void> | void
   }
 
-  let { title, detail, tone = 'blocking', action, instanceId, ondone }: Props = $props()
+  let { title, detail, tone = 'blocking', action, onfix }: Props = $props()
 
   let busy = $state(false)
   let error = $state('')
@@ -27,12 +29,11 @@
   const actionLabel = $derived(label(action))
 
   async function run() {
-    if (!action) return
+    if (!onfix) return
     busy = true
     error = ''
     try {
-      await perform(action, instanceId)
-      ondone?.()
+      await onfix()
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -55,7 +56,7 @@
     {#if error}<p class="failed">{error}</p>{/if}
   </div>
   {#if actionLabel}
-    <button class="btn btn--ghost" disabled={busy} onclick={() => void run()}>
+    <button class="fix" disabled={busy} onclick={() => void run()}>
       {busy ? '处理中' : actionLabel}
     </button>
   {/if}
@@ -107,5 +108,43 @@
 
   .failed {
     color: var(--danger, var(--ink-2));
+  }
+
+  /*
+   * 描边按钮的样子自己带着，不借基础样式表里的 .btn——这个组件要能落在一张
+   * 没加载过那份样式表的页面上。
+   */
+  .fix {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    min-height: var(--control);
+    padding: 0 var(--s4);
+    border: none;
+    border-radius: var(--r1);
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--hairline);
+    color: var(--ink-2);
+    font: inherit;
+    font-size: var(--t-body);
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background var(--t-fast) var(--ease),
+      color var(--t-fast) var(--ease),
+      box-shadow var(--t-fast) var(--ease);
+  }
+
+  .fix:hover {
+    background: var(--tint-1);
+    box-shadow: inset 0 0 0 1px var(--tint-3);
+    color: var(--ink);
+  }
+
+  .fix:disabled {
+    opacity: 0.4;
+    pointer-events: none;
   }
 </style>

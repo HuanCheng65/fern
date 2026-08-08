@@ -19,7 +19,7 @@
   import InstanceSettings from '../components/InstanceSettings.svelte'
   import LogLines from '../components/LogLines.svelte'
   import ModList from '../components/ModList.svelte'
-  import Advice from '../components/Advice.svelte'
+  import Advice from 'fern-kit/Advice.svelte'
   import SaveList from '../components/SaveList.svelte'
   import Snapshots from '../components/Snapshots.svelte'
   import { instances, type Instance } from '../lib/instances.svelte'
@@ -28,6 +28,7 @@
   import { nav } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
   import { preflight } from '../lib/preflight.svelte'
+  import { perform } from '../lib/advice'
   import { integrity } from '../lib/integrity.svelte'
 
   interface Props {
@@ -156,8 +157,10 @@
             detail={item.detail}
             tone={item.severity}
             action={item.action}
-            instanceId={instance.id}
-            ondone={() => preflight.refresh(instance.id)}
+            onfix={async () => {
+              await perform(item.action!, instance.id)
+              preflight.refresh(instance.id)
+            }}
           />
         {/each}
         {#each readings as item (item.id)}
@@ -166,8 +169,10 @@
             detail={item.detail}
             tone={item.tone}
             action={item.action}
-            instanceId={instance.id}
-            ondone={() => integrity.refresh(instance.id)}
+            onfix={async () => {
+              await perform(item.action!, instance.id)
+              integrity.refresh(instance.id)
+            }}
           />
         {/each}
       </section>
