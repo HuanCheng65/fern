@@ -32,8 +32,19 @@ export interface Subject {
   type: SubjectType
   id: string
   title: string
-  /** 右侧的一行小字。用来区分同名的东西，没有就不画。 */
+  /** 标题下的一行小字。用来区分同名的东西，没有就不画。 */
   hint?: string
+  /**
+   * 参与匹配、但不显示的词：缩写、别名、英文名。
+   *
+   * 给出它就等于声明**这个对象的 hint 是给眼睛看的**（例如「设置 · 外观」
+   * 这种位置面包屑），匹配改用这里的词。默认不给，那时 hint 本身就是内容
+   * （版本号、作者、服务器地址），照常参与匹配。
+   *
+   * 分开这两件事之前，二者都塞在 hint 里：于是关键词直接漏到界面上，而且打
+   * 一个分区名会把那一节的每一行都捞出来——它们的 hint 里都写着那个分区。
+   */
+  terms?: string
   /** 生成式封面的种子。没有就画一个类型图标。 */
   seed?: string
   /**
@@ -166,6 +177,9 @@ function startsAWord(text: string, at: number): boolean {
   if (/[\u4e00-\u9fff]/.test(text[at]!)) return true
   return /[^\p{L}\p{N}]/u.test(text[at - 1]!)
 }
+
+/** 一个对象拿去匹配的全部文本。见 `Subject.terms`。 */
+const haystack = (subject: Subject) => `${subject.title} ${subject.terms ?? subject.hint ?? ''}`
 
 const FRECENCY_KEY = 'fern.palette.frecency'
 const HALF_LIFE_DAYS = 14
@@ -323,7 +337,7 @@ class PaletteStore {
           kind: 'subject' as const,
           key: `${subject.type}:${subject.id}`,
           subject,
-          points: score(`${subject.title} ${subject.hint ?? ''}`, query) ?? -1,
+          points: score(haystack(subject), query) ?? -1,
         }))
         .filter((row) => row.points >= 0)
         .sort((left, right) => right.points - left.points)
@@ -337,7 +351,7 @@ class PaletteStore {
     for (const subject of this.subjects) {
       if (subject.scoped) continue
       const key = `${subject.type}:${subject.id}`
-      const points = score(`${subject.title} ${subject.hint ?? ''}`, query)
+      const points = score(haystack(subject), query)
       if (points === undefined) continue
       rows.push({ kind: 'subject', key, subject, points: points + weight(key) * 4 })
     }

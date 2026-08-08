@@ -184,6 +184,11 @@ const sectionLabel = (id: string) =>
  *
  * 七节之后，能直接搜到「圆角」比记得它在「外观」里更省时间——而后者本来就
  * 是要靠记的。
+ *
+ * 两级并存不重复，靠的是**各自只用自己的标题去匹配**：打分区名只出分区，
+ * 打设置项的名字（或它的缩写）只出那一行。行的 hint 写着它在哪一节，那是
+ * 找到之后用来确认的，不参与匹配——否则一个「外观」会把那一节的七行全捞
+ * 出来，而它们说的是同一件事。
  */
 provides(() => [
   ...SETTINGS_SECTIONS.map(
@@ -194,15 +199,20 @@ provides(() => [
       run: () => nav.show('settings', section.id),
     }),
   ),
-  ...SETTINGS_ROWS.map(
-    (row): Subject => ({
-      type: 'place',
-      id: `settings/${row.id}`,
-      title: row.label,
-      // 说明和别名一起进 hint：面板搜的是 `title + hint`，所以「GC」和
-      // 「停顿更短」都命中得了，而界面上只显示前半句。
-      hint: `设置 · ${sectionLabel(row.id)}${row.keywords ? ` · ${row.keywords}` : ''}`,
-      run: () => nav.show('settings', row.id),
-    }),
-  ),
+  ...SETTINGS_ROWS
+    // 一节里只有一行、名字还和这一节相同（账户），那一行就是那一节，不必
+    // 让同一个去处出现两次。
+    .filter((row) => row.label !== sectionLabel(row.id))
+    .map(
+      (row): Subject => ({
+        type: 'place',
+        id: `settings/${row.id}`,
+        title: row.label,
+        // 位置面包屑，只给眼睛看。要搜的别名在 terms 里——界面上写的是
+        // 「垃圾回收器」，而记得它的人多半打 gc。
+        hint: `设置 · ${sectionLabel(row.id)}`,
+        terms: row.keywords ?? '',
+        run: () => nav.show('settings', row.id),
+      }),
+    ),
 ])
