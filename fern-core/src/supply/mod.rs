@@ -38,6 +38,32 @@ const USER_AGENT: &str = concat!(
 /// 上游数据里出现环让我们一直转下去。
 const MAX_DEPTH: usize = 6;
 
+/// 东西是从哪一家来的。
+///
+/// 目前只有 Modrinth 一家在跑，但**这个枚举要先存在**：它会被写进来源日志，
+/// 而那份日志是磁盘上的、补不回来的东西。等接 CurseForge 时再加字段，就是一次
+/// 迁移；现在加，是零成本。
+///
+/// 两家的 id 类型不一样——Modrinth 是字符串（`AANobbMI`），CurseForge 是整数
+/// （`394468`）。日志里一律按字符串存：它只用来回查，不参与运算。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    #[default]
+    Modrinth,
+    CurseForge,
+}
+
+impl Source {
+    /// 写进日志的那个词。**改了它就等于把老日志作废**，所以不跟着枚举名走。
+    pub(crate) fn tag(self) -> &'static str {
+        match self {
+            Self::Modrinth => "modrinth",
+            Self::CurseForge => "curseforge",
+        }
+    }
+}
+
 /// 补给站能找的东西。
 ///
 /// 数据包要选存档、插件是服务端的事，所以不在这里——把它们摆进类型筛选，
@@ -786,6 +812,32 @@ pub async fn install(
     });
     let downloader = DownloadClient::new(crate::data::settings::source_order(), 8);
     downloader.download_all(tasks, events).await?;
+
+    // 记一笔谁放进来的。sha1 用 Modrinth 给的那个——下载刚刚照着它校验过，
+    // 再读一遍磁盘算一次是在为同一个答案付两次钱。
+    //
+    // 版本号得从 jar 里读，不能用 Modrinth 的 `version_number`：对账时拿来比
+    // 的是 jar 自己声明的那个，两次比较必须问同一个人，否则每一次更新都会被
+    // 判成「版本号没变」。
+    crate::instance::origin::record(
+        paths,
+        instance_id,
+        plan.files
+            .iter()
+            .map(|file| crate::instance::origin::Entry {
+                file: format!("{subdirectory}/{}", file.file_name),
+                sha1: file.sha1.clone(),
+                version: crate::instance::integrity::declared_version(
+                    &directory.join(&file.file_name),
+                ),
+                origin: crate::instance::origin::Origin::Supply {
+                    source: Source::Modrinth,
+                    project_id: file.project_id.clone(),
+                    version_id: file.version_id.clone(),
+                },
+            })
+            .collect(),
+    );
 
     Ok(InstallOutcome {
         installed: plan.files.iter().map(|file| file.title.clone()).collect(),

@@ -191,10 +191,46 @@ pub async fn install(
     )?;
     let game = paths.game_directory(profile.id.as_str());
 
+    // index 待会儿要交给 lay_out，先把要记的那些留下来。整合包自带的
+    // `overrides/` 不记：那里面绝大多数是配置，本来就天天变，记下来只会让
+    // 日志淹掉真正的信号。
+    let arrivals: Vec<_> = index
+        .files
+        .iter()
+        .filter(|file| wanted(file) && !file.hashes.sha1.is_empty())
+        .map(|file| {
+            let relative = file.path.replace('\\', "/");
+            crate::instance::origin::Entry {
+                sha1: file.hashes.sha1.clone(),
+                // 文件还没下下来，版本号等铺完再读。
+                version: None,
+                origin: crate::instance::origin::Origin::Modpack {
+                    source: crate::supply::Source::Modrinth,
+                    name: summary.name.clone(),
+                    version: summary.version.clone(),
+                },
+                file: relative,
+            }
+        })
+        .collect();
+
     // 出了岔子就把这个半成品实例删掉。留一个下了一半的实例在曲库里，比直接
     // 失败更糟——它看起来是好的，点启动才发现不是。
     match lay_out(&game, archive_path, index, job).await {
-        Ok(()) => Ok(profile),
+        Ok(()) => {
+            // 铺完了才读得到版本号。三百个 jar 各开一次 zip 读一个小文件，
+            // 比刚才那趟下载便宜得多。
+            let arrivals = arrivals
+                .into_iter()
+                .map(|mut entry| {
+                    entry.version =
+                        crate::instance::integrity::declared_version(&game.join(&entry.file));
+                    entry
+                })
+                .collect();
+            crate::instance::origin::record(paths, profile.id.as_str(), arrivals);
+            Ok(profile)
+        }
         Err(error) => {
             let _ = crate::delete_instance(paths, profile.id.as_str());
             Err(error)

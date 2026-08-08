@@ -625,6 +625,13 @@ pub async fn launch_instance(
         if exit_code == Some(0) {
             crate::backup::after_session(&snapshot_paths, &wait_instance);
         }
+
+        // 对一次账，**不管这一次是怎么结束的**。
+        //
+        // 和快照那一条的判断正好相反：崩溃恰恰是最该查的时候。而这里是唯一一
+        // 个同时满足两件事的时刻——刚才那段风险窗口关上了，并且没有人在等。
+        // 所以这一遍读全部文件，不看缓存里的时间戳。
+        crate::instance::integrity::after_session(&snapshot_paths, &wait_instance);
     });
     Ok(LaunchResult {
         instance_id: instance_id.to_owned(),

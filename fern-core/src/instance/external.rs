@@ -180,6 +180,13 @@ pub fn attach(
     // 实例目录里只有一份描述，没有 `.minecraft`：游戏文件在那个外部目录里。
     std::fs::create_dir_all(paths.instance_root(&id)).context("create instance directory")?;
     crate::write_instance_profile(paths, &profile)?;
+
+    // 清点一次这个目录里现在有什么。那些文件从哪来我们不知道——那段历史发生
+    // 在 Fern 之前——但从这一刻起的每一次变化都有了参照物。
+    //
+    // 要读一遍全部 jar 才算得出哈希，几百个模组是几秒钟。它不能放在别处：晚
+    // 一步做，「接手时它长这样」这句话就已经不成立了。
+    crate::instance::integrity::adopt(paths, profile.id.as_str());
     Ok(profile)
 }
 

@@ -521,6 +521,19 @@ async fn preflight(instance_id: String) -> Result<Vec<fern_core::Finding>, Strin
     .await?
 }
 
+/// 这个实例的文件和上次记录的对不对得上。没有话说时是空列表。
+///
+/// 和预检查分开：那边回答「这样点下去会不会起不来」，这边回答「这些文件还是
+/// 上次那些吗」。两件事不在一条轴上，混进一个列表只会让两边都变模糊。
+///
+/// 读盘那一半走便宜的档（只重算大小或修改时间变过的），所以打开实例和点启动
+/// 之前都调得起。彻底的那一遍在游戏退出之后跑，不占用户的时间。
+#[tauri::command]
+async fn integrity(instance_id: String) -> Result<Vec<fern_core::IntegrityNotice>, String> {
+    let paths = paths()?;
+    Ok(fern_core::check_integrity(&paths, &instance_id).await)
+}
+
 // ——— 快照 ———
 //
 // 全部走 `off_thread`：拍一张要读整个游戏目录，恢复要写回去，都是重活。
@@ -1294,6 +1307,7 @@ pub fn run() {
             running_games,
             stop_game,
             preflight,
+            integrity,
             list_snapshots,
             take_snapshot,
             restore_snapshot,

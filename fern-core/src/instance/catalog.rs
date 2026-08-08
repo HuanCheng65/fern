@@ -267,6 +267,8 @@ pub fn delete_instance(paths: &DataPaths, instance_id: &str) -> Result<()> {
     // 内存历史同理：留着它，下一个拿到同一个 id 的实例会继承一份不属于它的
     // 统计，而且是看不见的那种——分配值莫名其妙地偏高或偏低。
     crate::launch::memory::history::forget(paths, id.as_str());
+    // 来源记录也在另一棵树下（`security/`），同理。
+    crate::instance::origin::forget(paths, id.as_str());
     Ok(())
 }
 
@@ -333,6 +335,8 @@ pub fn duplicate_instance(
         }
         copy_tree(&entry.path(), &to.join(name.as_ref()))?;
     }
+    // 模组是原样拷过去的，那份「谁放进来的」对副本一样成立。
+    crate::instance::origin::inherit(paths, instance_id, copy.id.as_str());
     Ok(copy)
 }
 

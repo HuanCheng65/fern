@@ -136,6 +136,20 @@ pub fn install(paths: &DataPaths, instance_id: &str, source: &Path) -> Result<Mo
         .with_context(|| format!("复制到 {}", destination.display()))?;
 
     let described = describe(&destination);
+
+    if let Ok(sha1) = crate::backup::sha1_of(&destination) {
+        crate::instance::origin::record(
+            paths,
+            instance_id,
+            vec![crate::instance::origin::Entry {
+                file: format!("mods/{file_name}"),
+                sha1,
+                version: described.as_ref().and_then(|it| it.version.clone()),
+                origin: crate::instance::origin::Origin::Import,
+            }],
+        );
+    }
+
     Ok(ModFile {
         name: described
             .as_ref()
@@ -177,6 +191,14 @@ fn display_from_file_name(file_name: &str) -> String {
 struct Described {
     name: Option<String>,
     version: Option<String>,
+}
+
+/// 模组在 jar 里自己声明的版本号。
+///
+/// 对账要它：内容变了而这个版本号没变，和用户换了个版本，是两件完全不同的事
+/// （见 `integrity.rs`）。读不到就是 `None`——资源包和光影本来就没有。
+pub(crate) fn declared_version(path: &Path) -> Option<String> {
+    describe(path).and_then(|described| described.version)
 }
 
 /// 从 jar 里读元数据。三家的格式各不相同，都试一遍。

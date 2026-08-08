@@ -28,6 +28,7 @@
   import { nav } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
   import { preflight } from '../lib/preflight.svelte'
+  import { integrity } from '../lib/integrity.svelte'
 
   interface Props {
     instance: Instance
@@ -63,6 +64,18 @@
   const advisories = $derived(preflight.for(instance.id))
   $effect(() => {
     void preflight.check(instance.id)
+  })
+
+  /**
+   * 这些文件还是上次那些吗。
+   *
+   * 和上面那一条同时查，但答的是另一个问题——预检查看的是「这样点下去会不会
+   * 起不来」，这里看的是「文件有没有在我们没看着的时候被改过」。绝大多数时候
+   * 是空的，那时这一段不会出现在界面上。
+   */
+  const readings = $derived(integrity.for(instance.id))
+  $effect(() => {
+    void integrity.check(instance.id)
   })
 
   /** 导出是一次性的动作，不是一个 tab——按下去、选个位置、结束。 */
@@ -135,7 +148,7 @@
   {/snippet}
 
   {#if tab === 'overview'}
-    {#if advisories.length > 0}
+    {#if advisories.length > 0 || readings.length > 0}
       <section class="advisories">
         {#each advisories as item (item.id)}
           <Advice
@@ -145,6 +158,16 @@
             action={item.action}
             instanceId={instance.id}
             ondone={() => preflight.refresh(instance.id)}
+          />
+        {/each}
+        {#each readings as item (item.id)}
+          <Advice
+            title={item.title}
+            detail={item.detail}
+            tone={item.tone}
+            action={item.action}
+            instanceId={instance.id}
+            ondone={() => integrity.refresh(instance.id)}
           />
         {/each}
       </section>

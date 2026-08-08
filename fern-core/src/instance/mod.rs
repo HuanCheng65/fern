@@ -4,11 +4,17 @@
 //! 是对这些模型的增删改查（建、删、改名、复制、读运行时状况）。其余三个各读
 //! 游戏目录里的一类东西：`mods.rs` 还管启用与禁用，`saves.rs` 和 `servers.rs`
 //! 只读——删存档、改服务器列表这种事交给文件管理器和游戏自己。
+//!
+//! `origin.rs` 横穿这几条：谁往游戏目录里放了文件，谁就在那里记一笔。
+//! `integrity.rs` 是它的另一半——磁盘上现在是什么样，和记下来的对不对得上。
 
 pub(crate) mod catalog;
 pub(crate) mod external;
+pub(crate) mod hashes;
+pub(crate) mod integrity;
 pub(crate) mod jar;
 pub(crate) mod mods;
+pub(crate) mod origin;
 pub(crate) mod saves;
 pub(crate) mod servers;
 

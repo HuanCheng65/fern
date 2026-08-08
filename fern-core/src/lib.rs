@@ -77,9 +77,19 @@ pub use instance::external::{
     ExternalScan, ExternalVersion, SkippedVersion, attach as attach_external_version,
     scan as scan_external_directory,
 };
+pub use instance::integrity::{
+    Change, Compared, Depth as IntegrityDepth, Notice as IntegrityNotice,
+    accept as accept_integrity, accept_new as accept_new_files, adopt as adopt_integrity,
+    ask_upstream as ask_upstream_about_changes, compare as compare_integrity,
+    look as check_integrity, notices as integrity_notices,
+};
 pub use instance::mods::{
     ModFile, install as install_mod, list as list_mods, remove as remove_mod,
     set_enabled as set_mod_enabled,
+};
+pub use instance::origin::{
+    Origin, Record as OriginRecord, broken_at as origin_log_broken_at, latest as latest_origins,
+    records as origin_records,
 };
 pub use instance::paths_for as instance_paths;
 pub use instance::saves::{SaveEntry, list as list_saves, names as save_names};
@@ -145,6 +155,11 @@ pub fn message_ids() -> Vec<String> {
                 .iter()
                 .map(|reason| format!("snapshot.skipped.{}", reason.tag())),
         )
+        .chain(
+            instance::integrity::kind::ALL
+                .iter()
+                .map(|kind| format!("integrity.{kind}")),
+        )
         .collect();
     ids.sort();
     ids
@@ -178,9 +193,9 @@ pub use supply::plan::{
 };
 pub use supply::{
     GalleryImage, InstallOutcome, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind,
-    SearchHit, SearchQuery, SearchResult, VersionDependency, install as install_from_modrinth,
-    is_external_url, project as modrinth_project, search as search_modrinth,
-    versions as modrinth_versions,
+    SearchHit, SearchQuery, SearchResult, Source, VersionDependency,
+    install as install_from_modrinth, is_external_url, project as modrinth_project,
+    search as search_modrinth, versions as modrinth_versions,
 };
 
 /// Marker for the Pearl integration boundary.

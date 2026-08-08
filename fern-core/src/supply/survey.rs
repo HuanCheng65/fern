@@ -6,17 +6,18 @@
 //! sha1**——Modrinth 的每个文件都以它为主键，一个 hash 永远对应同一个版本。
 //!
 //! 所以这一层做两件事：把 `mods/` 里的每个文件哈希一遍，再向 Modrinth 批量
-//! 换回它们各自是哪个项目的哪个版本。两件事都缓存：哈希按「文件名+大小+
-//! 修改时间」缓存，换回来的结果按 hash 缓存（hash → 版本是不可变映射，缓存它
-//! 永远不会过期）。没有缓存的话，一个三百个 Mod 的整合包每次打开补给站都要
-//! 重读两个 G。
+//! 换回它们各自是哪个项目的哪个版本。没有缓存的话，一个三百个 Mod 的整合包每
+//! 次打开补给站都要重读两个 G。
+//!
+//! 哈希那一半交给 `instance::hashes`——对账要的是同一批文件的 sha1，两边各存
+//! 一份缓存就意味着各读一遍。换回来的结果留在这里，按 hash 缓存：hash → 版本
+//! 是不可变映射，缓存它永远不会过期。
 //!
 //! 缓存放在 `cache/` 下：删掉它只是下次慢一点。
 
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
-    time::UNIX_EPOCH,
 };
 
 use anyhow::Result;
@@ -71,23 +72,18 @@ pub async fn installed(
     }
 
     let mut cache = Cache::read(paths);
+    // 哈希走共用的那份缓存：对账也要同一批文件的 sha1，各读一遍两三个 G
+    // 是没有道理的（见 `instance::hashes`）。
+    let mut digests = crate::instance::hashes::Hashes::open(paths);
     let mut hashes = Vec::new();
     for file in &files {
-        let key = format!("{}|{}|{}", file.name, file.bytes, file.modified);
-        let hash = match cache.files.get(&key) {
-            Some(hash) => hash.clone(),
-            None => {
-                let Ok(bytes) = std::fs::read(&file.path) else {
-                    continue;
-                };
-                let hash = fern_download::sha1_hex(&bytes);
-                cache.files.insert(key, hash.clone());
-                cache.dirty = true;
-                hash
-            }
+        let key = format!("mods/{}", file.name);
+        let Some(hash) = digests.of(&key, &file.path) else {
+            continue;
         };
         hashes.push((hash, file.enabled, file.name.clone()));
     }
+    digests.save(paths);
 
     // 缓存里没见过的才去问。问一次是一个批量请求，不是一个 Mod 一次。
     let unknown: Vec<String> = hashes
@@ -140,8 +136,6 @@ pub async fn installed(
 struct ModFile {
     path: std::path::PathBuf,
     name: String,
-    bytes: u64,
-    modified: u64,
     enabled: bool,
 }
 
@@ -164,13 +158,6 @@ fn mod_files(game_directory: &Path) -> Vec<ModFile> {
             Some(ModFile {
                 path: entry.path(),
                 name,
-                bytes: metadata.len(),
-                modified: metadata
-                    .modified()
-                    .ok()
-                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                    .map(|since| since.as_secs())
-                    .unwrap_or_default(),
                 enabled,
             })
         })
@@ -193,9 +180,6 @@ pub struct KnownVersion {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Cache {
-    /// `文件名|大小|修改时间` → sha1。
-    #[serde(default)]
-    files: BTreeMap<String, String>,
     /// sha1 → 它是哪个版本。`None` 表示问过了，Modrinth 上没有。
     #[serde(default)]
     versions: BTreeMap<String, Option<KnownVersion>>,

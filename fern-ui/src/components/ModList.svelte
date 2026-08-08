@@ -14,6 +14,7 @@
    */
   import { invoke } from '@tauri-apps/api/core'
   import { preflight } from '../lib/preflight.svelte'
+  import { integrity } from '../lib/integrity.svelte'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import { FolderOpen, Plus, Trash2 } from 'lucide-svelte'
   import { onMount } from 'svelte'
@@ -51,9 +52,10 @@
 
   const enabledCount = $derived(mods.filter((item) => item.enabled).length)
 
-  /** 模组变了，启动前预检查的结论也就变了。 */
+  /** 模组变了，启动前预检查和文件对账的结论也就都变了。 */
   function recheck() {
     preflight.refresh(instanceId)
+    integrity.refresh(instanceId)
   }
 
   async function load() {
