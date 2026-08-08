@@ -128,6 +128,26 @@ pub fn client_jar(paths: &DataPaths, profile: &InstanceProfile) -> PathBuf {
     at(chain.last().unwrap_or(&profile.game_version))
 }
 
+/// 这个版本属于哪个正式版——游戏自己说的。
+///
+/// client jar 里那份 `version.json` 是游戏构建时写进去的，`release_target` 就是
+/// 「这个快照是奔着哪个正式版去的」。1.20 前后的版本才有这个字段，没有就是没有，
+/// 不去别处推：模组的版本区间要跟 fabric-loader 对齐，而 loader 读的正是这一份。
+///
+/// jar 还没下下来（新建完还没补全）时同样返回 `None`。
+pub fn release_target(paths: &DataPaths, profile: &InstanceProfile) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Stamp {
+        release_target: Option<String>,
+    }
+
+    let file = fs::File::open(client_jar(paths, profile)).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let entry = archive.by_name("version.json").ok()?;
+    let stamp: Stamp = serde_json::from_reader(entry).ok()?;
+    stamp.release_target.filter(|target| !target.is_empty())
+}
+
 fn resolve_at(paths: &DataPaths, version_id: &str, depth: usize) -> Result<VersionMetadata> {
     if depth >= MAX_DEPTH {
         return Err(anyhow!("{version_id} 的继承链过深，可能存在循环引用"));
@@ -299,6 +319,35 @@ mod tests {
                 .join("Simply Craftmine")
                 .join("Simply Craftmine.jar")
         );
+
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    /// 快照属于哪个正式版，只有游戏自己说得准，它写在 client jar 里。
+    #[test]
+    fn the_release_a_snapshot_is_heading_for_comes_from_the_client_jar() {
+        use std::io::Write;
+
+        let root = std::env::temp_dir().join(format!("fern-release-target-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+        write(&paths, "25w15a", serde_json::json!({"id": "25w15a"}));
+
+        let mut snapshot = profile(LoaderKind::Vanilla, None);
+        snapshot.game_version = "25w15a".to_owned();
+        // jar 还没下下来时不猜。
+        assert_eq!(release_target(&paths, &snapshot), None);
+
+        let jar = paths.versions.join("25w15a").join("25w15a.jar");
+        let mut writer = zip::ZipWriter::new(fs::File::create(&jar).expect("create jar"));
+        writer
+            .start_file("version.json", zip::write::SimpleFileOptions::default())
+            .expect("start entry");
+        writer
+            .write_all(br#"{"id":"25w15a","name":"25w15a","release_target":"1.21.6"}"#)
+            .expect("write entry");
+        writer.finish().expect("finish jar");
+        assert_eq!(release_target(&paths, &snapshot).as_deref(), Some("1.21.6"));
 
         fs::remove_dir_all(root).expect("remove test root");
     }

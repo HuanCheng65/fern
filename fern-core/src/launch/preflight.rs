@@ -90,14 +90,41 @@ pub enum Severity {
     Warning,
 }
 
+/// 这个实例的游戏版本，两副面孔。
+///
+/// `id` 是磁盘上、也是界面上那个名字；`semantic` 是拿去和模组声明的区间比的那
+/// 一个。发行版两者一样，快照不一样（`25w15a` 对模组来说是
+/// `1.21.6-alpha.25.15.a`，见 [`ranges::semantic`]），翻不出来就是 `None`——那时
+/// 不比，而不是拿 id 去凑。
+#[derive(Debug, Clone)]
+pub struct Game {
+    pub id: String,
+    pub semantic: Option<String>,
+}
+
+impl Game {
+    /// `release_target` 是游戏自己写在 client jar 里的那个正式版号，只有快照
+    /// 需要它（见 [`version::release_target`](super::version::release_target)）。
+    pub fn of(id: &str, release_target: Option<&str>) -> Self {
+        Self {
+            id: id.to_owned(),
+            semantic: ranges::semantic(id, release_target),
+        }
+    }
+}
+
 /// 看一遍这个实例。没有问题就是空列表。
 pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
     let scoped = crate::instance::paths_for(paths, profile);
     let jars = jar::read_all(&jar::directory(&scoped, profile.id.as_str()));
+    let game = Game::of(
+        &profile.game_version,
+        super::version::release_target(&scoped, profile).as_deref(),
+    );
     inspect(
         &jars,
         profile.loader,
-        &profile.game_version,
+        &game,
         java_major(paths, profile, &jars),
     )
 }
@@ -178,7 +205,7 @@ fn lower_bound(range: &str) -> Option<u16> {
 pub fn inspect(
     jars: &[ModJar],
     loader: LoaderKind,
-    minecraft: &str,
+    minecraft: &Game,
     java_major: Option<u16>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -269,18 +296,26 @@ fn accepts(instance: LoaderKind, jar: LoaderKind) -> bool {
 }
 
 /// 模组自己声明的 MC 版本区间不含这个实例的版本。
-fn wrong_game_version(enabled: &[&ModJar], minecraft: &str) -> Vec<Finding> {
+///
+/// 比之前先要有一个**比得了**的版本号。快照的 id 翻不成语义化版本号时这一整项
+/// 就不做：拿 `25w14craftmine` 去比 `>=1.21.6`，比出来的是「一个模组都不兼容」，
+/// 而那句话本身才是错的。
+fn wrong_game_version(enabled: &[&ModJar], minecraft: &Game) -> Vec<Finding> {
+    let Some(version) = minecraft.semantic.as_deref() else {
+        return Vec::new();
+    };
     enabled
         .iter()
         .filter_map(|jar| {
             let range = jar.minecraft_range()?;
-            (!ranges::satisfies(range, minecraft)).then(|| Finding {
+            (!ranges::satisfies(range, version)).then(|| Finding {
                 id: format!("{}:{}", kind::WRONG_GAME_VERSION, jar.file_name),
                 kind: kind::WRONG_GAME_VERSION.to_owned(),
                 severity: Severity::Warning,
                 args: args([
                     ("mod", jar.name.clone()),
-                    ("minecraft", minecraft.to_owned()),
+                    // 说给人听的仍然是他认得的那个 id。
+                    ("minecraft", minecraft.id.clone()),
                     ("range", range.to_owned()),
                 ]),
                 action: None,
@@ -490,7 +525,7 @@ mod tests {
             "fabric-api",
             "*",
         )];
-        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1", None);
+        let findings = inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY);
         assert_eq!(findings[0].args["dependency"], "fabric-api");
@@ -511,7 +546,15 @@ mod tests {
             "*",
         );
         sodium = needs(sodium, "fabricloader", ">=0.15");
-        assert!(inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None).is_empty());
+        assert!(
+            inspect(
+                &[sodium],
+                LoaderKind::Fabric,
+                &Game::of("1.21.1", None),
+                None
+            )
+            .is_empty()
+        );
     }
 
     /// 装了但被关掉了，该说的是「打开它」，不是「去下一份」。
@@ -528,7 +571,7 @@ mod tests {
             ),
             api,
         ];
-        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1", None);
+        let findings = inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None);
         assert_eq!(findings[0].id, "disabled-dependency:fabric-api");
         assert_eq!(findings[0].kind, kind::DISABLED_DEPENDENCY);
         assert!(findings[0].action.is_none());
@@ -545,7 +588,7 @@ mod tests {
             "fabric",
             "*",
         )];
-        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1", None);
+        let findings = inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY);
         assert_eq!(findings[0].args["dependency"], "fabric");
@@ -564,7 +607,7 @@ mod tests {
             ),
             api,
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1", None).is_empty());
+        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None).is_empty());
     }
 
     /// 模组要的 Java 比这个实例会用的那份新。加载器会因此拒绝启动。
@@ -575,15 +618,28 @@ mod tests {
             "java",
             ">=22",
         )];
-        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.5", Some(21));
+        let findings = inspect(
+            &jars,
+            LoaderKind::Fabric,
+            &Game::of("1.21.5", None),
+            Some(21),
+        );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::WRONG_JAVA);
         assert_eq!(findings[0].args["java"], "21");
         assert_eq!(findings[0].action, Some(Action::UseJava { major: 22 }));
 
         // 满足了就不说话，挑不出 Java 时也不说——那是另一回事。
-        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.5", Some(22)).is_empty());
-        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.5", None).is_empty());
+        assert!(
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.21.5", None),
+                Some(22)
+            )
+            .is_empty()
+        );
+        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.5", None), None).is_empty());
     }
 
     #[test]
@@ -625,6 +681,24 @@ mod tests {
         assert_eq!(lower_bound("谁知道"), None);
     }
 
+    /// 快照的 id 不是版本号，翻不出来就不比——否则每一个模组都会被判成不兼容。
+    #[test]
+    fn a_snapshot_we_cannot_place_reports_no_version_mismatch() {
+        let mut sodium = jar("Sodium", "sodium", LoaderKind::Fabric);
+        sodium.depends.push(Dependency {
+            mod_id: "minecraft".to_owned(),
+            range: ">=1.21.6-alpha.25.14.craftmine".to_owned(),
+            required: true,
+        });
+        let craftmine = Game::of("25w14craftmine", Some("1.21.6"));
+        assert!(craftmine.semantic.is_none());
+        assert!(inspect(&[sodium.clone()], LoaderKind::Fabric, &craftmine, None).is_empty());
+
+        // 翻得出来的那些照常比，而且比得对。
+        let snapshot = Game::of("25w15a", Some("1.21.6"));
+        assert!(inspect(&[sodium], LoaderKind::Fabric, &snapshot, None).is_empty());
+    }
+
     #[test]
     fn two_copies_of_one_mod_are_reported_once() {
         let mut second = jar("Sodium", "sodium", LoaderKind::Fabric);
@@ -632,7 +706,7 @@ mod tests {
         let findings = inspect(
             &[jar("Sodium", "sodium", LoaderKind::Fabric), second],
             LoaderKind::Fabric,
-            "1.21.1",
+            &Game::of("1.21.1", None),
             None,
         );
         assert_eq!(findings.len(), 1);
@@ -645,7 +719,7 @@ mod tests {
         let findings = inspect(
             &[jar("Sodium", "sodium", LoaderKind::Fabric)],
             LoaderKind::NeoForge,
-            "1.21.1",
+            &Game::of("1.21.1", None),
             None,
         );
         assert_eq!(findings.len(), 1);
@@ -656,7 +730,7 @@ mod tests {
             inspect(
                 &[jar("Sodium", "sodium", LoaderKind::Fabric)],
                 LoaderKind::Quilt,
-                "1.21.1",
+                &Game::of("1.21.1", None),
                 None
             )
             .is_empty()
@@ -671,7 +745,12 @@ mod tests {
             range: "1.20.x".to_owned(),
             required: true,
         });
-        let findings = inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None);
+        let findings = inspect(
+            &[sodium],
+            LoaderKind::Fabric,
+            &Game::of("1.21.1", None),
+            None,
+        );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Warning);
     }
@@ -685,7 +764,15 @@ mod tests {
             range: "谁知道这是什么".to_owned(),
             required: true,
         });
-        assert!(inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None).is_empty());
+        assert!(
+            inspect(
+                &[sodium],
+                LoaderKind::Fabric,
+                &Game::of("1.21.1", None),
+                None
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -693,7 +780,7 @@ mod tests {
         let findings = inspect(
             &[jar("Sodium", "sodium", LoaderKind::Fabric)],
             LoaderKind::Vanilla,
-            "1.21.1",
+            &Game::of("1.21.1", None),
             None,
         );
         assert_eq!(findings[0].kind, kind::NO_LOADER);
@@ -717,7 +804,7 @@ mod tests {
             ),
             api,
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1", None).is_empty());
+        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None).is_empty());
     }
 
     /// 没装的时候要说的是「装 Fabric API」，而且只说一次——十个模块缺了，
@@ -734,7 +821,12 @@ mod tests {
         // 名字里带 fabric- 的独立模组不该被并进去。
         sodium = needs(sodium, "fabric-language-kotlin", "*");
 
-        let findings = inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None);
+        let findings = inspect(
+            &[sodium],
+            LoaderKind::Fabric,
+            &Game::of("1.21.1", None),
+            None,
+        );
         let missing: Vec<&str> = findings
             .iter()
             .map(|finding| finding.args["dependency"].as_str())
@@ -758,6 +850,6 @@ mod tests {
             ),
             jar("Fabric API", "fabric-api", LoaderKind::Fabric),
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1", None).is_empty());
+        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None).is_empty());
     }
 }
