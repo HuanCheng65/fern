@@ -98,22 +98,77 @@ pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
         &jars,
         profile.loader,
         &profile.game_version,
-        java_major(paths, profile),
+        java_major(paths, profile, &jars),
     )
 }
 
 /// 这个实例点下去会用哪个大版本的 Java。
 ///
-/// 和启动走同一条路（`resolve_java_runtime`），否则预检查说的是一回事、真跑起来
-/// 用的是另一份 Java。挑不出来时返回 `None`——那时该说的话是「没有可用的 Java」，
-/// 那是启动自己会报的错，不该在这里变成一条关于某个模组的警告。
-fn java_major(paths: &DataPaths, profile: &InstanceProfile) -> Option<u16> {
-    // 元数据里声明的大版本这里拿不到（那要读版本文件），只按游戏版本推。推出来的
-    // 是下界，而下界正是挑运行时用的东西。
-    let requirement = crate::java::requirement(&profile.game_version, profile.loader, None);
+/// 和启动走同一条路（`java_requirement` + `resolve_java_runtime`），**包括那两条
+/// 容易漏掉的输入**：元数据里声明的大版本，和模组自己要求的下界。少一条，预检查
+/// 说的就是一回事、真跑起来用的是另一份 Java——而这里说出口的正是「你会用哪个
+/// Java」，说错了就是凭空捏造一条警告。
+///
+/// 挑不出来时返回 `None`——那时该说的话是「没有可用的 Java」，那是启动自己会报
+/// 的错，不该在这里变成一条关于某个模组的警告。
+fn java_major(paths: &DataPaths, profile: &InstanceProfile, jars: &[ModJar]) -> Option<u16> {
+    let declared = crate::read_prepared_java_major(paths, &profile.game_version);
+    let requirement = crate::java::requirement(&profile.game_version, profile.loader, declared)
+        .preferring(java_floor(jars));
     super::resolve_java_runtime(paths, profile, &requirement)
         .ok()
         .map(|runtime| runtime.major)
+}
+
+/// 这些模组里，要求得最高的那条 Java 下界。
+///
+/// 加载器把 Java 当成一个内置模组，`depends: { "java": ">=25" }` 是一条真的会让
+/// 它拒绝启动的约束。装了这样的模组，「自动」就该去挑一个 25——否则自动挑出来的
+/// 那份 Java 能跑游戏、跑不了这一屋子模组，而用户看到的只是「点了启动，什么也
+/// 没发生」。
+///
+/// **只认读得懂的下界。** `>=25`、`[25,)`、`25` 认，`<=17` 这样的上界和看不懂的
+/// 写法一律不算——把一个上界当成下界去挑 Java，比不挑更糟。
+pub fn java_floor(jars: &[ModJar]) -> Option<u16> {
+    jars.iter()
+        .filter(|jar| jar.enabled)
+        .flat_map(|jar| jar.depends.iter())
+        .filter(|dependency| dependency.required && dependency.mod_id == "java")
+        .filter_map(|dependency| lower_bound(&dependency.range))
+        .max()
+}
+
+/// 区间的下界，读不出来就是 `None`。
+fn lower_bound(range: &str) -> Option<u16> {
+    let range = range.trim();
+    let (rest, exclusive) = match range.strip_prefix(">=").or_else(|| range.strip_prefix('[')) {
+        Some(rest) => (rest, false),
+        None => match range.strip_prefix('>') {
+            Some(rest) => (rest, true),
+            // 光秃秃的一个版本号（`=25` 也算）是「正好这个」，下界就是它自己。
+            None => (range.strip_prefix('=').unwrap_or(range), false),
+        },
+    };
+    let token: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if token.is_empty() {
+        return None;
+    }
+    // 后面还跟着别的东西（`>=1.8` 的 `.8`、`~25` 的波浪号已经在上面落空）就不认：
+    // Java 的大版本是一个整数，多出来的那一截说明这不是我们以为的那种写法。
+    let tail = rest.trim_start()[token.len()..].trim_start();
+    if !tail.is_empty()
+        && !tail.starts_with(',')
+        && !tail.starts_with(']')
+        && !tail.starts_with(')')
+    {
+        return None;
+    }
+    let major: u16 = token.parse().ok()?;
+    Some(if exclusive { major + 1 } else { major })
 }
 
 /// 纯函数那一半：给定这些 jar 和这个上下文，有什么话要说。
@@ -537,6 +592,37 @@ mod tests {
         assert_eq!(wanted_major("[17,)"), Some(17));
         assert_eq!(wanted_major(">=1.8"), Some(8));
         assert_eq!(wanted_major("*"), None);
+    }
+
+    /// 装着的模组把「自动」要挑的 Java 抬高了。要得最狠的那一条说了算。
+    #[test]
+    fn the_mods_raise_the_java_the_instance_will_pick() {
+        let mut off = needs(jar("旧的", "old", LoaderKind::Fabric), "java", ">=99");
+        off.enabled = false;
+        let jars = vec![
+            needs(jar("Sodium", "sodium", LoaderKind::Fabric), "java", ">=21"),
+            needs(jar("C2ME", "c2me", LoaderKind::Fabric), "java", ">=25"),
+            // 关掉的那些不参与：它们不会被加载，也就提不出要求。
+            off,
+        ];
+        assert_eq!(java_floor(&jars), Some(25));
+        assert_eq!(java_floor(&[]), None);
+    }
+
+    /// 只认读得懂的下界。把一个上界当成下界去挑 Java，比不挑更糟。
+    #[test]
+    fn only_a_lower_bound_counts_as_one() {
+        assert_eq!(lower_bound(">=25"), Some(25));
+        assert_eq!(lower_bound("[25,)"), Some(25));
+        assert_eq!(lower_bound("25"), Some(25));
+        assert_eq!(lower_bound("=25"), Some(25));
+        // 开区间的下界是下一个。
+        assert_eq!(lower_bound(">24"), Some(25));
+        // 上界、通配、看不懂的写法，以及 `1.8` 那种老写法，一概不算。
+        assert_eq!(lower_bound("<=17"), None);
+        assert_eq!(lower_bound("*"), None);
+        assert_eq!(lower_bound(">=1.8"), None);
+        assert_eq!(lower_bound("谁知道"), None);
     }
 
     #[test]

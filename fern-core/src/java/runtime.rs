@@ -83,6 +83,7 @@ pub async fn install(
     let requirement = JavaRequirement {
         minimum: major,
         maximum: Some(major),
+        preferred: None,
     };
     ensure_java(paths, None, &requirement, events).await
 }

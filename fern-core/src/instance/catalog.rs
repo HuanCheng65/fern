@@ -162,8 +162,13 @@ pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<Instance
     let profile = read_instance(paths, instance_id)?;
     let declared = read_prepared_metadata(paths, &profile.game_version)
         .and_then(|metadata| metadata.java_version.map(|version| version.major_version));
-    let requirement = crate::java_requirement(&profile.game_version, profile.loader, declared);
     let game_directory = crate::instance::paths_for(paths, &profile).game_directory(instance_id);
+    // 「自动会挑哪个 Java」要和真正启动时挑的是同一个，模组要求的那条下界也
+    // 在其中——否则这一屏写着 21、启动用的是 25。
+    let requirement = crate::java_requirement(&profile.game_version, profile.loader, declared)
+        .preferring(crate::launch::preflight::java_floor(
+            &crate::instance::jar::read_all(&game_directory.join("mods")),
+        ));
     let mods = crate::mods_profile(&game_directory);
     let physical = crate::physical_memory_bytes();
     let defaults = crate::current_settings().game;

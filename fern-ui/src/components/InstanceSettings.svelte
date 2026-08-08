@@ -18,6 +18,7 @@
   import Choice from './Choice.svelte'
   import Loading from './Loading.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
+  import { preflight } from '../lib/preflight.svelte'
 
   interface JavaRuntime {
     path: string
@@ -198,9 +199,18 @@
     void persist()
   }
 
-  function setJava(path: string | null) {
+  /**
+   * 换 Java 会改变别处正在说的话，所以改完要把那些话作废。
+   *
+   * 「自动」那一档写着算出来的结果，预检查里那一条说的是「这个实例会用 Java
+   * 21，而某个模组要 25」——两句都基于旧的选择。不重算，用户改完只会看到界面
+   * 一动不动，然后以为没生效。
+   */
+  async function setJava(path: string | null) {
     settings.javaPath = path
-    void persist()
+    await persist()
+    preflight.refresh(instanceId)
+    await load()
   }
 
   async function rename() {
@@ -294,7 +304,7 @@
           </span>
         </div>
         <div class="choices">
-          <button class="pick" class:on={settings.javaPath === null} onclick={() => setJava(null)}>
+          <button class="pick" class:on={settings.javaPath === null} onclick={() => void setJava(null)}>
             <strong>自动</strong>
             <small class="t-mono">
               {runtime?.java ? `当前将使用 Java ${runtime.java.major}` : '无匹配版本，启动时自动下载'}
@@ -304,7 +314,7 @@
             <button
               class="pick"
               class:on={settings.javaPath === item.path}
-              onclick={() => setJava(item.path)}
+              onclick={() => void setJava(item.path)}
             >
               <strong>{javaLabel(item)}</strong>
               <small class="t-mono">{item.path}</small>

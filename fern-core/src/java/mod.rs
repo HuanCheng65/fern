@@ -88,11 +88,24 @@ pub struct JavaRuntime {
 pub struct JavaRequirement {
     pub minimum: u16,
     pub maximum: Option<u16>,
+    /// 装着的模组还要求的下界。
+    ///
+    /// 它是**软的**，所以不并进 `minimum`：模组要 Java 25 而这台机器上最新的是
+    /// 21，该发生的事是「用 21 启动，并且预检查明说有模组要 25」，不是「启动器
+    /// 拒绝启动」。真正的硬下界只有一条——游戏自己跑不起来的那条。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred: Option<u16>,
 }
 
 impl JavaRequirement {
     pub fn accepts(&self, major: u16) -> bool {
         major >= self.minimum && self.maximum.is_none_or(|maximum| major <= maximum)
+    }
+
+    /// 记下模组要求的那条下界。传 `None` 就是没有模组这么要求。
+    pub fn preferring(mut self, preferred: Option<u16>) -> Self {
+        self.preferred = preferred;
+        self
     }
 
     fn tighten_minimum(mut self, minimum: u16) -> Self {
@@ -121,23 +134,28 @@ pub fn requirement(
         Some(version) if version < (1, 17, 0) => JavaRequirement {
             minimum: 8,
             maximum: Some(8),
+            preferred: None,
         },
         Some(version) if version < (1, 18, 0) => JavaRequirement {
             minimum: 16,
             maximum: Some(17),
+            preferred: None,
         },
         Some(version) if version < (1, 20, 5) => JavaRequirement {
             minimum: 17,
             maximum: Some(21),
+            preferred: None,
         },
         Some(_) => JavaRequirement {
             minimum: 21,
             maximum: None,
+            preferred: None,
         },
         // 快照没有可比较的版本号，元数据的声明就是全部信息。
         None => JavaRequirement {
             minimum: declared.unwrap_or(21),
             maximum: None,
+            preferred: None,
         },
     };
 
@@ -164,8 +182,11 @@ pub fn requirement(
 /// 从候选里挑一个。挑不出来返回 `None`——调用方再决定是去下载还是报错。
 ///
 /// 排序意图：能跑 > 跑得好 > 跑得对。先滤掉低于下限的（那是硬伤），再优先
-/// 落在推荐区间内的、原生架构的，最后在合格的里面选**最小**的那个大版本：
-/// 1.20.1 有 17 和 25 可选时，17 才是游戏被测试过的环境。
+/// 落在推荐区间内的、够得着模组那条下界的、原生架构的，最后在合格的里面选
+/// **最小**的那个大版本：1.20.1 有 17 和 25 可选时，17 才是游戏被测试过的环境。
+///
+/// 模组那条下界排在游戏的区间之后：游戏的上限是「已知这个组合会坏」，一个模组
+/// 想要更新的 Java 不足以推翻它。
 pub fn select(runtimes: &[JavaRuntime], requirement: &JavaRequirement) -> Option<JavaRuntime> {
     runtimes
         .iter()
@@ -173,6 +194,9 @@ pub fn select(runtimes: &[JavaRuntime], requirement: &JavaRequirement) -> Option
         .min_by_key(|runtime| {
             (
                 !requirement.accepts(runtime.major),
+                requirement
+                    .preferred
+                    .is_some_and(|wanted| runtime.major < wanted),
                 !runtime.native,
                 runtime.major,
                 !runtime.managed,
@@ -876,6 +900,44 @@ mod tests {
         )
         .expect("a runtime should match");
         assert_eq!(legacy.major, 8);
+    }
+
+    /// 模组要求的下界把选择往上抬，但抬不动游戏自己的上限。
+    #[test]
+    fn the_mods_lower_bound_moves_the_choice_up_but_not_past_the_ceiling() {
+        let native = normalize_arch(env::consts::ARCH);
+        let runtimes = vec![
+            runtime(17, native, false),
+            runtime(21, native, false),
+            runtime(25, native, false),
+        ];
+
+        // 平时挑区间里最老的那个；有模组要 25 就挑 25。
+        let modern = requirement("1.21.5", LoaderKind::Vanilla, Some(21));
+        assert_eq!(select(&runtimes, &modern).expect("match").major, 21);
+        assert_eq!(
+            select(&runtimes, &modern.preferring(Some(25)))
+                .expect("match")
+                .major,
+            25
+        );
+
+        // 够不着就退回原来的选择：模组的要求由预检查去说，不是拦住启动的理由。
+        assert_eq!(
+            select(&runtimes, &modern.preferring(Some(99)))
+                .expect("match")
+                .major,
+            21
+        );
+
+        // 上限是「已知这个组合会坏」，一个模组想要更新的 Java 推翻不了它。
+        let old = requirement("1.20.1", LoaderKind::Vanilla, Some(17));
+        assert_eq!(
+            select(&runtimes, &old.preferring(Some(25)))
+                .expect("match")
+                .major,
+            17
+        );
     }
 
     #[test]

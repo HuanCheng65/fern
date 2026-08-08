@@ -374,7 +374,14 @@ pub async fn launch_instance(
         .as_ref()
         .map(|version| version.major_version);
     stage(LaunchStage::PreparingJava);
-    let requirement = java::requirement(&profile.game_version, profile.loader, required_java_major);
+    // 模组那条 `depends: { "java": ">=25" }` 也算数。它不改下限（游戏本身跑得
+    // 动），但手上同时有 21 和 25 时，该挑的是 25——否则加载器会因为这一条拒绝
+    // 加载，而预检查早就说过同一句话。两边算的必须是同一件事。
+    let mods_floor = preflight::java_floor(&crate::instance::jar::read_all(
+        &crate::instance::jar::directory(paths, instance_id),
+    ));
+    let requirement = java::requirement(&profile.game_version, profile.loader, required_java_major)
+        .preferring(mods_floor);
     let runtime = resolve_java_runtime(paths, &profile, &requirement)?;
     if runtime.major < requirement.minimum {
         return Err(anyhow!(
