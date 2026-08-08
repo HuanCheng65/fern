@@ -7,8 +7,12 @@
 //!
 //! `origin.rs` 横穿这几条：谁往游戏目录里放了文件，谁就在那里记一笔。
 //! `integrity.rs` 是它的另一半——磁盘上现在是什么样，和记下来的对不对得上。
+//! `class.rs` 与 `capability.rs` 又是对账的一条依据：一个文件被静默改写时，
+//! 那份代码里多出了哪些原本没有的调用。
 
+pub(crate) mod capability;
 pub(crate) mod catalog;
+pub(crate) mod class;
 pub(crate) mod external;
 pub(crate) mod hashes;
 pub(crate) mod integrity;

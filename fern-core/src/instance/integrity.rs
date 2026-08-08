@@ -16,14 +16,16 @@
 //! 是不可变的，它从不自己改自己，而任何自我复制的东西都必须写盘。
 //!
 //! 单独一次变化说明不了什么——用户覆盖一个同名文件也长这样。有区分度的是
-//! 变化的**形态**，[`Change`] 上那两个判断就是为它们准备的：
+//! 变化的**形态**，[`Change`] 上那几个判断就是为它们准备的：
 //!
 //! - 几十个文件在同一个时间窗口里一起变（用户不会同时手动替换四十个文件）
 //! - 内容变了而模组自己声明的版本号没变（换版本会带来版本号变化，往现有 jar
 //!   里追加东西不会）
+//! - 那份代码里多出了改动之前没有的调用：启动进程、加载代码、连一个写死的公
+//!   网地址（见 `capability.rs`）
 //!
-//! 还有第三条，在这里做不了：变化前的 sha1 在 Modrinth 上查得到、变化后查不
-//! 到。那要联网，归 `supply::survey`。但它是三条里最难伪造的一条——本机改不了
+//! 还有第四条，在这里做不了：变化前的 sha1 在 Modrinth 上查得到、变化后查不
+//! 到。那要联网，归 `supply::survey`。但它是几条里最难伪造的一条——本机改不了
 //! 上游的数据库。
 //!
 //! ## 为什么分成 compare 和 accept
@@ -38,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DataPaths,
     instance::{
+        capability,
         hashes::Hashes,
         origin::{self, Entry, Origin, Record},
     },
@@ -70,7 +73,7 @@ const AT_ONCE: usize = 3;
 /// 而一批 jar 被改写完全不影响游戏能否启动——两件事不在一条轴上。该用什么分量
 /// 呈现由是哪一条 [`kind`] 决定，程度由参数里的数字说话。
 ///
-/// 动作共用崩溃分析那一套，界面上是同一颗按钮：三条讲文件变化的都给
+/// 动作共用崩溃分析那一套，界面上是同一颗按钮：几条讲文件变化的都给
 /// [`Action::RestoreMods`]，指向那次改动**之前**的最后一张快照。找不到那样一张
 /// 快照就没有按钮——一颗按下去会把用户带到更远处的按钮，比没有按钮糟得多。
 ///
@@ -90,22 +93,26 @@ pub struct Notice {
 
 /// 对账会说的话，全部在这里。
 pub mod kind {
-    /// 一批文件在同一个时间窗口里被改写，声明的版本号都没变。
-    pub const REWRITTEN_TOGETHER: &str = "rewritten-together";
     /// 变更记录本身对不上。
     pub const LEDGER_BROKEN: &str = "ledger-broken";
+    /// 被静默改写的文件里，代码多出了改动之前没有的调用。
+    pub const GAINED_CAPABILITY: &str = "gained-capability";
+    /// 一批文件在同一个时间窗口里被改写，声明的版本号都没变。
+    pub const REWRITTEN_TOGETHER: &str = "rewritten-together";
     /// 从上游认得的构建，变成了上游不认识的文件。
     pub const LEFT_UPSTREAM: &str = "left-upstream";
     /// 内容变了，模组声明的版本号没变。
     pub const SILENT_REWRITE: &str = "silent-rewrite";
 
-    /// 全部取值，**顺序就是呈现顺序**。界面那边的文案表按它对齐。
+    /// 全部取值，**顺序就是呈现顺序**，和 [`super::notices`] push 的顺序一致。
     ///
-    /// `LEDGER_BROKEN` 排在前面是因为它说的不是「哪个文件变了」，而是「后面
-    /// 这几句话有多可信」——那得先讲。
-    pub const ALL: [&str; 4] = [
-        REWRITTEN_TOGETHER,
+    /// `LEDGER_BROKEN` 在最前，因为它说的不是「哪个文件变了」，而是「后面这几
+    /// 句话有多可信」——那得先讲。`SILENT_REWRITE` 在最后，它是几条里最弱的
+    /// 一条：只说了内容变过，没能说出任何更具体的。
+    pub const ALL: [&str; 5] = [
         LEDGER_BROKEN,
+        GAINED_CAPABILITY,
+        REWRITTEN_TOGETHER,
         LEFT_UPSTREAM,
         SILENT_REWRITE,
     ];
@@ -148,6 +155,12 @@ pub struct Change {
     /// 没要。见 [`ask_upstream`]。
     pub was_published: Option<bool>,
     pub now_published: Option<bool>,
+    /// 变化前后这两份内容各自引用了哪些能力（见 `capability`）。
+    ///
+    /// `None` 是「不知道」，不是「没有」：变化**之前**那一份已经不在磁盘上了，
+    /// 只有当时扫过才有得比。基线由游戏退出后那一遍彻底对账建立。
+    pub capability_was: Option<Vec<String>>,
+    pub capability_now: Option<Vec<String>>,
 }
 
 impl Change {
@@ -168,6 +181,24 @@ impl Change {
     /// 数据库。没问过上游时是 `false`——没问就是不知道，不是没有。
     pub fn left_the_upstream(&self) -> bool {
         self.was_published == Some(true) && self.now_published == Some(false)
+    }
+
+    /// 改动之后多出来的那些能力。
+    ///
+    /// 往一个已经装好的 jar 里追加 class，是把载荷放进现有模组最省事的做法：
+    /// 文件名不变、声明的版本号不变，只有那份代码里多出了原本没有的调用。这一
+    /// 条就是冲着它去的。
+    ///
+    /// 两边有任何一边没扫过就是空的——**不知道要说成不知道**。拿一份缺失的基线
+    /// 去做减法，会把这个 jar 一直就有的能力全算成新增的。
+    pub fn gained(&self) -> Vec<String> {
+        let (Some(was), Some(now)) = (&self.capability_was, &self.capability_now) else {
+            return Vec::new();
+        };
+        now.iter()
+            .filter(|capability| !was.contains(capability))
+            .cloned()
+            .collect()
     }
 }
 
@@ -227,6 +258,7 @@ pub fn compare(paths: &DataPaths, instance_id: &str, depth: Depth) -> Compared {
     let game = crate::instance::paths_for(paths, &profile).game_directory(instance_id);
     let known = origin::latest(paths, instance_id);
     let mut hashes = Hashes::open(paths);
+    let mut capabilities = capability::Known::open(paths);
 
     let mut out = Compared::default();
     for (file, path) in present(&game) {
@@ -237,10 +269,19 @@ pub fn compare(paths: &DataPaths, instance_id: &str, depth: Depth) -> Compared {
         let Some(sha1) = sha1 else {
             continue;
         };
+        // 彻底那一遍顺手把没扫过的都扫出来：能力清单要能相减，靠的是变化**之
+        // 前**那一份当时就在清单里。这一遍在游戏退出之后跑，没有人在等。便宜
+        // 那一档不扫——它的调用时机是打开实例和点启动之前。
+        if depth == Depth::Full {
+            capabilities.of(&sha1, &path);
+        }
         match known.get(&file) {
             // 对得上，什么都不说。绝大多数文件走的是这一条。
             Some(record) if record.sha1 == sha1 => {}
-            Some(record) => out.changes.push(changed(record, file, &path, sha1)),
+            // 变了的这些无论哪一档都现扫一遍：它们数量极少，而它们正是要比的。
+            Some(record) => out
+                .changes
+                .push(changed(record, file, &path, sha1, &mut capabilities)),
             None => out.first_seen.push(Entry {
                 file,
                 sha1,
@@ -256,6 +297,7 @@ pub fn compare(paths: &DataPaths, instance_id: &str, depth: Depth) -> Compared {
     out.first_seen
         .sort_by(|left, right| left.file.cmp(&right.file));
     hashes.save(paths);
+    capabilities.save(paths);
     out
 }
 
@@ -282,6 +324,38 @@ pub fn notices(paths: &DataPaths, instance_id: &str, compared: &Compared) -> Vec
     }
 
     let silent = compared.silently_rewritten();
+
+    // 只在静默改写上问这个问题。一次正常的升级也会带来新的调用（模组加了个
+    // 更新检查），但升级会同时改变声明的版本号——把那些也算进来，这一条就会变
+    // 成每次更新模组都响一次的噪音。
+    let gained: Vec<(&Change, Vec<String>)> = silent
+        .iter()
+        .filter_map(|change| {
+            let names = change.gained();
+            (!names.is_empty()).then_some((*change, names))
+        })
+        .collect();
+    if let Some((first, _)) = gained.first() {
+        let mut names: Vec<String> = gained
+            .iter()
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect();
+        names.sort();
+        names.dedup();
+        let files: Vec<&Change> = gained.iter().map(|(change, _)| *change).collect();
+        out.push(Notice {
+            id: kind::GAINED_CAPABILITY.to_owned(),
+            kind: kind::GAINED_CAPABILITY.to_owned(),
+            args: args([
+                ("count", gained.len().to_string()),
+                ("file", display_name(&first.file)),
+                // 界面按这些取值查显示名，和加载器名是同一个路数。
+                ("capability", names.join(",")),
+            ]),
+            action: restore_before(paths, instance_id, &files),
+        });
+    }
+
     let batch = compared.largest_batch();
     if batch >= AT_ONCE {
         out.push(Notice {
@@ -311,13 +385,19 @@ pub fn notices(paths: &DataPaths, instance_id: &str, compared: &Compared) -> Vec
 
     // 已经作为「一批」讲过的不再拆开重说。剩下的最多两个，一个文件一条——
     // 这样文案里不必出现「共 1 个文件」这种为了凑数而别扭的说法。
+    //
+    // 已经在上面说过「多出了哪些调用」的也不再重说：那一条把这一条要说的都
+    // 说了，还多说了一句。
     if batch < AT_ONCE {
-        for change in silent {
+        for change in silent
+            .iter()
+            .filter(|change| !gained.iter().any(|(named, _)| named.file == change.file))
+        {
             out.push(Notice {
                 id: format!("{}:{}", kind::SILENT_REWRITE, change.file),
                 kind: kind::SILENT_REWRITE.to_owned(),
                 args: args([("file", display_name(&change.file))]),
-                action: restore_before(paths, instance_id, std::slice::from_ref(&change)),
+                action: restore_before(paths, instance_id, std::slice::from_ref(change)),
             });
         }
     }
@@ -424,11 +504,15 @@ pub fn adopt(paths: &DataPaths, instance_id: &str) -> usize {
     count
 }
 
-fn changed(record: &Record, file: String, path: &Path, sha1: String) -> Change {
+fn changed(
+    record: &Record,
+    file: String,
+    path: &Path,
+    sha1: String,
+    capabilities: &mut capability::Known,
+) -> Change {
     Change {
-        file,
         was: record.sha1.clone(),
-        now: sha1,
         recorded_at: record.at,
         modified_at: modified_at(path),
         version_was: record.version.clone(),
@@ -436,6 +520,11 @@ fn changed(record: &Record, file: String, path: &Path, sha1: String) -> Change {
         origin_was: record.origin.clone(),
         was_published: None,
         now_published: None,
+        // 之前那一份内容已经不在磁盘上了，只能查清单；现在这一份就在手边。
+        capability_was: capabilities.recorded(&record.sha1),
+        capability_now: capabilities.of(&sha1, path),
+        now: sha1,
+        file,
     }
 }
 
@@ -869,5 +958,106 @@ mod tests {
 
         // 用户删模组是最普通不过的操作，日历上不该留下一条告警。
         assert!(compare(&paths, &id, Depth::Full).is_empty());
+    }
+
+    /// 一个版本号没变、但代码里多出了 `Runtime.exec` 的 jar——把载荷追加进现有
+    /// 模组就是这个样子。
+    fn infected(path: &Path, version: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(path).expect("create"));
+        let options = zip::write::SimpleFileOptions::default();
+        writer
+            .start_file("fabric.mod.json", options)
+            .expect("start");
+        writer
+            .write_all(format!(r#"{{"id":"x","name":"X","version":"{version}"}}"#).as_bytes())
+            .expect("write");
+        writer
+            .start_file("net/x/Stage.class", options)
+            .expect("start");
+        writer
+            .write_all(&capability::fixture::class_calling(
+                "java/lang/Runtime",
+                "exec",
+                "http://85.217.144.130/dl",
+            ))
+            .expect("write");
+        writer.finish().expect("finish");
+    }
+
+    #[test]
+    fn a_rewrite_that_brings_new_calls_with_it_names_them() {
+        let paths = paths("gained");
+        let (id, game) = instance(&paths, "多出来的调用");
+        let path = game.join("mods/sodium.jar");
+        jar(&path, "0.6.13", "");
+        adopt(&paths, &id);
+        // 彻底那一遍建立基线——游戏退出之后跑的就是它。
+        compare(&paths, &id, Depth::Full);
+
+        infected(&path, "0.6.13");
+
+        let compared = compare(&paths, &id, Depth::Full);
+        assert_eq!(
+            compared.changes[0].gained(),
+            ["public-address", "run-program"]
+        );
+
+        let reported = notices(&paths, &id, &compared);
+        assert_eq!(
+            reported
+                .iter()
+                .map(|it| it.kind.as_str())
+                .collect::<Vec<_>>(),
+            [kind::GAINED_CAPABILITY],
+            "更具体的那一条说完，就没必要再说一遍「内容变了」"
+        );
+        assert_eq!(
+            reported[0].args.get("capability").map(String::as_str),
+            Some("public-address,run-program")
+        );
+    }
+
+    /// 没有基线就没有减法。这是「不知道」，不是「它一个能力都没有」——把缺失的
+    /// 基线当成空清单，会让每一次改动都报出这个文件的全部能力。
+    #[test]
+    fn without_a_baseline_scan_nothing_is_claimed() {
+        let paths = paths("no-baseline");
+        let (id, game) = instance(&paths, "没有基线");
+        let path = game.join("mods/sodium.jar");
+        jar(&path, "0.6.13", "");
+        // adopt 用的是便宜那一档，它不扫。
+        adopt(&paths, &id);
+
+        infected(&path, "0.6.13");
+
+        let compared = compare(&paths, &id, Depth::Quick);
+        assert!(compared.changes[0].capability_was.is_none());
+        assert!(compared.changes[0].gained().is_empty());
+        assert_eq!(
+            kinds(&paths, &id, &compared),
+            [kind::SILENT_REWRITE],
+            "说不出更具体的，就退回到那句能说的"
+        );
+    }
+
+    /// 一次正常的升级也会带来新的调用。区别在版本号——它跟着变了。
+    #[test]
+    fn an_update_that_brings_new_calls_is_not_reported() {
+        let paths = paths("update-gains");
+        let (id, game) = instance(&paths, "正常升级");
+        let path = game.join("mods/sodium.jar");
+        jar(&path, "0.6.13", "");
+        adopt(&paths, &id);
+        compare(&paths, &id, Depth::Full);
+
+        infected(&path, "0.6.14");
+
+        let compared = compare(&paths, &id, Depth::Full);
+        assert!(!compared.changes[0].gained().is_empty(), "调用确实多了");
+        assert!(
+            kinds(&paths, &id, &compared).is_empty(),
+            "但版本号跟着变了，那是升级，不是改写"
+        );
     }
 }

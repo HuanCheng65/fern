@@ -45,6 +45,13 @@ export const ui = catalog.ui
 export const loaderName = (tag: string) =>
   catalog.loader[tag as keyof typeof catalog.loader] ?? tag
 
+/** 一串用逗号分开的能力取值的显示名。后端传 `run-program,network` 这样的值。 */
+const capabilityNames = (tags: string) =>
+  tags
+    .split(',')
+    .map((tag) => catalog.capability[tag as keyof typeof catalog.capability] ?? tag)
+    .join('、')
+
 /**
  * 把 `{name}` 换成参数。
  *
@@ -63,11 +70,12 @@ export function describe(id: string, args: Record<string, string> = {}): Message
     // 而不是「什么都没有」。
     return { title: id, detail: '' }
   }
-  // 加载器名是术语，值本身也要翻译，所以先过一遍。
+  // 有几个参数的**值**本身也是术语取值，不是现成的句子，先过一遍。
   const resolved = { ...args }
   for (const key of ['instanceLoader', 'modLoader'] as const) {
     if (resolved[key]) resolved[key] = loaderName(resolved[key])
   }
+  if (resolved.capability) resolved.capability = capabilityNames(resolved.capability)
   return {
     title: format(message.title, resolved),
     detail: format(message.detail, resolved),

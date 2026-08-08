@@ -25,6 +25,20 @@ const loader = {
   neoforge: 'NeoForge',
 }
 
+/**
+ * 代码里出现的那几类调用叫什么。后端传的是 `run-program` 这样的取值。
+ *
+ * 说的是**代码里引用了什么**，不是「这个模组会做什么」——一段引用了
+ * `Runtime.exec` 的代码不一定真的执行到那里。措辞照这个分寸来。
+ */
+const capability = {
+  'run-program': '启动外部程序',
+  'load-code': '在运行时加载代码',
+  network: '建立网络连接',
+  deserialize: '还原序列化对象',
+  'public-address': '写死的公网地址',
+}
+
 const backend = {
   // ── 崩溃分析 ────────────────────────────────────────────────────────────
   'crash.out-of-memory': {
@@ -185,6 +199,11 @@ const backend = {
     title: '{file} 的内容已改变',
     detail: '文件内容发生了变化，但模组声明的版本号没有改变。安装新版本会同时改变版本号。',
   },
+  'integrity.gained-capability': {
+    title: '{count} 个文件出现了此前没有的调用',
+    detail:
+      '这些文件的内容变了，模组声明的版本号没有改变，而其中的代码新增了以下调用：{capability}。其中包括 {file}。',
+  },
 
   // ── 快照 ────────────────────────────────────────────────────────────────
   // 标题是快照列表里那一行的名字，说明回答「它为什么在这里」。
@@ -251,4 +270,4 @@ const ui = {
   },
 }
 
-export const zhCN = { loader, backend, ui }
+export const zhCN = { loader, capability, backend, ui }

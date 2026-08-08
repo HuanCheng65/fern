@@ -38,10 +38,12 @@ export interface Reading extends Notice {
  * 后端不给严重程度：预检查那条 `Severity` 轴说的是「点下去会不会起不来」，
  * 而一批 jar 被改写完全不影响游戏能否启动。轻重由是哪一条决定，就写在这里。
  *
- * 前两条重：一次是「几十个文件被同时改写」，一次是「记录本身不可信」——这两
- * 句都该在点启动之前看到。后两条轻：单个文件的变化，用户多半自己就知道原因。
+ * 前三条重：「几十个文件被同时改写」「记录本身不可信」「代码里多出了此前没有
+ * 的调用」——这三句都该在点启动之前看到。后两条轻：单个文件的变化，用户多半
+ * 自己就知道原因。
  */
 const TONE: Record<string, 'blocking' | 'warning'> = {
+  'gained-capability': 'blocking',
   'rewritten-together': 'blocking',
   'ledger-broken': 'blocking',
   'left-upstream': 'warning',
