@@ -1,0 +1,3 @@
+#! scope=console
+Error: missing `server' JVM at `C:\Users\Player\AppData\Roaming\Fern\runtimes\java-runtime-delta\bin\server\jvm.dll'.
+Please install or use the JRE or JDK that contains these missing components.

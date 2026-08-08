@@ -1,0 +1,8 @@
+#! scope=console
+[16:23:39] [main/INFO]: Loading Minecraft 25w14craftmine with Fabric Loader 0.18.4
+Exception in thread "main" java.lang.ExceptionInInitializerError
+	at net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23)
+Caused by: java.lang.IllegalStateException: duplicate ASM classes found on classpath: jar:file:/C:/Users/Player/AppData/Roaming/Fern/.minecraft/libraries/org/ow2/asm/asm/9.6/asm-9.6.jar!/org/objectweb/asm/ClassReader.class, jar:file:/C:/Users/Player/AppData/Roaming/Fern/.minecraft/libraries/org/ow2/asm/asm/9.9/asm-9.9.jar!/org/objectweb/asm/ClassReader.class
+	at net.fabricmc.loader.impl.util.LoaderUtil.verifyClasspath(LoaderUtil.java:83)
+	at net.fabricmc.loader.impl.launch.knot.Knot.<clinit>(Knot.java:330)
+	... 1 more

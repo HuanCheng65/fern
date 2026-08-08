@@ -117,6 +117,16 @@ const backend = {
     title: '端口被占用',
     detail: '游戏需要的端口已被其他程序占用，通常是上一次的游戏进程尚未退出。',
   },
+  'crash.duplicate-asm-classes': {
+    title: 'classpath 上有两份 ASM',
+    detail:
+      '{first} 与 {second} 同时在 classpath 上，加载器无法确定用哪一份，因此拒绝启动。这来自版本描述文件里重复列出的库，重新安装一次加载器通常可以解决。',
+  },
+  'crash.java-without-a-jvm': {
+    title: 'Java 安装不完整',
+    detail:
+      '这份 Java 缺少虚拟机本身（{path}），只有一个启动程序，通常是下载中途被打断。可以在实例设置中改用另一份 Java，或删除这份后重新下载。',
+  },
 
   // ── 启动前预检查 ────────────────────────────────────────────────────────
   'preflight.no-loader': {

@@ -162,3 +162,26 @@ match = '''com\.electronwill\.nightconfig\.core\.io\.ParsingException'''
 id = "port-in-use"
 level = "generic"
 match = '''java\.net\.BindException: Address already in use'''
+
+# ── 启动就没起来 ──────────────────────────────────────────────────────────
+#
+# 这两条都发生在游戏跑起来之前：没有崩溃报告，栈也和游戏无关，用户看到的是
+# 一闪而过的黑框。而它们恰恰是启动器自己的责任范围——classpath 是我们拼的，
+# Java 是我们挑的。
+
+# 同一个类在 classpath 上有两份，Fabric 开机第一件事就是查重然后拒绝启动。
+# 版本描述里同时列了两代 ASM 就会这样：原版带一份，加载器要另一份，而合并成
+# 一整份的版本文件里没人负责去重（见 fern_meta 的 effective_libraries）。
+[[rule]]
+id = "duplicate-asm-classes"
+level = "exact"
+scope = "console"
+match = '''duplicate ASM classes found on classpath: \S*?/(?<first>[^/\s]+\.jar)![^,]*, \S*?/(?<second>[^/\s]+\.jar)!'''
+
+# 只有启动器没有虚拟机的那份 Java。下载中途被打断就是这个样子：`bin/java` 在，
+# `jvm.dll` 不在。报出来的一句话和「Java」两个字毫无关系，也不进崩溃报告。
+[[rule]]
+id = "java-without-a-jvm"
+level = "named"
+scope = "console"
+match = '''Error: missing `(?:server|client)' JVM at `(?<path>[^'\n]+)'\.'''

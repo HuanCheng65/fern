@@ -5,6 +5,7 @@
 export const BACKEND_MESSAGES = [
   'crash.broken-config',
   'crash.corrupt-archive',
+  'crash.duplicate-asm-classes',
   'crash.duplicate-mod',
   'crash.fabric-incompatible-mods',
   'crash.fabric-missing-dependency',
@@ -18,6 +19,7 @@ export const BACKEND_MESSAGES = [
   'crash.graphics-driver-crash',
   'crash.graphics-unavailable',
   'crash.java-too-old',
+  'crash.java-without-a-jvm',
   'crash.mixin-failure',
   'crash.mixin-failure-named',
   'crash.out-of-memory',
