@@ -1,7 +1,7 @@
 /*
  * Token 体系与基础样式（见 docs/UI_DESIGN.md 六、九）。
  *
- * 这个文件是界面唯一的真源。三类东西住在这里：
+ * 三类东西住在这里：
  *
  *   1. 尺度   间距、字号、圆角、时长。全部离散，能选的值少，界面才不会
  *             在一百个 13px 和 14px 之间慢慢烂掉。
@@ -15,144 +15,12 @@
  * （命令面板、对话框）才有玻璃、描边和影子。界面本身不画花纹。
  */
 
+@import 'fern-kit/tokens';
+
+/* 变量在 fern-kit 里，挂在 .fern-app 上（body 带着这个类）。这里是应用自己的
+   那一半：基础样式和元件类——官网不需要它们，所以它们不能跟着变量一起走。 */
 :root {
   color-scheme: dark;
-
-  /*
-   * 不自带字体。每个平台的原生字体在自己平台上都是最好看的那个，尤其
-   * macOS 的苹方——打包一套 Latin 字体反而会把中文和西文拆成两种气质。
-   */
-  --sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui,
-    'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
-  --mono:
-    ui-monospace, 'SF Mono', SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, 'Noto Sans Mono',
-    monospace;
-
-  /*
-   * 品牌色（见 docs/fern-brand-system.html 03）。系统只有四个值。
-   *
-   * 它们是**身份**，不是界面色板——界面的颜色由背景层生成并注入（下面那组
-   * `--c*`），这是「UI 向背景学色彩」那条设计哲学的落点。所以品牌色只出现在
-   * 身份该出现的地方：应用图标、字标、还没有背景可学时的那一帧。把 --accent
-   * 写死成蕨绿，等于把这个启动器最核心的那条设计原则关掉。
-   *
-   * 取用规则：深底配嫩芽、浅底配蕨绿、蕨绿底配纸白。标志不用渐变，不新增颜色。
-   */
-  --pine: #0e2018;
-  --paper: #f6f4ec;
-  --fern: #35714a;
-  --sprout: #bfe4b2;
-
-  /*
-   * 由背景层注入（components/Backdrop.svelte）。这里的值只是第一帧画出来
-   * 之前的样子。--c4 是强调色，--on-accent 是压在它上面的文字色。
-   */
-  --c0: #0a1016;
-  --c1: #12283a;
-  --c2: #1e5468;
-  --c3: #3e9aa4;
-  --c4: #a8dcd4;
-  --on-accent: #0a0f12;
-  --accent-glow: rgba(168, 220, 212, 0.3);
-
-  /*
-   * 主题层。默认全部转发给背景交出的色板——出厂时启动器向背景学色彩。
-   * 玩家锁定颜色后，theme.svelte.ts 会在 body 上覆盖这三行。
-   */
-  --accent: var(--c4);
-  --accent-ink: var(--on-accent);
-  --accent-soft: var(--accent-glow);
-
-  /* 主题乘数。密度只缩间距不缩字号——字号缩了就是另一套设计了。 */
-  --density: 1;
-  --radius: 1;
-  --motion: 1;
-
-  /* 文字。四档就够：正文、次要、说明、几乎消失。 */
-  --ink: #f3f6f6;
-  --ink-2: rgba(243, 246, 246, 0.68);
-  --ink-3: rgba(243, 246, 246, 0.42);
-  --ink-4: rgba(243, 246, 246, 0.22);
-  --danger: #eb9c88;
-
-  /* 压在背景上的浅色叠加，用于 hover 和选中。不描边。 */
-  --tint-1: rgba(255, 255, 255, 0.055);
-  --tint-2: rgba(255, 255, 255, 0.1);
-  --tint-3: rgba(255, 255, 255, 0.16);
-  --hairline: rgba(255, 255, 255, 0.1);
-  --hairline-2: rgba(255, 255, 255, 0.055);
-
-  /* 浮层。整个界面只有这一种「有实体」的表面。 */
-  --panel: rgba(11, 14, 16, 0.82);
-  /*
-   * 顶栏浮出来的那一层。比浮层薄得多——顶栏不是一块浮起来的板子，它只需要
-   * 刚好让文字在滚过去的内容上仍然读得出来。用 --panel 的话，一滚动整条就
-   * 变成一根深色横杠，那正是「桌面应用的顶栏该像菜单栏」要避开的样子。
-  */
-  --top-glass: color-mix(in srgb, var(--c0) 34%, transparent);
-  --panel-line: rgba(255, 255, 255, 0.12);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.34);
-  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.32), 0 28px 70px rgba(0, 0, 0, 0.46);
-
-  /* 联机工具沿用同一套玻璃和节奏，只保留 Pearl 组件需要的语义别名。 */
-  --glass: color-mix(in srgb, var(--c0) 46%, transparent);
-  --glass-2: color-mix(in srgb, var(--c0) 72%, transparent);
-  --line: var(--hairline);
-  --line-2: var(--hairline-2);
-  --shadow-1: var(--shadow);
-  --shadow-2: var(--shadow-lg);
-  --soft: var(--t-fast);
-
-  /* 间距，4 的倍数，跟着密度缩放。 */
-  --s1: calc(4px * var(--density));
-  --s2: calc(8px * var(--density));
-  --s3: calc(12px * var(--density));
-  --s4: calc(16px * var(--density));
-  --s5: calc(24px * var(--density));
-  --s6: calc(32px * var(--density));
-  --s7: calc(48px * var(--density));
-  --s8: calc(72px * var(--density));
-
-  /* 字号。一张挑好的表，别处不许再写数字。 */
-  --t-micro: 11px;
-  --t-small: 12px;
-  --t-body: 14px;
-  --t-lead: 16px;
-  --t-h2: 19px;
-  --t-h3: 16px;
-  --t-cap: 12px;
-  --t-mono: 12px;
-  --t-h1: clamp(26px, 2.4vw, 32px);
-  --t-display: clamp(40px, 5.4vw, 68px);
-
-  /* 圆角，三档。 */
-  --r1: calc(7px * var(--radius));
-  --r2: calc(11px * var(--radius));
-  --r3: calc(18px * var(--radius));
-
-  /*
-   * 窗口栅格。顶栏 48px（4px 网格的 12 格）：40 太挤，56 开始有网站页头的
-   * 味道。它同时是拖拽区，48 也够手指抓。
-   */
-  --top: 48px;
-  --pad-x: clamp(24px, 4.4vw, 60px);
-  /* 自绘窗口按钮占掉的右上角宽度。有系统标题栏的平台上是 0。 */
-  --frame-controls: 0px;
-  --pad-b: clamp(24px, 3.4vh, 44px);
-
-  /*
-   * 动效。转场 200ms 以内是硬指标（PS5 的场景切换速度），所以主曲线前段快、
-   * 尾巴长——快在体感，慢在收尾。--motion 为 0 时全部塌成 1ms。
-   */
-  --t-fast: calc(130ms * var(--motion) + 1ms);
-  --t-base: calc(190ms * var(--motion) + 1ms);
-  /* 点得到的最小尺寸。见下面那条最小点击区的规则。 */
-  --hit: 24px;
-
-  --t-slow: calc(340ms * var(--motion) + 1ms);
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --spring: cubic-bezier(0.18, 0.92, 0.24, 1.04);
 }
 
 *,

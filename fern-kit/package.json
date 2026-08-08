@@ -8,9 +8,13 @@
   "exports": {
     "./mark": "./src/mark.ts",
     "./biome": "./src/biome.ts",
-    "./palette": "./src/palette.svelte.ts"
+    "./palette": "./src/palette.svelte.ts",
+    "./tokens": "./src/tokens.css",
+    "./PaletteRow.svelte": "./src/PaletteRow.svelte",
+    "./PalettePanel.svelte": "./src/PalettePanel.svelte"
   },
   "dependencies": {
+    "lucide-svelte": "^0.469.0",
     "pinyin-pro": "^3.28.2"
   },
   "peerDependencies": {
