@@ -231,11 +231,7 @@ fn describe(json: &Path, id: &str) -> Option<ExternalVersion> {
     let (loader, loader_version) = detect_loader(&names, raw.main_class.as_deref(), id);
 
     Some(ExternalVersion {
-        // 原版版本取 `inheritsFrom`；没有继承关系时它自己就是原版。
-        game_version: raw
-            .inherits_from
-            .or(raw.id)
-            .unwrap_or_else(|| id.to_owned()),
+        game_version: detect_game_version(&raw.inherits_from, &names, json, raw.id, id),
         id: id.to_owned(),
         loader,
         loader_version,
@@ -244,6 +240,110 @@ fn describe(json: &Path, id: &str) -> Option<ExternalVersion> {
         saves: 0,
         mods: 0,
     })
+}
+
+/// 这个版本对应的原版版本号是哪一个。
+///
+/// 有 `inheritsFrom` 就是它，这是最省事的一条，也是我们自己装加载器时写的那条。
+/// 麻烦的是**没有继承关系的那一份**：不少启动器（以及整合包作者）把原版和加载器
+/// 合并成一整份 JSON 写进 `versions/<名字>/`，里面的 `id` 也一并改成了那个名字。
+/// 那时候照着 `id` 读，得到的是「Simply Craftmine」这样一个实例名——它会被当成
+/// 游戏版本传给 Java 版本判断、模组搜索、崩溃归因，每一处都会得出错的结论。
+///
+/// 所以按可信度往下找：
+///
+/// 1. `inheritsFrom`——启动器明确写下的。
+/// 2. client jar 里的 `version.json`——**游戏自己写的**，1.14 起每个 jar 都带。
+///    目录名和 JSON 里的 id 都是启动器写的、用户能改的，只有这一份不是。
+/// 3. 库坐标——`net.fabricmc:intermediary:25w14craftmine` 里的版本号就是游戏
+///    版本，Quilt、Forge、NeoForge 各有一条同样性质的坐标。
+/// 4. 实在认不出来，才退回 JSON 里的 id 或目录名。
+fn detect_game_version(
+    inherits_from: &Option<String>,
+    libraries: &[String],
+    json: &Path,
+    declared_id: Option<String>,
+    directory_id: &str,
+) -> String {
+    if let Some(parent) = inherits_from.clone().filter(|it| !it.is_empty()) {
+        return parent;
+    }
+    if let Some(version) = json
+        .parent()
+        .map(|directory| directory.join(format!("{directory_id}.jar")))
+        .and_then(|jar| version_inside_jar(&jar))
+    {
+        return version;
+    }
+    if let Some(version) = version_from_libraries(libraries) {
+        return version;
+    }
+    declared_id.unwrap_or_else(|| directory_id.to_owned())
+}
+
+/// client jar 里那份 `version.json` 说自己是哪个版本。
+fn version_inside_jar(jar: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Stamp {
+        id: String,
+    }
+
+    let file = std::fs::File::open(jar).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let entry = archive.by_name("version.json").ok()?;
+    let stamp: Stamp = serde_json::from_reader(entry).ok()?;
+    plausible_version(stamp.id)
+}
+
+/// 加载器的库坐标里带着的游戏版本。
+///
+/// 认的是坐标而不是目录名：`net.fabricmc:intermediary:<版本>` 是 Fabric 自己
+/// 写进去的，用户改不到，也不会因为整合包换了个名字而变。
+fn version_from_libraries(libraries: &[String]) -> Option<String> {
+    // 越靠前越可信：前两条的版本段**就是**游戏版本，后面几条要切掉尾巴。
+    const EXACT: [&str; 2] = ["net.fabricmc:intermediary:", "org.quiltmc:hashed:"];
+    // `net.minecraft:client:1.20.1-20230612.114412`、
+    // `net.minecraftforge:forge:1.20.1-47.2.0`、
+    // `net.neoforged:neoform:1.21.1-20240808.144430`——横杠前面那段是游戏版本。
+    const BEFORE_DASH: [&str; 3] = [
+        "net.minecraft:client:",
+        "net.neoforged:neoform:",
+        "net.minecraftforge:forge:",
+    ];
+    // Yarn 的版本形如 `1.21.1+build.3`。
+    const BEFORE_PLUS: [&str; 1] = ["net.fabricmc:yarn:"];
+
+    let segment = |marker: &str, cut: Option<char>| {
+        libraries.iter().find_map(|name| {
+            let rest = name.strip_prefix(marker)?;
+            let version = rest.split(':').next()?;
+            let version = match cut {
+                Some(separator) => version.split(separator).next()?,
+                None => version,
+            };
+            plausible_version(version.to_owned())
+        })
+    };
+
+    EXACT
+        .iter()
+        .find_map(|marker| segment(marker, None))
+        .or_else(|| {
+            BEFORE_DASH
+                .iter()
+                .find_map(|marker| segment(marker, Some('-')))
+        })
+        .or_else(|| {
+            BEFORE_PLUS
+                .iter()
+                .find_map(|marker| segment(marker, Some('+')))
+        })
+}
+
+/// 认出来的东西还要能当版本号用：它会被拼进路径，也会被送去搜模组。
+fn plausible_version(version: String) -> Option<String> {
+    let version = version.trim().to_owned();
+    (!version.is_empty() && version.len() <= 64 && is_safe_id(&version)).then_some(version)
 }
 
 /// 从库坐标认加载器。
@@ -462,6 +562,79 @@ mod tests {
         assert_eq!(found[0].loader_version.as_deref(), Some("1.20.1-47.2.0"));
         // 目录名是用户可以随手改的，版本要从 inheritsFrom 读。
         assert_eq!(found[0].game_version, "1.20.1");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 一份合并好的 JSON 里没有 `inheritsFrom`，`id` 也被改成了整合包的名字。
+    /// 照着它读，「Simply Craftmine」就成了游戏版本——Java 版本判断、模组搜索、
+    /// 崩溃归因全都会照着这个不存在的版本号去做。
+    #[test]
+    fn a_flat_version_json_still_yields_the_real_game_version() {
+        let root = temporary("flat");
+        write_version(
+            &root,
+            "Simply Craftmine",
+            serde_json::json!({
+                "id": "Simply Craftmine",
+                "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+                "libraries": [
+                    {"name": "org.ow2.asm:asm:9.9"},
+                    {"name": "net.fabricmc:intermediary:25w14craftmine"},
+                    {"name": "net.fabricmc:fabric-loader:0.18.4"}
+                ]
+            }),
+        );
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let found = scan(&paths, &root).expect("scan").versions;
+        assert_eq!(found[0].id, "Simply Craftmine");
+        assert_eq!(found[0].game_version, "25w14craftmine");
+        assert_eq!(found[0].loader, LoaderKind::Fabric);
+        assert_eq!(found[0].loader_version.as_deref(), Some("0.18.4"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 游戏自己在 client jar 里写了版本号。它比目录名、比 JSON 里的 id 都可信
+    /// ——后两者是启动器写的，而用户可以改名。
+    #[test]
+    fn the_client_jar_says_which_version_it_is() {
+        use std::io::Write;
+
+        let root = temporary("stamped");
+        write_version(
+            &root,
+            "我的整合包",
+            serde_json::json!({"id": "我的整合包", "libraries": []}),
+        );
+        let jar = root.join("versions/我的整合包/我的整合包.jar");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&jar).expect("create jar"));
+        writer
+            .start_file("version.json", zip::write::SimpleFileOptions::default())
+            .expect("start entry");
+        writer
+            .write_all(br#"{"id":"1.20.1","name":"1.20.1","world_version":3465}"#)
+            .expect("write entry");
+        writer.finish().expect("finish jar");
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let found = scan(&paths, &root).expect("scan").versions;
+        assert_eq!(found[0].game_version, "1.20.1");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 认不出来的时候要老老实实退回原来那个名字，不能瞎猜一个。
+    #[test]
+    fn an_unrecognisable_version_keeps_its_own_name() {
+        let root = temporary("unknown");
+        write_version(
+            &root,
+            "谜之版本",
+            serde_json::json!({"id": "谜之版本", "libraries": [{"name": "org.ow2.asm:asm:9.6"}]}),
+        );
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let found = scan(&paths, &root).expect("scan").versions;
+        assert_eq!(found[0].game_version, "谜之版本");
         std::fs::remove_dir_all(&root).ok();
     }
 

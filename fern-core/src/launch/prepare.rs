@@ -7,7 +7,6 @@ use anyhow::{Context, Result, anyhow};
 use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
 use fern_meta::{
     DownloadInfo, Library, RuleContext, VersionManifest, VersionManifestEntry, VersionMetadata,
-    rules_allow,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
@@ -101,9 +100,11 @@ pub async fn prepare_instance(
     let downloader = DownloadClient::new(source_order(), 64);
 
     job.step("读取版本信息");
-    let version_root = paths.versions.join(version_id);
+    // 客户端 jar 该落在哪、原版那份描述是哪一份，都由继承链说了算——外部实例
+    // 的「原版」可能就是那份合并好的 JSON 自己，名字和游戏版本号对不上。
+    let client_jar = version::client_jar(paths, &profile);
     // 原版那一份先解出来：装 NeoForge 之前要拿它里面的 client jar 地址。
-    let vanilla = vanilla_metadata(paths, &downloader, version_id).await?;
+    let vanilla = vanilla_metadata(paths, &downloader, &profile, version_id).await?;
 
     // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
     // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
@@ -127,7 +128,7 @@ pub async fn prepare_instance(
                     crate::LoaderKind::NeoForge | crate::LoaderKind::Forge
                 )
             {
-                let jar = task_from_info(version_root.join(format!("{version_id}.jar")), client)?;
+                let jar = task_from_info(client_jar.clone(), client)?;
                 downloader.download_all(vec![jar], events).await?;
             }
             let installed =
@@ -157,12 +158,11 @@ pub async fn prepare_instance(
         .as_ref()
         .and_then(|downloads| downloads.client.as_ref())
     {
-        tasks.push(task_from_info(
-            version_root.join(format!("{version_id}.jar")),
-            client,
-        )?);
+        tasks.push(task_from_info(client_jar.clone(), client)?);
     }
-    for library in &metadata.libraries {
+    // 补全要下的，正是启动要用的那一份名单——同一个函数算出来的，不是两边
+    // 各算各的（见 `version` 模块开头那段）。
+    for library in metadata.effective_libraries(&context) {
         append_library_tasks(&mut tasks, &paths.libraries, library, &context)?;
     }
     if let Some(logging) = metadata
@@ -267,9 +267,19 @@ pub async fn prepare_instance(
 async fn vanilla_metadata(
     paths: &DataPaths,
     downloader: &DownloadClient,
+    profile: &crate::InstanceProfile,
     version_id: &str,
 ) -> Result<VersionMetadata> {
     if let Ok(local) = version::read_one(paths, version_id) {
+        return Ok(local);
+    }
+    // 磁盘上没有叫这个名字的版本，不代表原版那一份不在：外部实例的版本号是
+    // 从 jar 或库坐标认出来的（见 instance::external），而那份合并好的 JSON
+    // 仍然叫着别人起的名字。去上游拉一份同名的回来，等于往别人的目录里塞一
+    // 个他没要的版本——这个模块的底线是不动别人的文件。
+    if let Some(root) = version::chain(paths, &crate::effective_version_id(profile)).pop()
+        && let Ok(local) = version::read_one(paths, &root)
+    {
         return Ok(local);
     }
     let entry = manifest_entry(paths, downloader, version_id).await?;
@@ -393,15 +403,14 @@ fn task_from_info(path: PathBuf, info: &DownloadInfo) -> Result<DownloadTask> {
     DownloadTask::new(path, &info.url, &info.sha1, info.size)
 }
 
+/// 这一条库要下哪些文件。rules 已经在 `effective_libraries` 里过完了，这里
+/// 只管把坐标翻译成路径。
 fn append_library_tasks(
     tasks: &mut Vec<DownloadTask>,
     root: &Path,
     library: &Library,
     context: &RuleContext,
 ) -> Result<()> {
-    if !rules_allow(library.rules.as_deref(), context) {
-        return Ok(());
-    }
     let Some(downloads) = &library.downloads else {
         // 第三方 Maven（Fabric、Forge）只给一个仓库前缀，路径和文件名都要
         // 从坐标推出来，也没有 sha1 可校验。
@@ -469,7 +478,7 @@ fn ensure_trailing_slash(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fern_meta::{LibraryDownloads, Rule, RuleAction};
+    use fern_meta::LibraryDownloads;
 
     fn info(path: &str) -> DownloadInfo {
         DownloadInfo {
@@ -551,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn library_tasks_follow_rules_and_include_native_classifier() {
+    fn library_tasks_include_the_native_classifier() {
         let library = Library {
             name: "org.example:render:1.0".to_owned(),
             downloads: Some(LibraryDownloads {
@@ -561,11 +570,6 @@ mod tests {
                     info("org/example/render/1.0/render-1.0-natives-linux-64.jar"),
                 )])),
             }),
-            rules: Some(vec![Rule {
-                action: RuleAction::Allow,
-                os: None,
-                features: None,
-            }]),
             natives: Some(HashMap::from([(
                 "linux".to_owned(),
                 "natives-linux-${arch}".to_owned(),

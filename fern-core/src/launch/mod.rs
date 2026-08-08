@@ -35,7 +35,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_meta::{Library, RuleContext, VersionMetadata, release_ordinal, rules_allow};
+use fern_meta::{Library, RuleContext, VersionMetadata, release_ordinal};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 
@@ -206,11 +206,9 @@ pub async fn launch_instance(
     }
     let metadata = version::resolve(paths, &version_id)
         .with_context(|| format!("读取 {version_id} 的版本描述"))?;
-    // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。
-    let client_jar = paths
-        .versions
-        .join(&profile.game_version)
-        .join(format!("{}.jar", profile.game_version));
+    // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。哪一份是
+    // 原版由继承链说了算，见 version::client_jar。
+    let client_jar = version::client_jar(paths, &profile);
     let main_class = metadata
         .main_class
         .clone()
@@ -945,10 +943,9 @@ async fn collect_classpath_and_extract_natives(
     natives_directory: &Path,
 ) -> Result<Vec<PathBuf>> {
     let mut classpath = Vec::new();
-    for library in &metadata.libraries {
-        if !rules_allow(library.rules.as_deref(), context) {
-            continue;
-        }
+    // rules 与坐标冲突都在这一步解决：同一个 group:artifact 只留一份，否则
+    // 加载器会因为 classpath 上有两份同名类而拒绝启动（见 effective_libraries）。
+    for library in metadata.effective_libraries(context) {
         let Some(downloads) = &library.downloads else {
             // 只给了仓库前缀的库（加载器的那些）——路径由坐标推出来，补全时
             // 就是按同一个坐标下的。指向不了任何文件的占位条目跳过。

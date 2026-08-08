@@ -314,14 +314,15 @@ pub fn rules_allow(rules: Option<&[Rule]>, context: &RuleContext) -> bool {
 impl VersionMetadata {
     /// Merge a child version over its already loaded parent.
     pub fn merge(parent: &Self, child: &Self) -> Self {
+        // 只接起来，不在这里去重：同一个坐标的两条记录可能是**按 rules 分开
+        // 的两个变体**（1.12.2 就给 macOS 单列了一份旧 LWJGL），在还没有平台
+        // 上下文的地方挑一条，挑掉的可能正是这台机器唯一能用的那条。谁赢谁输
+        // 由 `effective_libraries` 在过完 rules 之后决定。
+        //
+        // 子在前：同版本的重复条目由它代表。
         let mut libraries = Vec::with_capacity(parent.libraries.len() + child.libraries.len());
-        let mut seen = HashSet::new();
-        for library in child.libraries.iter().chain(parent.libraries.iter()) {
-            let key = library_identity(&library.name);
-            if seen.insert(key.to_owned()) {
-                libraries.push(library.clone());
-            }
-        }
+        libraries.extend(child.libraries.iter().cloned());
+        libraries.extend(parent.libraries.iter().cloned());
 
         let arguments = match (&parent.arguments, &child.arguments) {
             (None, None) => None,
@@ -365,6 +366,54 @@ impl VersionMetadata {
         }
     }
 
+    /// 这台机器上真正要用的那些库，顺序保持不变。
+    ///
+    /// 两步，顺序不能反：**先按 rules 过滤，再按坐标去重**。反过来做，1.12.2
+    /// 在 macOS 上就没有 LWJGL 了——那个版本给 macOS 单列了一份旧的，两条记录
+    /// 坐标相同、版本不同，谁能用是 rules 说了算。
+    ///
+    /// 去重留版本高的那一份。一份「Fabric 装好之后」的版本 JSON 里，原版的
+    /// `org.ow2.asm:asm:9.6` 和加载器要的 `9.9` 会同时在列（有的启动器写出来的
+    /// 就是这样一份合并好的 JSON，没有 `inheritsFrom` 可依）——两份 ASM 一起
+    /// 进 classpath，Fabric 加载器开机第一件事就是拒绝启动：
+    /// 「duplicate ASM classes found on classpath」。
+    ///
+    /// 版本一样的重复条目只留第一条：那是同一个 jar 被写了两遍，谁代表都一样。
+    ///
+    /// 为什么是「版本高的赢」而不是「加载器那份赢」：一份合并好的 JSON 里没有
+    /// 谁是加载器这回事，只有顺序，而顺序在不同启动器手里是相反的。版本能比，
+    /// 而加载器发布得比它对应的游戏版本晚，带的库只会更新——Forge 与 NeoForge
+    /// 还把库版本写死在 `-p` 的模块路径里，选中更新的那份正好是它们要的。
+    pub fn effective_libraries(&self, context: &RuleContext) -> Vec<&Library> {
+        let allowed: Vec<&Library> = self
+            .libraries
+            .iter()
+            .filter(|library| rules_allow(library.rules.as_deref(), context))
+            .collect();
+
+        let mut best: HashMap<String, &str> = HashMap::new();
+        for library in &allowed {
+            let identity = library_identity(&library.name);
+            let version = library_version(&library.name).unwrap_or_default();
+            match best.get(&identity) {
+                Some(current) if compare_versions(version, current).is_le() => {}
+                _ => {
+                    best.insert(identity, version);
+                }
+            }
+        }
+
+        let mut taken = HashSet::new();
+        allowed
+            .into_iter()
+            .filter(|library| {
+                let identity = library_identity(&library.name);
+                let version = library_version(&library.name).unwrap_or_default();
+                best.get(&identity) == Some(&version) && taken.insert(identity)
+            })
+            .collect()
+    }
+
     pub fn resolved_arguments(&self, context: &RuleContext) -> (Vec<String>, Vec<String>) {
         if let Some(arguments) = &self.arguments {
             return (
@@ -399,6 +448,40 @@ fn library_identity(name: &str) -> String {
         }
         _ => name.to_owned(),
     }
+}
+
+/// `org.ow2.asm:asm:9.9` → `9.9`。形状不对就没有版本可言。
+fn library_version(name: &str) -> Option<&str> {
+    let mut parts = name.split(':');
+    parts.next()?;
+    parts.next()?;
+    parts.next().filter(|version| !version.is_empty())
+}
+
+/// 库版本号的大小。
+///
+/// 不是 SemVer：`2.9.4-nightly-20150209`、`1.0.18`、`9.9`、`3.3.3` 都要能比。
+/// 所以按分隔符切段逐段比——两段都是数字就按数字比（`9.10` > `9.9`，字符串比
+/// 会得出相反的结论），否则按字面比。前缀相同时段多的更大（`1.0.1` > `1.0`）。
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let split = |version: &str| -> Vec<String> {
+        version
+            .split(['.', '-', '_', '+'])
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    let (left, right) = (split(left), split(right));
+    for (left, right) in left.iter().zip(right.iter()) {
+        let ordering = match (left.parse::<u64>(), right.parse::<u64>()) {
+            (Ok(left), Ok(right)) => left.cmp(&right),
+            _ => left.cmp(right),
+        };
+        if ordering.is_ne() {
+            return ordering;
+        }
+    }
+    left.len().cmp(&right.len())
 }
 
 fn resolve_argument_list(arguments: &[Argument], context: &RuleContext) -> Vec<String> {
@@ -482,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_prefers_child_library_version_and_appends_arguments() {
+    fn the_childs_library_version_wins_and_arguments_append() {
         let parent = VersionMetadata {
             id: "base".to_owned(),
             libraries: vec![
@@ -509,9 +592,23 @@ mod tests {
         };
 
         let merged = VersionMetadata::merge(&parent, &child);
+        // 合并只负责接起来，子在前；哪一份进 classpath 由 effective_libraries 说。
         assert_eq!(
             merged
                 .libraries
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "org.example:core:2.0",
+                "org.example:child:1.0",
+                "org.example:core:1.0",
+                "org.example:parent:1.0",
+            ]
+        );
+        assert_eq!(
+            merged
+                .effective_libraries(&RuleContext::linux_x64())
                 .iter()
                 .map(|item| item.name.as_str())
                 .collect::<Vec<_>>(),
@@ -544,6 +641,114 @@ mod tests {
 
         let merged = VersionMetadata::merge(&parent, &child);
         assert_eq!(merged.libraries.len(), 3);
+    }
+
+    /// 别的启动器写出来的版本 JSON 常常是已经合并好的一整份，没有
+    /// `inheritsFrom`——原版的 ASM 和加载器的 ASM 就并排躺在同一个数组里。
+    /// 两份都进 classpath，Fabric 加载器会直接拒绝启动。
+    #[test]
+    fn one_flat_version_json_still_keeps_a_single_asm() {
+        let metadata = VersionMetadata {
+            id: "Simply Craftmine".to_owned(),
+            libraries: vec![
+                library("org.ow2.asm:asm:9.6"),
+                library("org.slf4j:slf4j-api:2.0.16"),
+                library("org.ow2.asm:asm:9.9"),
+                library("net.fabricmc:fabric-loader:0.18.4"),
+            ],
+            ..VersionMetadata::default()
+        };
+        assert_eq!(
+            metadata
+                .effective_libraries(&RuleContext::linux_x64())
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "org.slf4j:slf4j-api:2.0.16",
+                "org.ow2.asm:asm:9.9",
+                "net.fabricmc:fabric-loader:0.18.4",
+            ]
+        );
+    }
+
+    /// 1.12.2 给 macOS 单列了一份旧 LWJGL：坐标相同、版本不同，用哪一份是
+    /// rules 说了算。先去重再看 rules，macOS 上就一个 LWJGL 都不剩了。
+    #[test]
+    fn rules_decide_before_versions_do() {
+        let allow_except_macos = |name: &str| Library {
+            name: name.to_owned(),
+            rules: Some(vec![
+                Rule {
+                    action: RuleAction::Allow,
+                    os: None,
+                    features: None,
+                },
+                Rule {
+                    action: RuleAction::Disallow,
+                    os: Some(OsRule {
+                        name: Some("osx".to_owned()),
+                        ..OsRule::default()
+                    }),
+                    features: None,
+                },
+            ]),
+            ..Library::default()
+        };
+        let macos_only = |name: &str| Library {
+            name: name.to_owned(),
+            rules: Some(vec![Rule {
+                action: RuleAction::Allow,
+                os: Some(OsRule {
+                    name: Some("osx".to_owned()),
+                    ..OsRule::default()
+                }),
+                features: None,
+            }]),
+            ..Library::default()
+        };
+        let metadata = VersionMetadata {
+            id: "1.12.2".to_owned(),
+            libraries: vec![
+                allow_except_macos("org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"),
+                macos_only("org.lwjgl.lwjgl:lwjgl:2.9.2-nightly-20140822"),
+            ],
+            ..VersionMetadata::default()
+        };
+
+        let linux = metadata.effective_libraries(&RuleContext::linux_x64());
+        assert_eq!(linux.len(), 1);
+        assert_eq!(
+            linux[0].name,
+            "org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"
+        );
+
+        let macos = RuleContext {
+            os_name: "osx".to_owned(),
+            os_arch: "x86_64".to_owned(),
+            ..RuleContext::default()
+        };
+        let picked = metadata.effective_libraries(&macos);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(
+            picked[0].name,
+            "org.lwjgl.lwjgl:lwjgl:2.9.2-nightly-20140822"
+        );
+    }
+
+    #[test]
+    fn versions_compare_by_number_not_by_letter() {
+        use std::cmp::Ordering;
+        assert_eq!(compare_versions("9.10", "9.9"), Ordering::Greater);
+        assert_eq!(compare_versions("9.9", "9.6"), Ordering::Greater);
+        assert_eq!(compare_versions("1.0.1", "1.0"), Ordering::Greater);
+        assert_eq!(compare_versions("0.18.4", "0.18.4"), Ordering::Equal);
+        assert_eq!(
+            compare_versions("2.9.4-nightly-20150209", "2.9.2-nightly-20140822"),
+            Ordering::Greater
+        );
+        // 比不出来的写法不能 panic，给个稳定的答案就行。
+        assert_eq!(compare_versions("release", "1.0"), Ordering::Greater);
     }
 
     #[test]

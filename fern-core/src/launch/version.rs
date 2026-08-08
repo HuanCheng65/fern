@@ -84,6 +84,50 @@ pub fn resolve(paths: &DataPaths, version_id: &str) -> Result<VersionMetadata> {
     resolve_at(paths, version_id, 0)
 }
 
+/// 磁盘上这条继承链：`[自己, 父, …, 根]`。读不到的那一节及其之后不算。
+///
+/// 只跟磁盘上真有的那些。链断在哪里是有意义的信息——加载器还没装的时候，链
+/// 就是空的。
+pub fn chain(paths: &DataPaths, version_id: &str) -> Vec<String> {
+    let mut chain: Vec<String> = Vec::new();
+    let mut current = version_id.to_owned();
+    for _ in 0..MAX_DEPTH {
+        let Ok(metadata) = read_one(paths, &current) else {
+            break;
+        };
+        chain.push(current.clone());
+        let parent = metadata
+            .inherits_from
+            .filter(|parent| !parent.is_empty() && !chain.contains(parent));
+        match parent {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    chain
+}
+
+/// 客户端 jar 在哪。
+///
+/// 它属于继承链的**根**：加载器改的是启动方式，不是游戏本体。多数时候根就是
+/// 实例记着的那个游戏版本，`versions/1.21.1/1.21.1.jar` —— 但外部实例不一定。
+/// 别人的目录里常常只有一份合并好的 JSON，没有 `inheritsFrom`，它自己就是根，
+/// jar 也跟着叫那个名字（`versions/Simply Craftmine/Simply Craftmine.jar`）。
+/// 照着游戏版本号去拼路径，拼出来的是一个不存在的文件——而它看上去还很像那
+/// 么回事，报出来的是「client jar is missing」，看不出问题其实出在**这份实例
+/// 的版本号是从哪里读来的**。
+///
+/// 链上真有 jar 的那一份优先，从根往下找；一个都没有时给出根应该在的位置——
+/// 补全正是要把它下到那里。
+pub fn client_jar(paths: &DataPaths, profile: &InstanceProfile) -> PathBuf {
+    let at = |id: &str| paths.versions.join(id).join(format!("{id}.jar"));
+    let chain = chain(paths, &effective_id(profile));
+    if let Some(found) = chain.iter().rev().find(|id| at(id).is_file()) {
+        return at(found);
+    }
+    at(chain.last().unwrap_or(&profile.game_version))
+}
+
 fn resolve_at(paths: &DataPaths, version_id: &str, depth: usize) -> Result<VersionMetadata> {
     if depth >= MAX_DEPTH {
         return Err(anyhow!("{version_id} 的继承链过深，可能存在循环引用"));
@@ -197,6 +241,63 @@ mod tests {
                 "net.fabricmc:fabric-loader:0.16.5",
                 "com.mojang:brigadier:1.0.18"
             ]
+        );
+
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    /// 客户端 jar 属于继承链的根，而根不一定叫实例记着的那个游戏版本号。
+    #[test]
+    fn the_client_jar_comes_from_the_root_of_the_chain() {
+        let root = std::env::temp_dir().join(format!("fern-version-jar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+
+        // 我们自己装的：加载器那份继承原版，jar 在原版目录里。
+        write(&paths, "1.21.1", serde_json::json!({"id": "1.21.1"}));
+        write(
+            &paths,
+            "fabric-loader-0.16.5-1.21.1",
+            serde_json::json!({
+                "id": "fabric-loader-0.16.5-1.21.1",
+                "inheritsFrom": "1.21.1"
+            }),
+        );
+        let ours = profile(LoaderKind::Fabric, Some("fabric-loader-0.16.5-1.21.1"));
+        // jar 还没下下来时给出的是它**应该**在的位置，补全正是要下到那里。
+        assert_eq!(
+            client_jar(&paths, &ours),
+            paths.versions.join("1.21.1").join("1.21.1.jar")
+        );
+        fs::write(paths.versions.join("1.21.1").join("1.21.1.jar"), b"jar").expect("write jar");
+        assert_eq!(
+            client_jar(&paths, &ours),
+            paths.versions.join("1.21.1").join("1.21.1.jar")
+        );
+
+        // 外部实例：一份合并好的 JSON 自己就是根，jar 跟着它的名字。
+        write(
+            &paths,
+            "Simply Craftmine",
+            serde_json::json!({"id": "Simply Craftmine"}),
+        );
+        fs::write(
+            paths
+                .versions
+                .join("Simply Craftmine")
+                .join("Simply Craftmine.jar"),
+            b"jar",
+        )
+        .expect("write jar");
+        let mut imported = profile(LoaderKind::Fabric, Some("Simply Craftmine"));
+        // 版本号是从库坐标认出来的，磁盘上并没有一个叫它的版本目录。
+        imported.game_version = "25w14craftmine".to_owned();
+        assert_eq!(
+            client_jar(&paths, &imported),
+            paths
+                .versions
+                .join("Simply Craftmine")
+                .join("Simply Craftmine.jar")
         );
 
         fs::remove_dir_all(root).expect("remove test root");

@@ -229,8 +229,18 @@ pub fn discover(paths: Option<&DataPaths>) -> Vec<JavaRuntime> {
 /// 用户在实例设置里填的那个路径。可以指到可执行文件，也可以指到 JDK 根目录。
 pub fn probe(path: &Path) -> Result<JavaRuntime> {
     if path.is_dir() {
-        return probe_home(path, false)
-            .ok_or_else(|| anyhow!("{} 不是有效的 Java 安装目录", path.display()));
+        return probe_home(path, false).ok_or_else(|| {
+            // 「装了但不完整」和「这里根本没有 Java」是两件事，修法也不同：
+            // 前者要重下，后者要换个目录。
+            if path.join("bin").join(java_executable_name()).is_file() && !has_jvm_library(path) {
+                anyhow!(
+                    "{} 里的 Java 不完整：缺少虚拟机（{JVM_LIBRARY}）",
+                    path.display()
+                )
+            } else {
+                anyhow!("{} 不是有效的 Java 安装目录", path.display())
+            }
+        });
     }
     let home = path
         .parent()
@@ -279,6 +289,18 @@ fn probe_home(home: &Path, managed: bool) -> Option<JavaRuntime> {
     .unwrap_or_else(|| home.to_path_buf());
     let executable = home.join("bin").join(java_executable_name());
     if !executable.is_file() {
+        return None;
+    }
+    // `bin/java` 本身跑不了字节码，它只是个几十 KB 的启动器，真正的虚拟机在
+    // `jvm.dll` / `libjvm.so` 里。少了后者，启动出来的是一句
+    // 「Error: missing `server' JVM at …\bin\server\jvm.dll」——那既不是崩溃
+    // 报告也不是游戏日志，没人看得出问题出在 Java 上。
+    //
+    // 一份下到一半的运行时正是这个样子：`bin/java.exe` 和 `release` 已经在位，
+    // 虚拟机还没下完。而 `release` 在，我们就不会去跑一次 `java -version`，于是
+    // 这份残缺的安装会被当成一个完好的 Java 21，还因为是自己下的而**优先**于
+    // 系统里那个真的能用的。
+    if !has_jvm_library(&home) {
         return None;
     }
     if let Some(release) = read_release(&home) {
@@ -340,6 +362,44 @@ fn runtime_from_release(
             .unwrap_or_else(|| detect_image(home)),
         size_bytes: 0,
     }
+}
+
+/// 虚拟机那个动态库的文件名。
+const JVM_LIBRARY: &str = if cfg!(windows) {
+    "jvm.dll"
+} else if cfg!(target_os = "macos") {
+    "libjvm.dylib"
+} else {
+    "libjvm.so"
+};
+
+/// 这份安装里有没有虚拟机。
+///
+/// 摆放位置分了好几代：JDK 9 起是 `lib/server/`（Windows 上是 `bin/server/`），
+/// JDK 8 还多一层 `jre/`，Unix 上的 8 更是把架构也写进路径
+/// （`jre/lib/amd64/server/`），32 位的 JRE 则只带 `client`。这里把这几种都认
+/// 一遍——认漏了的代价是把一个能用的 Java 判成不能用，比放过一个残缺的更糟。
+fn has_jvm_library(home: &Path) -> bool {
+    let holds_jvm = |directory: &Path| {
+        ["server", "client"]
+            .iter()
+            .any(|flavour| directory.join(flavour).join(JVM_LIBRARY).is_file())
+    };
+    for base in [home.to_path_buf(), home.join("jre")] {
+        for middle in ["bin", "lib"] {
+            let root = base.join(middle);
+            if holds_jvm(&root) {
+                return true;
+            }
+            // `lib/amd64/server/libjvm.so`：只有 JDK 8 的 Unix 版这么摆。
+            for entry in fs::read_dir(&root).into_iter().flatten().flatten() {
+                if holds_jvm(&entry.path()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn detect_image(home: &Path) -> JavaImage {
@@ -691,18 +751,26 @@ mod tests {
         assert_eq!(parse_major("not a version"), None);
     }
 
-    #[test]
-    fn discovers_a_macos_runtime_bundle_nested_under_its_install_root() {
-        let root = env::temp_dir().join(format!("fern-java-bundle-{}", std::process::id()));
-        let home = root.join("jre.bundle/Contents/Home");
-        fs::create_dir_all(home.join("bin")).expect("create bundle");
+    /// 一份完好的安装：启动器、版本文件、虚拟机，三样都在。
+    fn install_fake_java(home: &Path, version: &str, arch: &str) {
+        fs::create_dir_all(home.join("bin")).expect("create bin");
         fs::write(home.join("bin").join(java_executable_name()), b"")
             .expect("write java executable");
         fs::write(
             home.join("release"),
-            "JAVA_VERSION=\"25.0.1\"\nOS_ARCH=\"aarch64\"\n",
+            format!("JAVA_VERSION=\"{version}\"\nOS_ARCH=\"{arch}\"\n"),
         )
         .expect("write release file");
+        let server = home.join("lib").join("server");
+        fs::create_dir_all(&server).expect("create server directory");
+        fs::write(server.join(JVM_LIBRARY), b"").expect("write jvm library");
+    }
+
+    #[test]
+    fn discovers_a_macos_runtime_bundle_nested_under_its_install_root() {
+        let root = env::temp_dir().join(format!("fern-java-bundle-{}", std::process::id()));
+        let home = root.join("jre.bundle/Contents/Home");
+        install_fake_java(&home, "25.0.1", "aarch64");
 
         let runtime = probe_home(&root, true).expect("discover nested bundle");
         assert_eq!(runtime.major, 25);
@@ -710,6 +778,33 @@ mod tests {
         assert!(runtime.managed);
 
         fs::remove_dir_all(root).expect("remove bundle");
+    }
+
+    /// 下到一半的运行时不能被当成一个能用的 Java。
+    ///
+    /// 它是真出现过的：`bin/java.exe` 和 `release` 都在，虚拟机没下完，于是
+    /// 我们把它当成 Java 21 交给游戏，游戏报了一句和 Java 毫无字面关系的
+    /// 「missing `server' JVM」。而它还因为是自己下的而优先于系统里那个好的。
+    #[test]
+    fn an_unfinished_download_is_not_a_usable_java() {
+        let root = env::temp_dir().join(format!("fern-java-partial-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let home = root.join("java-runtime-delta");
+        install_fake_java(&home, "21.0.9", env::consts::ARCH);
+        // 虚拟机没下完，剩下的都在。
+        fs::remove_file(home.join("lib").join("server").join(JVM_LIBRARY)).expect("remove jvm");
+
+        assert!(probe_home(&home, true).is_none());
+        assert!(probe(&home).is_err());
+        // 说的是「不完整」，不是「这不是 Java 目录」——一个要重下，一个要换路径。
+        let complaint = probe(&home).expect_err("incomplete").to_string();
+        assert!(complaint.contains(JVM_LIBRARY), "{complaint}");
+
+        // 补齐之后就该认得出来。
+        fs::write(home.join("lib").join("server").join(JVM_LIBRARY), b"").expect("write jvm");
+        assert_eq!(probe_home(&home, true).expect("complete").major, 21);
+
+        fs::remove_dir_all(root).expect("remove root");
     }
 
     #[test]
