@@ -1,7 +1,8 @@
 {
   "name": "fern-ui",
   "private": true,
-  "version": "0.1.0",
+  "_comment_version": "这不是 Fern 的版本号，产品版本在 src-tauri/Cargo.toml。这个包不发布，npm 只是要求这里有个字段。",
+  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

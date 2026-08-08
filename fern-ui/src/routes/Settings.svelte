@@ -40,6 +40,7 @@
   import { expand } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
+  import { updates } from '../lib/update.svelte'
   import { inTauri } from '../lib/instances.svelte'
 
   type SectionId =
@@ -716,6 +717,68 @@
             </button>
           </SettingRow>
 
+          <!--
+            检查更新这一行的沉默规则：`held_back`（灰度还没轮到）什么都不显示，
+            和「已是最新」走同一句话——「有更新但不给你」是最招人烦的一种提示。
+            失败也只在这里说，因为只有这一行代表「用户自己问了」。
+          -->
+          <SettingRow id="about/update" found={focused === 'about/update'}>
+            <p class="update-state">
+              {#if updates.checking}
+                {ui.about.update.checking}
+              {:else if updates.failed}
+                {ui.about.update.failed}
+              {:else if updates.decision?.kind === 'available'}
+                {ui.about.update.available}
+                <strong>{updates.decision.version}</strong>
+                {#if updates.decision.critical}<br /><span class="t-quiet">{ui.about.update.critical}</span>{/if}
+              {:else if updates.decision?.kind === 'ahead_of_channel'}
+                {ui.about.update.aheadOfChannel}
+              {:else if updates.decision?.kind === 'needs_full_download'}
+                {ui.about.update.needsFullDownload}
+              {:else if updates.decision?.kind === 'no_build'}
+                {ui.about.update.noBuild}
+              {:else if updates.decision}
+                {ui.about.update.upToDate}
+              {/if}
+            </p>
+            <div class="links">
+              <button
+                class="btn btn--ghost"
+                disabled={updates.checking}
+                onclick={() => void updates.check()}
+              >
+                {ui.about.update.check}
+              </button>
+              {#if updates.decision && updates.decision.kind !== 'up_to_date' && updates.decision.kind !== 'held_back'}
+                <button class="btn btn--link" onclick={() => openInBrowser(`${REPOSITORY}/releases`)}>
+                  {ui.about.update.download}
+                </button>
+              {/if}
+            </div>
+            <Choice
+              label={ui.about.update.automatic}
+              value={updates.automatic ? 'on' : 'off'}
+              onchange={(next) => updates.setAutomatic(next === 'on')}
+              options={[
+                { value: 'on', label: ui.about.update.automaticOn },
+                { value: 'off', label: ui.about.update.automaticOff },
+              ]}
+            />
+          </SettingRow>
+
+          <SettingRow id="about/channel" found={focused === 'about/channel'}>
+            <Choice
+              label="更新通道"
+              value={updates.channel}
+              onchange={(next) => updates.setChannel(next === 'beta' ? 'beta' : 'stable')}
+              options={[
+                { value: 'stable', label: ui.about.update.channelStable },
+                { value: 'beta', label: ui.about.update.channelBeta },
+              ]}
+            />
+          </SettingRow>
+
           <SettingRow id="about/links" found={focused === 'about/links'}>
             <div class="links">
               <button class="btn btn--link" onclick={() => openInBrowser(REPOSITORY)}>
@@ -921,6 +984,13 @@
 
   .code-row .input {
     font-size: var(--t-small);
+  }
+
+  /* 检查更新那一行的状态句。行高对齐旁边的按钮，别让这一行比其它行矮一截。 */
+  .update-state {
+    margin: 0;
+    align-self: center;
+    line-height: 1.5;
   }
 
   .links {

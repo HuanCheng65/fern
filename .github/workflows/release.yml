@@ -1,0 +1,279 @@
+# 发版。
+#
+# 打一个 `v*` tag 就是发一次版：校验 → 构建 → 签名 → 传 R2 → 覆盖那一个通道的
+# manifest.json。整条链路的设计与理由在 docs/fern-update-design.md。
+#
+# 和 `package.yml` 的分工：那一条负责「每次提交都能编过」，这一条负责「发出去」。
+# 两条都要构建，看着重复——但把它们合成一条的代价是每次 push 都跑签名和上传，
+# 而那意味着私钥要出现在每一次 CI 运行里。
+#
+# **需要的仓库配置**（缺任何一项都会在 `plan` 或上传那一步失败，不会静悄悄发错）：
+#
+#   secrets.TAURI_SIGNING_PRIVATE_KEY           minisign 私钥，`pnpm tauri signer generate` 生成
+#   secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD  上面那把钥匙的密码（没设密码就留空字符串）
+#   secrets.R2_ACCOUNT_ID                       Cloudflare 账号 id
+#   secrets.R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY   作用域限定在这一个 bucket 的 token
+#   vars.R2_BUCKET                              bucket 名
+#   vars.UPDATE_BASE_URL                        对外的自定义域名，例如 https://dl.fern.huanchengfly.top
+#                                               **必须和 fern-core 里的 DEFAULT_ENDPOINT 一致**，
+#                                               plan 那一步会对一遍。
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      channel: ${{ steps.plan.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 打错 tag 要在第一步就停下，而不是把一个版本号错误的包传上 R2 之后才发现。
+      # 传上去的东西是不可变的（路径里带版本号），错了只能换一个版本号重发。
+      - name: Derive and check the version
+        id: plan
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          crate=$(grep -m1 '^version = ' fern-ui/src-tauri/Cargo.toml | cut -d'"' -f2)
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::tag 是 v$tag，但 fern-ui/src-tauri/Cargo.toml 写的是 $crate。"
+            echo "::error::两者必须一致，见 docs/fern-update-design.md §5.9。"
+            exit 1
+          fi
+          # 带预发布段的进测试通道。SemVer 保证 0.2.0-beta.3 < 0.2.0，
+          # 所以测试版用户在正式版发布时会自然收到它，不需要任何额外逻辑。
+          case "$tag" in
+            *-*) channel=beta ;;
+            *)   channel=stable ;;
+          esac
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "发布 $tag 到 $channel 通道"
+
+      # 客户端把更新源编译进了二进制，而清单里的下载地址由这条流水线生成。
+      # 两边不一致的症状是「检查更新永远失败」，而且改客户端才能修——
+      # 也就是说，要用自更新去修一个自更新坏掉的版本。只能在这里挡。
+      - name: The endpoint the client was built with must be the one we publish to
+        env:
+          BASE_URL: ${{ vars.UPDATE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::仓库变量 UPDATE_BASE_URL 没设。"
+            exit 1
+          fi
+          compiled=$(grep -m1 'DEFAULT_ENDPOINT: &str' fern-core/src/update/mod.rs | cut -d'"' -f2)
+          if [ "${BASE_URL%/}" != "${compiled%/}" ]; then
+            echo "::error::客户端编进去的是 $compiled，而这次要发布到 $BASE_URL。"
+            exit 1
+          fi
+          # 域名在第三个地方也出现了：tauri.conf.json 的 plugins.updater.endpoints。
+          # 那一个只是默认值（运行时会按通道覆盖，见 §5.5），所以对不上不会立刻出事
+          # ——但它会在有人排查问题时把人引到错误的地址上。顺手一起对。
+          configured=$(python3 -c "import json;print(json.load(open('fern-ui/src-tauri/tauri.conf.json'))['plugins']['updater']['endpoints'][0])")
+          case "$configured" in
+            "${BASE_URL%/}"/*) ;;
+            *) echo "::error::tauri.conf.json 里的 $configured 不在 $BASE_URL 下面。"; exit 1 ;;
+          esac
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: plan
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-latest
+            rust_targets: x86_64-unknown-linux-gnu
+            build_args: --target x86_64-unknown-linux-gnu --bundles deb,appimage
+            artifact_name: linux
+            artifact_paths: |
+              fern-ui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
+              fern-ui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+              fern-ui/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage.sig
+          - name: Windows x64 portable
+            runner: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            build_args: --target x86_64-pc-windows-msvc --no-bundle
+            artifact_name: windows
+            artifact_paths: |
+              fern-ui/src-tauri/target/x86_64-pc-windows-msvc/release/fern-ui.exe
+              fern-ui/src-tauri/target/x86_64-pc-windows-msvc/release/fern-ui.exe.sig
+          - name: macOS universal
+            runner: macos-14
+            rust_targets: aarch64-apple-darwin x86_64-apple-darwin
+            build_args: --target universal-apple-darwin --bundles app,dmg
+            artifact_name: macos
+            artifact_paths: |
+              fern-ui/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+              fern-ui/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+              fern-ui/src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: fern-ui/pnpm-lock.yaml
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev \
+            libayatana-appindicator3-dev libxdo-dev libssl-dev \
+            libdbus-1-dev build-essential file pkg-config
+
+      - name: Install Rust targets
+        run: rustup target add ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fern-ui/src-tauri -> target
+          shared-key: release-${{ matrix.artifact_name }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: fern-ui
+
+      # `createUpdaterArtifacts` 用命令行覆盖，不写进 tauri.conf.json：写进去的话
+      # 每一次普通构建都会要求私钥在环境里，而 package.yml 跑在每个 PR 上。
+      #
+      # 它在 macOS 上产出 .app.tar.gz、在 Linux 上给 AppImage 配一个 .sig。
+      # Windows 走 --no-bundle，没有 bundler 参与，所以下一步单独签。
+      - name: Build and sign
+        run: >
+          pnpm tauri build ${{ matrix.build_args }}
+          --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        working-directory: fern-ui
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # 便携 exe 不经过 bundler，签名要自己来。签完在旁边留一个 .exe.sig。
+      - name: Sign the portable executable
+        if: runner.os == 'Windows'
+        run: >
+          pnpm tauri signer sign
+          src-tauri/target/x86_64-pc-windows-msvc/release/fern-ui.exe
+        working-directory: fern-ui
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_paths }}
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: Publish to R2
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      BASE_URL: ${{ vars.UPDATE_BASE_URL }}
+      BUCKET: ${{ vars.R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      # R2 要求 region 是 auto——SDK 必须有这个值，R2 自己不用它。
+      AWS_DEFAULT_REGION: auto
+      AWS_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      # AWS CLI v2 从 2025 年起默认给每个 PutObject 附一个 CRC32 校验头，而 R2
+      # 不认识它，报的是 `Header 'x-amz-checksum-crc32' not implemented`。
+      # 这两个变量把行为调回「只在协议要求时才算」。传输完整性不受影响：
+      # 走的是 HTTPS，而内容本身还有 minisign 签名兜底。
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: incoming
+
+      # 产物在三个平台上叫三种名字（fern-ui.exe、Fern_0.2.0_amd64.AppImage、
+      # Fern.app.tar.gz）。清单里的地址必须是稳定的，所以在这里改成一套。
+      # 产物在三个平台上叫三种名字（fern-ui.exe、Fern_0.2.0_amd64.AppImage、
+      # Fern.app.tar.gz），而且 upload-artifact 会按「多个路径的最近公共祖先」
+      # 决定包内的目录层级——macOS 那个artifact里是 `dmg/` 和 `macos/` 两层，
+      # Windows 那个是平铺的。所以按名字找，不按路径拼。
+      - name: Give everything its published name
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          take() { # take <artifact 目录> <文件名模式> <发布后的名字>
+            local found
+            found=$(find "incoming/$1" -type f -name "$2" | head -1 || true)
+            if [ -z "$found" ]; then
+              echo "::error::在 incoming/$1 里找不到 $2"
+              find "incoming/$1" -type f | sed 's/^/  有：/'
+              exit 1
+            fi
+            cp "$found" "out/$3"
+          }
+          take windows 'fern-ui.exe'          "Fern-windows-x86_64.exe"
+          take windows 'fern-ui.exe.sig'      "Fern-windows-x86_64.exe.sig"
+          take macos   '*.app.tar.gz'         "Fern-darwin-universal.app.tar.gz"
+          take macos   '*.app.tar.gz.sig'     "Fern-darwin-universal.app.tar.gz.sig"
+          take linux   '*.AppImage'           "Fern-linux-x86_64.AppImage"
+          take linux   '*.AppImage.sig'       "Fern-linux-x86_64.AppImage.sig"
+          # 给人下载的那两个，不进清单。
+          take macos   '*.dmg'                "Fern-${VERSION}-universal.dmg"
+          take linux   '*.deb'                "Fern-${VERSION}-amd64.deb"
+          ls -l out
+
+      - name: Write the manifest
+        run: |
+          set -euo pipefail
+          python3 .github/build-manifest.py \
+            --version "$VERSION" \
+            --base-url "$BASE_URL" \
+            --files out \
+            --out out/manifest.json
+          cat out/manifest.json
+
+      # 版本目录先传，清单最后传。顺序反过来的话，会有一段时间清单指向还不存在的
+      # 文件——而那正是所有客户端都会去读的那一份。
+      - name: Upload the release files
+        run: |
+          set -euo pipefail
+          aws s3 cp out "s3://${BUCKET}/release/${VERSION}/" \
+            --endpoint-url "$AWS_ENDPOINT" \
+            --recursive --exclude "manifest.json" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Point the channel at it
+        run: |
+          set -euo pipefail
+          aws s3 cp out/manifest.json "s3://${BUCKET}/${CHANNEL}/manifest.json" \
+            --endpoint-url "$AWS_ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=60"
+          echo "$CHANNEL 通道现在指向 $VERSION"

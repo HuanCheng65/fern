@@ -30,6 +30,7 @@ mod job;
 mod launch;
 mod process;
 mod supply;
+mod update;
 
 pub use account::Account;
 pub use account::credentials::{client_token, store_secret};
@@ -61,8 +62,8 @@ pub use backup::{
 };
 pub use data::settings::{
     AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,
-    current as current_settings, effective as effective_settings, load as load_settings,
-    save as save_settings,
+    UpdateSettings, current as current_settings, effective as effective_settings,
+    load as load_settings, save as save_settings,
 };
 pub use data::{DataPaths, ExternalGame, Isolation, nearby_game_directory};
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
@@ -111,6 +112,10 @@ pub use launch::crash::{
     Suspect, attribute_crash, diagnose as diagnose_crash, rules::Context as CrashContext,
 };
 pub use launch::preflight::{Finding, Severity, check as preflight_instance};
+pub use update::{
+    Channel as UpdateChannel, Decision as UpdateDecision, Manifest as UpdateManifest,
+    check_now as check_for_update, target as update_target,
+};
 
 /// 这台机器是什么。反馈问题时的第一句话。
 ///

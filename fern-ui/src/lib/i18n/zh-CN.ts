@@ -262,6 +262,25 @@ const ui = {
     copied: '已复制',
     repository: '源码仓库',
     issues: '反馈问题',
+    update: {
+      check: '检查更新',
+      checking: '正在检查…',
+      // 只有用户自己点过之后才会看到这句。自动检查失败时一个字都不说。
+      failed: '没能连上更新服务器，稍后会自动再试。',
+      upToDate: '已经是最新版本。',
+      available: '可以更新到',
+      critical: '这是一次安全更新，建议尽快更新。',
+      download: '前往下载',
+      // 从测试版切回稳定版时会看到。不说清楚的话，用户会以为切换没生效。
+      aheadOfChannel: '你手上这份比该通道上的版本还新，会一直停在这里，直到通道追上来。',
+      needsFullDownload: '这一版不能从当前版本直接更新，请下载完整的安装包。',
+      noBuild: '这个平台还没有可用的构建。',
+      automatic: '自动检查',
+      automaticOn: '开启',
+      automaticOff: '关闭',
+      channelStable: '稳定版',
+      channelBeta: '测试版',
+    },
     license: '本软件为自由软件，依 GNU 通用公共许可证第 3 版或更新版本发布。',
     licenseFork: '修改版不得沿用 Fern 的名称、字标与图标。',
     notOfficial:

@@ -1132,7 +1132,7 @@ dependencies = [
 
 [[package]]
 name = "fern-core"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "fern-download"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "fern-meta",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "fern-meta"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "regex",
  "serde",

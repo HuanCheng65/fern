@@ -5,7 +5,46 @@ fn main() {
     println!("cargo:rustc-env=FERN_BUILD_DATE={}", today());
     // 换了提交要重新生成，否则显示的还是上一次的哈希。
     println!("cargo:rerun-if-changed=../../.git/HEAD");
+    the_two_version_numbers_must_agree();
     tauri_build::build()
+}
+
+/// `tauri.conf.json` 的 `version` 必须和这个 crate 的版本一字不差。
+///
+/// 这两个数字**不是同一个来源**，而且用它们的是两个不同的人：
+///
+/// - 关于页显示 `CARGO_PKG_VERSION`（见 `lib.rs` 的 `about`）。
+/// - 自更新拿 `PackageInfo::version` 和服务器上的清单比大小，而 tauri-codegen
+///   的逻辑是「`config.version` 有值就用它，没值才回落到 `CARGO_PKG_VERSION`」。
+///
+/// 所以发版时漏改一处，症状是**关于页显示 0.2.0，更新器却以为自己还是 0.1.0，
+/// 于是每次检查都提示同一个更新，装完还提示**。这个 bug 没有任何测试会失败——
+/// 两个文件各自都是合法的，只是不相等。只能在这里当场停下。
+///
+/// 反过来问过一次「那把 `version` 从 `tauri.conf.json` 里删掉不就只剩一个了」：
+/// 不行。`tauri-build` 只在 `config.version` 有值时才写 Windows 的版本资源，
+/// 删掉之后 exe 的「属性 → 详细信息」里一片空白，而一个没有版本资源的未签名
+/// exe 在杀软眼里更可疑。
+fn the_two_version_numbers_must_agree() {
+    println!("cargo:rerun-if-changed=tauri.conf.json");
+
+    let crate_version = env!("CARGO_PKG_VERSION");
+    let config = std::fs::read_to_string("tauri.conf.json").expect("读不到 tauri.conf.json");
+    let config: serde_json::Value =
+        serde_json::from_str(&config).expect("tauri.conf.json 不是合法 JSON");
+
+    let Some(config_version) = config.get("version").and_then(|value| value.as_str()) else {
+        panic!(
+            "tauri.conf.json 没有 version 字段。它必须写成 \"{crate_version}\"——\
+             缺了它 Windows 的 exe 不会带版本资源。"
+        );
+    };
+
+    assert_eq!(
+        config_version, crate_version,
+        "版本号对不上：tauri.conf.json 是 {config_version}，Cargo.toml 是 {crate_version}。\
+         两处都要改成同一个值，见 docs/fern-update-design.md 的版本号一节。"
+    );
 }
 
 /// 当前提交的短哈希。源码包里没有 `.git`，那时候留空而不是让构建失败。

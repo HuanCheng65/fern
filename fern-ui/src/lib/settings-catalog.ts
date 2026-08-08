@@ -155,6 +155,18 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     keywords: 'diagnostics report bug 诊断 反馈 报错 版本 系统',
     stack: true,
   },
+  {
+    id: 'about/update',
+    label: '检查更新',
+    keywords: 'update upgrade 更新 升级 新版本 检查',
+    stack: true,
+  },
+  {
+    id: 'about/channel',
+    label: '更新通道',
+    note: '测试版能早点拿到新功能，也更容易遇到问题。',
+    keywords: 'channel beta stable 通道 测试版 稳定版 内测',
+  },
   { id: 'about/links', label: '源码与反馈', keywords: 'github source issue 源码 仓库 反馈 开源' },
   {
     id: 'about/legal',

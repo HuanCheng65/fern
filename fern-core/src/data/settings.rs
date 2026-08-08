@@ -94,6 +94,31 @@ pub struct JavaSettings {
     pub extra_paths: Vec<std::path::PathBuf>,
 }
 
+/// 自更新。
+///
+/// `bucket` 不是用户设置的东西，但它存在这里而不是另起一个文件：设置文件本来就是
+/// 「用户看得见、能备份、能贴给别人」的那一份，而灰度分桶恰恰是最该经得起被看见的
+/// 数据之一——它从不上传（见 `update::draw_bucket`），摆在这里比藏起来更有说服力。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UpdateSettings {
+    pub channel: crate::update::Channel,
+    /// 自动检查更新。关掉之后一个请求都不发。
+    pub automatic: bool,
+    /// 灰度分桶，0–99。第一次检查时抽一次，此后不变。
+    pub bucket: Option<u8>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            channel: crate::update::Channel::default(),
+            automatic: true,
+            bucket: None,
+        }
+    }
+}
+
 /// 一个实例最终生效的那份。
 ///
 /// 三层：实例说了算 → 全局默认 → 内置默认。求值只在这里做一次，`launch` 和
@@ -143,6 +168,7 @@ pub struct Settings {
     /// 所有实例的起点。实例设置只写它要偏离的那几项。
     pub game: GameDefaults,
     pub java: JavaSettings,
+    pub update: UpdateSettings,
     /// 首次启动向导走完过一次。
     pub setup_done: bool,
     /// 游戏窗口开出来之后把启动器收起来（文档 §5.4 末句）。
@@ -160,6 +186,7 @@ impl Default for Settings {
             download: DownloadSettings::default(),
             game: GameDefaults::default(),
             java: JavaSettings::default(),
+            update: UpdateSettings::default(),
             setup_done: false,
             minimize_on_launch: false,
         }

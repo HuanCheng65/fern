@@ -3,7 +3,11 @@ members = ["fern-meta", "fern-download", "fern-core"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+# **这不是 Fern 的版本号。** 产品版本只有一个来源：`fern-ui/src-tauri/Cargo.toml`
+# （见 docs/fern-update-design.md 的版本号一节）。这几个库不发布到 crates.io，
+# 也没有外部使用者，它们的版本号没有任何人会读——留一个会跟着产品一起变的数字，
+# 只会让人以为「fern-core 0.3.1」和「Fern 0.3.1」是一回事，然后在发版时漏改。
+version = "0.0.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 rust-version = "1.97"
@@ -21,6 +25,9 @@ md-5 = "0.10.6"
 pearl-core = { git = "https://github.com/HuanCheng65/pearl.git", rev = "15b47647b02f55bcd07365bf90a73256ea825e3a" }
 reqwest = { version = "0.12.22", default-features = false, features = ["json", "rustls-tls"] }
 regex = "1.11.1"
+# 版本号要能被反序列化（清单里是字符串），也要能按 SemVer 的规则比大小——
+# 预发布版小于同号正式版这一条，是通道之间不需要额外逻辑的全部原因。
+semver = { version = "1.0.28", features = ["serde"] }
 sha1 = "0.10.6"
 sha2 = "0.10.9"
 tar = "0.4"

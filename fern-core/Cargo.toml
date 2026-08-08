@@ -18,6 +18,7 @@ keyring.workspace = true
 md-5.workspace = true
 pearl-core.workspace = true
 reqwest.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true

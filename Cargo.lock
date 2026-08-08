@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "fern-core"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -441,6 +441,7 @@ dependencies = [
  "pearl-core",
  "regex",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "sha1",
@@ -454,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "fern-download"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "fern-meta",
@@ -466,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "fern-meta"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "regex",
  "serde",
@@ -1802,6 +1803,10 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
+]
 
 [[package]]
 name = "serde"

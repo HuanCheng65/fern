@@ -37,6 +37,7 @@
   import { palette } from 'fern-kit/palette'
   import './lib/places.svelte'
   import { prefs } from './lib/prefs.svelte'
+  import { updates } from './lib/update.svelte'
   import { supply } from './lib/supply.svelte'
   import { theme } from './lib/theme.svelte'
   import { session } from './lib/pearl-session.svelte'
@@ -103,9 +104,13 @@
     // 无边框时顶栏要给右上角的窗口按钮让出位置，用一个变量统一控制。
     document.body.classList.toggle('frameless', frameless())
     const disconnectNav = nav.connect()
+    // 检查更新排在最后启动，而且自己还要再等三十秒——启动那一刻的网络该留给
+    // 补全和元数据。用户等的是游戏，不是更新提示。
+    const stopUpdateChecks = updates.watch()
     void hydrate().then(async (doc) => {
       theme.hydrate()
       prefs.hydrate()
+      updates.hydrate()
       setupOpen = !prefs.setupDone
       ready = true
       // 0.1.0 的玩家名住在 localStorage 里，hydrate 才刚把它搬进 settings.json
@@ -132,6 +137,7 @@
     document.addEventListener('visibilitychange', resync)
     return () => {
       disconnectNav()
+      stopUpdateChecks()
       document.removeEventListener('visibilitychange', resync)
       window.removeEventListener('keydown', onKeydown)
       window.removeEventListener('blur', saveNow)

@@ -21,9 +21,24 @@ export interface SettingsDoc {
   download: { source: string }
   /** 所有实例的起点。实例设置只写它要偏离的那几项。 */
   game: GameDefaults
+  update: UpdateDoc
   setupDone: boolean
   /** 游戏窗口开出来之后把启动器收起来。 */
   minimizeOnLaunch: boolean
+}
+
+export interface UpdateDoc {
+  channel: 'stable' | 'beta'
+  /** 自动检查更新。关掉之后一个请求都不发。 */
+  automatic: boolean
+  /**
+   * 灰度分桶，0–99。
+   *
+   * **界面不生成也不修改它**——后端第一次检查更新时抽一次就固定下来。放在这里
+   * 只是因为它和其余设置一样该是用户看得见的（它从不上传）。改这一段设置时
+   * 记得合并而不是整段覆盖，否则每改一次通道就换一次分桶。
+   */
+  bucket: number | null
 }
 
 export interface GameDefaults {
@@ -50,6 +65,7 @@ export const emptyDoc = (): SettingsDoc => ({
   account: { kind: 'offline', playerName: '' },
   download: { source: 'official' },
   game: emptyGameDefaults(),
+  update: { channel: 'stable', automatic: true, bucket: null },
   setupDone: false,
   minimizeOnLaunch: false,
 })

@@ -206,6 +206,24 @@ struct About {
     webview: String,
 }
 
+/// 这个通道上有没有更新。
+///
+/// 版本号取 `package_info()`，**不是** `CARGO_PKG_VERSION`——虽然 build.rs 强制
+/// 两者相等（见那里的 `the_two_version_numbers_must_agree`），但拿去比大小的
+/// 应该是自更新真正认的那一个，而不是碰巧相等的另一个。
+///
+/// 现在只回答「有没有」。下载和落盘是下一步的事（见 docs/fern-update-design.md §9），
+/// 所以这一步没有引入更新器插件——P0 一个新插件都不需要。
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<fern_core::UpdateDecision, String> {
+    let version = app.package_info().version.to_string();
+    // 不进 off_thread：这里的磁盘动作只是读一份几 KB 的 settings.json，
+    // 真正花时间的是后面那一次网络请求，而它本来就是异步的。
+    fern_core::check_for_update(&paths()?, &version)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
 #[tauri::command]
 fn data_paths() -> Result<DataLocation, String> {
     // 纯算路径，不碰磁盘，留在主线程上。
@@ -1253,6 +1271,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_name,
             about,
+            check_update,
             data_paths,
             list_instances,
             list_versions,
