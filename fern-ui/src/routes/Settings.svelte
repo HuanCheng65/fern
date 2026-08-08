@@ -29,6 +29,7 @@
   import AccountProfile from '../components/AccountProfile.svelte'
   import AddAccount from '../components/AddAccount.svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
+  import AboutHero from '../components/AboutHero.svelte'
   import SettingRow from '../components/SettingRow.svelte'
   import Choice from '../components/Choice.svelte'
   import Form from '../layouts/Form.svelte'
@@ -698,15 +699,14 @@
           </SettingRow>
           {#if pathError}<div class="alert">{pathError}</div>{/if}
         {:else}
-          <SettingRow id="about/version" found={focused === 'about/version'}>
-            <div class="identity">
-              <p class="t-mono value">Fern {about.version || '—'}</p>
-              <p class="t-quiet build t-mono">
-                {about.commit ? `${ui.about.build} ${about.commit} · ${about.built}` : ui.about.unknownBuild}
-              </p>
-              <p class="t-quiet build">{ui.about.tagline} {ui.about.author}</p>
-            </div>
-          </SettingRow>
+          <!--
+            这一块不走 SettingRow：那一行是「一个名字，一个控件」，而这里没有
+            控件，讲的是这个产品是什么。`data-setting` 保留着，命令面板还能直接
+            跳到它。
+          -->
+          <div class="hero-slot" data-setting="about/version" class:found={focused === 'about/version'}>
+            <AboutHero version={about.version} commit={about.commit} built={about.built} />
+          </div>
 
           <SettingRow id="about/diagnostics" found={focused === 'about/diagnostics'}>
             <pre class="t-mono report selectable">{report}</pre>
@@ -928,17 +928,24 @@
     gap: var(--s4);
   }
 
-  .identity {
-    display: grid;
-    gap: 2px;
+  /* 顶上那一块要整幅铺开，所以它不在行的栅格里。 */
+  .hero-slot {
+    margin: var(--s2) 0 var(--s5);
+    border-radius: var(--r2);
   }
 
-  .identity p {
-    margin: 0;
+  .hero-slot.found {
+    animation: found-block 2.4s var(--ease) forwards;
   }
 
-  .build {
-    font-size: var(--t-small);
+  @keyframes found-block {
+    0%,
+    55% {
+      box-shadow: 0 0 0 2px var(--accent);
+    }
+    100% {
+      box-shadow: 0 0 0 2px transparent;
+    }
   }
 
   /* 一段能整段选中、整段复制的文本。等宽是因为它要贴到 issue 里去。 */
@@ -974,10 +981,6 @@
 
   .open {
     justify-self: start;
-  }
-
-  .value {
-    color: var(--ink-3);
   }
 
   .err {
