@@ -34,6 +34,7 @@ export const BACKEND_MESSAGES = [
   'preflight.missing-dependency',
   'preflight.no-loader',
   'preflight.wrong-game-version',
+  'preflight.wrong-java',
   'preflight.wrong-loader',
   'snapshot.after-session',
   'snapshot.before-launch',

@@ -59,15 +59,18 @@ pub mod kind {
     pub const MISSING_DEPENDENCY: &str = "missing-dependency";
     /// 前置装了，但被关掉了。
     pub const DISABLED_DEPENDENCY: &str = "disabled-dependency";
+    /// 模组要求的 Java 大版本，不是这个实例会用的那个。
+    pub const WRONG_JAVA: &str = "wrong-java";
 
     /// 全部取值。界面那边的文案表按它对齐。
-    pub const ALL: [&str; 6] = [
+    pub const ALL: [&str; 7] = [
         NO_LOADER,
         DUPLICATE,
         WRONG_LOADER,
         WRONG_GAME_VERSION,
         MISSING_DEPENDENCY,
         DISABLED_DEPENDENCY,
+        WRONG_JAVA,
     ];
 }
 
@@ -91,14 +94,38 @@ pub enum Severity {
 pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
     let scoped = crate::instance::paths_for(paths, profile);
     let jars = jar::read_all(&jar::directory(&scoped, profile.id.as_str()));
-    inspect(&jars, profile.loader, &profile.game_version)
+    inspect(
+        &jars,
+        profile.loader,
+        &profile.game_version,
+        java_major(paths, profile),
+    )
+}
+
+/// 这个实例点下去会用哪个大版本的 Java。
+///
+/// 和启动走同一条路（`resolve_java_runtime`），否则预检查说的是一回事、真跑起来
+/// 用的是另一份 Java。挑不出来时返回 `None`——那时该说的话是「没有可用的 Java」，
+/// 那是启动自己会报的错，不该在这里变成一条关于某个模组的警告。
+fn java_major(paths: &DataPaths, profile: &InstanceProfile) -> Option<u16> {
+    // 元数据里声明的大版本这里拿不到（那要读版本文件），只按游戏版本推。推出来的
+    // 是下界，而下界正是挑运行时用的东西。
+    let requirement = crate::java::requirement(&profile.game_version, profile.loader, None);
+    super::resolve_java_runtime(paths, profile, &requirement)
+        .ok()
+        .map(|runtime| runtime.major)
 }
 
 /// 纯函数那一半：给定这些 jar 和这个上下文，有什么话要说。
 ///
 /// 和磁盘分开，于是它能对着构造出来的元数据单独测——而这一层的价值全在判断上，
 /// 不在读文件上。
-pub fn inspect(jars: &[ModJar], loader: LoaderKind, minecraft: &str) -> Vec<Finding> {
+pub fn inspect(
+    jars: &[ModJar],
+    loader: LoaderKind,
+    minecraft: &str,
+    java_major: Option<u16>,
+) -> Vec<Finding> {
     let mut findings = Vec::new();
     let enabled: Vec<&ModJar> = jars.iter().filter(|jar| jar.enabled).collect();
     if enabled.is_empty() {
@@ -121,6 +148,7 @@ pub fn inspect(jars: &[ModJar], loader: LoaderKind, minecraft: &str) -> Vec<Find
     findings.extend(wrong_loader(&enabled, loader));
     findings.extend(wrong_game_version(&enabled, minecraft));
     findings.extend(missing_dependencies(jars, &enabled, loader));
+    findings.extend(wrong_java(&enabled, java_major));
     findings.sort_by_key(|finding| finding.severity);
     findings
 }
@@ -258,13 +286,75 @@ fn missing_dependencies(all: &[ModJar], enabled: &[&ModJar], loader: LoaderKind)
     findings
 }
 
+/// 模组要求的 Java 大版本，和这个实例会用的那个对不上。
+///
+/// 加载器把 Java 当成一个版本号等于 `java.specification.version` 的内置模组，
+/// 所以 `depends: { "java": ">=22" }` 是一条真的会让它拒绝启动的约束，而它和
+/// 「这个游戏版本需要 Java 几」是两回事——后者由启动时的 requirement 管。
+///
+/// 同一个大版本只说一次：十个模组要求 Java 22，要做的仍然只有一件事。
+fn wrong_java(enabled: &[&ModJar], java_major: Option<u16>) -> Vec<Finding> {
+    let Some(current) = java_major else {
+        return Vec::new();
+    };
+    let running = current.to_string();
+    let mut findings = Vec::new();
+    let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for jar in enabled {
+        for dependency in &jar.depends {
+            if !dependency.required
+                || dependency.mod_id != "java"
+                || ranges::satisfies(&dependency.range, &running)
+            {
+                continue;
+            }
+            if !reported.insert(dependency.range.clone()) {
+                continue;
+            }
+            findings.push(Finding {
+                id: format!("{}:{}", kind::WRONG_JAVA, dependency.range),
+                kind: kind::WRONG_JAVA.to_owned(),
+                severity: Severity::Blocking,
+                args: args([
+                    ("mod", jar.name.clone()),
+                    ("range", dependency.range.clone()),
+                    ("java", running.clone()),
+                ]),
+                // 区间读不出一个大版本时不给按钮：一个点了会跳到错误版本的
+                // 「换 Java」比没有这颗按钮更糟。
+                action: wanted_major(&dependency.range).map(|major| Action::UseJava { major }),
+            });
+        }
+    }
+    findings.sort_by(|left, right| left.id.cmp(&right.id));
+    findings
+}
+
+/// 区间里那个大版本：`>=22` 与 `[17,)` 都是 17/22，`>=1.8` 是 8。
+///
+/// 只取区间里第一个数字。它可能是下界（`>=22`）也可能是上界（`<=17`），但两种
+/// 情况下要换的都正是这个版本。
+fn wanted_major(range: &str) -> Option<u16> {
+    let start = range.find(|c: char| c.is_ascii_digit())?;
+    let token: String = range[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let token = token.strip_prefix("1.").unwrap_or(token.as_str());
+    token.split('.').next()?.parse().ok()
+}
+
 /// 缺了这个 id，实际要装的是哪个模组。
 ///
 /// 只有一条规则，因为只有一处名实不符：Fabric API 的模块 id 长成
 /// `fabric-<名字>-v<数字>`（外加一个 `fabric-api-base`），它们没有一个是能单独
 /// 下载的东西，全都在 `fabric-api` 这一个 jar 里。`fabric-language-kotlin` 这类
 /// 真的独立模组不带 `-v<数字>` 结尾，落不进这条规则。
-fn supplier(mod_id: &str) -> &str {
+///
+/// 崩溃诊断那边绑定 `install-mod` 时也走这一条（`crash::rules::bind`）：日志里
+/// 点名的同样是模块 id，而「实际要装什么」是一件关于世界的事实，不该在两处
+/// 各写一份。
+pub(crate) fn supplier(mod_id: &str) -> &str {
     if mod_id == "fabric-api-base" {
         return "fabric-api";
     }
@@ -276,14 +366,19 @@ fn supplier(mod_id: &str) -> &str {
 }
 
 /// 加载器自带的那些 id。模组会把它们写进 depends，但它们不是 mods 里的文件。
+///
+/// **`fabric` 不在这里面。** 它是 Fabric API 自己的 id（新版写成 `fabric-api`
+/// 加一条 `provides: ["fabric"]`），不是加载器提供的——fabric-loader 注册的内置
+/// 模组只有 `minecraft`、`java`、`fabricloader` 三个。把它当成自带，等于让所有
+/// 写 `depends: fabric` 的模组永远报不出缺前置，而那是最常见的一种缺前置。
+///
+/// `java` 留在这里：它永远存在，只可能版本不对，那件事由 [`wrong_java`] 说。
 fn builtin(loader: LoaderKind) -> Vec<String> {
     let mut names = vec!["minecraft".to_owned(), "java".to_owned()];
     names.extend(
         match loader {
-            LoaderKind::Fabric => ["fabricloader", "fabric-loader", "fabric"].as_slice(),
-            LoaderKind::Quilt => {
-                ["quilt_loader", "quilt_base", "fabricloader", "fabric"].as_slice()
-            }
+            LoaderKind::Fabric => ["fabricloader", "fabric-loader"].as_slice(),
+            LoaderKind::Quilt => ["quilt_loader", "quilt_base", "fabricloader"].as_slice(),
             LoaderKind::Forge => ["forge", "fml"].as_slice(),
             LoaderKind::NeoForge => ["neoforge", "forge", "fml"].as_slice(),
             LoaderKind::Vanilla => [].as_slice(),
@@ -340,7 +435,7 @@ mod tests {
             "fabric-api",
             "*",
         )];
-        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1");
+        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1", None);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY);
         assert_eq!(findings[0].args["dependency"], "fabric-api");
@@ -361,7 +456,7 @@ mod tests {
             "*",
         );
         sodium = needs(sodium, "fabricloader", ">=0.15");
-        assert!(inspect(&[sodium], LoaderKind::Fabric, "1.21.1").is_empty());
+        assert!(inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None).is_empty());
     }
 
     /// 装了但被关掉了，该说的是「打开它」，不是「去下一份」。
@@ -378,10 +473,70 @@ mod tests {
             ),
             api,
         ];
-        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1");
+        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1", None);
         assert_eq!(findings[0].id, "disabled-dependency:fabric-api");
         assert_eq!(findings[0].kind, kind::DISABLED_DEPENDENCY);
         assert!(findings[0].action.is_none());
+    }
+
+    /// `fabric` 是 Fabric API 的 id，不是加载器给的。
+    ///
+    /// 真实的日志里，Fabric 自己说的是「模组 'Common Network' 需要 fabric 的
+    /// 任意版本，但没有安装它」——把它当成自带，这条就永远报不出来。
+    #[test]
+    fn depending_on_fabric_api_by_its_bare_id_is_still_a_missing_dependency() {
+        let jars = vec![needs(
+            jar("Common Network", "commonnetworking", LoaderKind::Fabric),
+            "fabric",
+            "*",
+        )];
+        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.1", None);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY);
+        assert_eq!(findings[0].args["dependency"], "fabric");
+    }
+
+    /// 装着的 Fabric API 顶得上 `fabric`——`provides` 就是干这个的。
+    #[test]
+    fn an_installed_fabric_api_supplies_the_bare_id() {
+        let mut api = jar("Fabric API", "fabric-api", LoaderKind::Fabric);
+        api.provides = vec!["fabric".to_owned()];
+        let jars = vec![
+            needs(
+                jar("Common Network", "commonnetworking", LoaderKind::Fabric),
+                "fabric",
+                "*",
+            ),
+            api,
+        ];
+        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1", None).is_empty());
+    }
+
+    /// 模组要的 Java 比这个实例会用的那份新。加载器会因此拒绝启动。
+    #[test]
+    fn a_mod_that_needs_a_newer_java_than_the_instance_will_use() {
+        let jars = vec![needs(
+            jar("C2ME", "c2me-opts-natives-math", LoaderKind::Fabric),
+            "java",
+            ">=22",
+        )];
+        let findings = inspect(&jars, LoaderKind::Fabric, "1.21.5", Some(21));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].kind, kind::WRONG_JAVA);
+        assert_eq!(findings[0].args["java"], "21");
+        assert_eq!(findings[0].action, Some(Action::UseJava { major: 22 }));
+
+        // 满足了就不说话，挑不出 Java 时也不说——那是另一回事。
+        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.5", Some(22)).is_empty());
+        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.5", None).is_empty());
+    }
+
+    #[test]
+    fn the_wanted_java_major_comes_out_of_either_kind_of_bound() {
+        assert_eq!(wanted_major(">=22"), Some(22));
+        assert_eq!(wanted_major("[17,)"), Some(17));
+        assert_eq!(wanted_major(">=1.8"), Some(8));
+        assert_eq!(wanted_major("*"), None);
     }
 
     #[test]
@@ -392,6 +547,7 @@ mod tests {
             &[jar("Sodium", "sodium", LoaderKind::Fabric), second],
             LoaderKind::Fabric,
             "1.21.1",
+            None,
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::DUPLICATE);
@@ -404,6 +560,7 @@ mod tests {
             &[jar("Sodium", "sodium", LoaderKind::Fabric)],
             LoaderKind::NeoForge,
             "1.21.1",
+            None,
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::WRONG_LOADER);
@@ -413,7 +570,8 @@ mod tests {
             inspect(
                 &[jar("Sodium", "sodium", LoaderKind::Fabric)],
                 LoaderKind::Quilt,
-                "1.21.1"
+                "1.21.1",
+                None
             )
             .is_empty()
         );
@@ -427,7 +585,7 @@ mod tests {
             range: "1.20.x".to_owned(),
             required: true,
         });
-        let findings = inspect(&[sodium], LoaderKind::Fabric, "1.21.1");
+        let findings = inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Warning);
     }
@@ -441,7 +599,7 @@ mod tests {
             range: "谁知道这是什么".to_owned(),
             required: true,
         });
-        assert!(inspect(&[sodium], LoaderKind::Fabric, "1.21.1").is_empty());
+        assert!(inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None).is_empty());
     }
 
     #[test]
@@ -450,6 +608,7 @@ mod tests {
             &[jar("Sodium", "sodium", LoaderKind::Fabric)],
             LoaderKind::Vanilla,
             "1.21.1",
+            None,
         );
         assert_eq!(findings[0].kind, kind::NO_LOADER);
     }
@@ -472,7 +631,7 @@ mod tests {
             ),
             api,
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1").is_empty());
+        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1", None).is_empty());
     }
 
     /// 没装的时候要说的是「装 Fabric API」，而且只说一次——十个模块缺了，
@@ -489,7 +648,7 @@ mod tests {
         // 名字里带 fabric- 的独立模组不该被并进去。
         sodium = needs(sodium, "fabric-language-kotlin", "*");
 
-        let findings = inspect(&[sodium], LoaderKind::Fabric, "1.21.1");
+        let findings = inspect(&[sodium], LoaderKind::Fabric, "1.21.1", None);
         let missing: Vec<&str> = findings
             .iter()
             .map(|finding| finding.args["dependency"].as_str())
@@ -513,6 +672,6 @@ mod tests {
             ),
             jar("Fabric API", "fabric-api", LoaderKind::Fabric),
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1").is_empty());
+        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1", None).is_empty());
     }
 }
