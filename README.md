@@ -33,18 +33,24 @@ Backup, snapshots and export are designed in
 [docs/fern-backup-design.md](docs/fern-backup-design.md).
 Conventions and hard-won gotchas are in [AGENTS.md](AGENTS.md).
 
-## CI packages
+## CI
 
-The `Check and package` workflow runs for `main`, pull requests, version tags,
-and manual dispatches. Successful package jobs upload two GitHub Actions
-artifacts:
+Two workflows, split by what they are for.
+
+`Check and package` runs for `main`, pull requests and manual dispatches. It
+answers "does this commit still build", and uploads three GitHub Actions
+artifacts for anyone who wants to try a build:
 
 - `Fern-Linux-x64`: `.deb` and `.AppImage` packages.
 - `Fern-Windows-x64-portable`: a portable `fern-ui.exe` desktop binary.
 - `Fern-macOS-universal`: universal Apple Silicon/Intel `.app` and `.dmg` packages.
 
-Create a `v*` tag for a versioned package run, or start the workflow from the
-Actions page while iterating on a branch.
+`Release` runs for `v*` tags. It signs the artifacts with the updater key,
+uploads them to R2, and points the channel's `manifest.json` at the new
+version — `v0.2.0` goes to `stable`, `v0.2.0-beta.1` to `beta`. The tag must
+match the version in `fern-ui/src-tauri/Cargo.toml` or the run stops before
+building anything. What it needs configured, and why each piece is shaped the
+way it is, is in [docs/fern-update-design.md](docs/fern-update-design.md).
 
 ## License
 

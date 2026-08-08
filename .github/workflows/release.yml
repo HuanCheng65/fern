@@ -131,11 +131,14 @@ jobs:
         with:
           version: 10.12.4
 
+      # 锁文件在工作区根，不在 fern-ui 里（fern-ui / fern-site / fern-kit 三个包共用
+      # 一份，见 pnpm-workspace.yaml）。装依赖也必须在根跑：fern-ui 现在 import
+      # fern-kit，那条链接是 pnpm 在工作区范围内建的。
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: fern-ui/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -156,7 +159,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: fern-ui
 
       # `createUpdaterArtifacts` 用命令行覆盖，不写进 tauri.conf.json：写进去的话
       # 每一次普通构建都会要求私钥在环境里，而 package.yml 跑在每个 PR 上。

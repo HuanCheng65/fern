@@ -1,9 +1,10 @@
 name: Check and package
 
+# tag 不在这里触发：`release.yml` 会为同一个提交跑一遍三平台构建，
+# 两条都跑就是把同样的活干两遍。这一条只管「每次提交都能编过」。
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -26,11 +27,14 @@ jobs:
         with:
           version: 10.12.4
 
+      # 锁文件在工作区根，不在 fern-ui 里（fern-ui / fern-site / fern-kit 三个包共用
+      # 一份，见 pnpm-workspace.yaml）。装依赖也必须在根跑：fern-ui 现在 import
+      # fern-kit，那条链接是 pnpm 在工作区范围内建的。
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: fern-ui/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -48,7 +52,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: fern-ui
 
       - name: Check frontend
         run: pnpm check
@@ -116,7 +119,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: fern-ui/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       # Tauri 在 Linux 上要 WebKitGTK 一整套；libdbus-1-dev 是 keyring 要的。
       # 其余平台的钥匙串走系统原生 API，不需要额外的包。
@@ -139,7 +142,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-        working-directory: fern-ui
 
       - name: Build desktop package
         run: pnpm tauri build ${{ matrix.build_args }}
