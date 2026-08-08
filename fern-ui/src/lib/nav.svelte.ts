@@ -199,7 +199,16 @@ class NavStore {
     return true
   }
 
-  dismiss() {
+  /**
+   * 收掉浮层。
+   *
+   * 带上 `which` 就是「收掉我这一层」：只有它还开着的时候才收。命令面板需要
+   * 这个——它执行的动作有一半是 `show('settings', …)` 这样把人送到另一个浮层
+   * 去的，而面板紧接着要关掉自己。无条件清空的话，刚打开的设置会在同一帧里
+   * 被关掉，表现出来就是「面板里搜到的设置项点了没反应」。
+   */
+  dismiss(which?: OverlayId) {
+    if (which && this.overlay !== which) return
     this.overlay = ''
     this.focus = ''
   }

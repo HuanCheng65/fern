@@ -218,7 +218,8 @@
   <Notices />
 
   {#if nav.overlay === 'palette'}
-    <CommandPalette onclose={() => nav.dismiss()} />
+    <!-- 只收面板自己：它执行的动作可能已经把人送到设置或日志去了。 -->
+    <CommandPalette onclose={() => nav.dismiss('palette')} />
   {/if}
 
   <!-- 崩溃报告压在所有浮层之上：它是用户此刻唯一需要处理的事。 -->
