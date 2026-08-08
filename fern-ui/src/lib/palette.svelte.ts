@@ -414,8 +414,16 @@ function recalled(query: string): Map<string, number> {
 /** 用过的东西往上抬多少；在这串字下面选过的，抬得更多。 */
 const HABIT = 0.3
 const RECALL = 0.5
-/** 抬到头为止。学得再久也不该让一个半像的东西压过一个正打中的。 */
-const RECALL_CAP = 2
+
+/**
+ * 抬到头为止：2.5 倍。
+ *
+ * 次数是对数增长的，但没有上限——选够几十次，一个半像的东西能被抬过一个正
+ * 打中的。所以给学习画一条线：**你打的字就是一个东西的全名时，它永远是第一
+ * 行。** 满分是 1，0.4 以下的匹配再学也够不到，0.4 以上的仍然抬得动——学习
+ * 在候选之间排序，不改写「这就是它」。
+ */
+const LIFT_CAP = 2.5
 
 /**
  * 习惯是**乘**上去的，不是加上去的。
@@ -426,11 +434,14 @@ const RECALL_CAP = 2
  * 在势均力敌时胜出，但救不回一个不像的。
  */
 const lift = (key: string, memory: Map<string, number>, seen?: number) =>
-  1 +
-  // 取大者而不是相加：面板里选过它和真的玩过它，说的是同一件事，记两遍就把
-  // 常用的东西抬了两次。
-  HABIT * Math.max(weight(key), fresh(seen)) +
-  RECALL * Math.min(memory.get(key) ?? 0, RECALL_CAP)
+  Math.min(
+    1 +
+      // 取大者而不是相加：面板里选过它和真的玩过它，说的是同一件事，记两遍
+      // 就把常用的东西抬了两次。
+      HABIT * Math.max(weight(key), fresh(seen)) +
+      RECALL * (memory.get(key) ?? 0),
+    LIFT_CAP,
+  )
 
 /** 上次真的用到它是多久以前。同一条半衰期，这样它和面板里的习惯可比。 */
 function fresh(seen: number | undefined): number {

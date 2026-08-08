@@ -236,8 +236,8 @@ provides(() =>
       title: item.name,
       hint: `${item.gameVersion} · ${item.loader}`,
       seed: item.cover,
-      // 玩过的时间就是面板要的那个先验：不必等它从零学起。
-      seen: item.lastPlayed,
+      // 玩过的时间就是面板要的那个先验：不必等它从零学起。核心那边记的是秒。
+      seen: item.lastPlayed === undefined ? undefined : item.lastPlayed * 1000,
       run: () => {
         instances.select(item.id)
         nav.go('launch')
