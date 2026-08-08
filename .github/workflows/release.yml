@@ -259,11 +259,15 @@ jobs:
       - name: Write the manifest
         run: |
           set -euo pipefail
+          # 正式版必须有更新日志，测试版不强求：beta 常常一天几个，
+          # 逼着每次都写一遍不现实；而一个没有更新日志的正式版是发错了。
+          require=""
+          [ "$CHANNEL" = "stable" ] && require="--require-notes"
           python3 .github/build-manifest.py \
             --version "$VERSION" \
             --base-url "$BASE_URL" \
             --files out \
-            --out out/manifest.json
+            --out out/manifest.json $require
           cat out/manifest.json
 
       # 版本目录先传，清单最后传。顺序反过来的话，会有一段时间清单指向还不存在的

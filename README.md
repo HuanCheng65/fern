@@ -45,6 +45,15 @@ artifacts for anyone who wants to try a build:
 - `Fern-Windows-x64-portable`: a portable `fern-ui.exe` desktop binary.
 - `Fern-macOS-universal`: universal Apple Silicon/Intel `.app` and `.dmg` packages.
 
+Cutting a release is one command. It closes the changelog's unreleased
+section, writes the version to every file that holds one, commits and tags:
+
+```bash
+.github/draft-changelog.py     # gather Release-Note trailers, then read it
+.github/release.py 0.2.0       # or 0.2.0-beta.1
+git push origin main --follow-tags
+```
+
 `Release` runs for `v*` tags. It signs the artifacts with the updater key,
 uploads them to R2, and points the channel's `manifest.json` at the new
 version — `v0.2.0` goes to `stable`, `v0.2.0-beta.1` to `beta`. The tag must

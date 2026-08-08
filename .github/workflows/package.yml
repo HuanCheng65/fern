@@ -21,7 +21,10 @@ jobs:
     name: Quality checks
     runs-on: ubuntu-latest
     steps:
+      # 校验 Release-Note 要能看到这一批提交，默认的浅克隆看不到。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -77,6 +80,22 @@ jobs:
       # 不必等十几分钟的打包任务。
       - name: Check dependency resolution across platforms
         run: python3 .github/check-platform-deps.py
+
+      # 更新日志是界面的一部分（进更新清单的 notes），所以它的写法值得在这里挡。
+      # 只查机器查得动的：一提交最多一条、类型对不对、句号、长度、有没有空话。
+      - name: Check release notes
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          # 首次推送、强推、以及浅克隆的情况下 before 可能不是一个能用的提交。
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          fi
+          if [ -z "$base" ]; then
+            echo "找不到比较基准，跳过。"
+            exit 0
+          fi
+          python3 .github/check-release-notes.py "$base..HEAD
 
   package:
     name: Package ${{ matrix.name }}

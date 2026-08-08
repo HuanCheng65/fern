@@ -73,6 +73,12 @@ def main() -> int:
     )
     parser.add_argument("--notes", default=None, help="直接给一段文字，覆盖 --changelog。")
     parser.add_argument(
+        "--require-notes",
+        action="store_true",
+        help="没有更新日志就失败。正式版发布时应当打开——一个没有更新日志的"
+        "正式版是发错了，而不是一次可以接受的疏漏。",
+    )
+    parser.add_argument(
         "--rollout",
         type=int,
         default=100,
@@ -112,6 +118,14 @@ def main() -> int:
         "platforms": platforms,
     }
     notes = args.notes or notes_for(args.changelog, args.version)
+    if not notes and args.require_notes:
+        print(
+            f"{args.changelog} 里没有 ## {args.version} 这一节。\n"
+            "正式版必须有更新日志：用户会在设置的「关于」里读到它。\n"
+            "先跑 .github/draft-changelog.py 汇总提交里的 Release-Note。",
+            file=sys.stderr,
+        )
+        return 1
     if notes:
         manifest["notes"] = notes
     if args.min_version:
