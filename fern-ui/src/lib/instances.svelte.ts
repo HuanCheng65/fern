@@ -280,6 +280,17 @@ commands(() => [
     },
   },
   {
+    id: 'instance.snapshots',
+    title: '查看快照',
+    accepts: 'instance',
+    subject: current,
+    run: (subject) => {
+      if (!subject) return
+      nav.enter('instances', subject.id)
+      nav.setTab('snapshots')
+    },
+  },
+  {
     id: 'instance.create',
     title: '新建实例',
     accepts: 'none',

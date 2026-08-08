@@ -178,6 +178,13 @@ fn situate(paths: &DataPaths, instance_id: &str) -> Result<(InstanceProfile, Pat
     Ok((profile, directory))
 }
 
+/// 界面上要说的是实例的名字，不是它的 id——id 是给磁盘看的。
+fn display_name(paths: &DataPaths, instance_id: &str) -> String {
+    crate::read_instance(paths, instance_id)
+        .map(|profile| profile.name)
+        .unwrap_or_else(|_| instance_id.to_owned())
+}
+
 fn stamp(profile: &InstanceProfile) -> GameStamp {
     GameStamp {
         minecraft: profile.game_version.clone(),
@@ -201,7 +208,8 @@ pub fn take(
     let (profile, directory) = situate(paths, instance_id)?;
     if let Some(occupant) = running::occupant(&directory) {
         return Err(anyhow!(
-            "{occupant} 正在使用这个游戏目录，运行中拍到的存档是不完整的"
+            "{} 正在使用这个游戏目录，游戏运行时拍下的存档不完整",
+            display_name(paths, &occupant)
         ));
     }
 
@@ -335,7 +343,7 @@ fn allot(backups: &Path, instance: &str, taken_at: u64) -> Result<String> {
             return Ok(id);
         }
     }
-    Err(anyhow!("这一秒里已经有太多快照了"))
+    Err(anyhow!("一秒之内拍下的快照过多"))
 }
 
 fn latest_manifest(backups: &Path, instance: &str) -> Option<Manifest> {
@@ -416,7 +424,10 @@ pub fn restore(
 ) -> Result<Restored> {
     let (_, directory) = situate(paths, instance_id)?;
     if let Some(occupant) = running::occupant(&directory) {
-        return Err(anyhow!("{occupant} 正在使用这个游戏目录，请先退出游戏"));
+        return Err(anyhow!(
+            "{} 正在使用这个游戏目录，请先退出游戏",
+            display_name(paths, &occupant)
+        ));
     }
 
     let backups = root(paths);
@@ -431,7 +442,7 @@ pub fn restore(
             return Err(anyhow!("不能用作目录名：{name}"));
         }
         if directory.join("saves").join(name).exists() {
-            return Err(anyhow!("已经有一个叫「{name}」的世界了"));
+            return Err(anyhow!("已经有一个名为「{name}」的世界"));
         }
     }
 
@@ -455,13 +466,13 @@ pub fn restore(
         .iter()
         .any(|file| file.only_chunk().is_ok_and(|chunk| store.has(chunk)))
     {
-        return Err(anyhow!("这张快照的内容已经不在对象仓库里了，无法恢复"));
+        return Err(anyhow!("这张快照的内容已不在备份中，无法恢复"));
     }
 
     // 恢复本身也是一次不可逆操作，所以先替用户拍一张。拍不成就停下——
     // 没有退路的恢复不该开始。
     let safety = take(paths, instance_id, Reason::BeforeRestore, None)
-        .context("恢复之前先拍一张失败了，恢复没有开始")?;
+        .context("恢复前的快照没有拍成，恢复未开始")?;
 
     let sha1s: HashMap<&str, &str> = manifest
         .mods

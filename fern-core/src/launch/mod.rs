@@ -186,12 +186,10 @@ pub async fn launch_instance(
     // 原版。合并在 version 模块里做一次，补全和启动用的必须是同一份——两边
     // 各算各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
     let version_id = version::effective_id(&profile);
+    // 快照写在 Fern 自己的数据根下，所以要留一份没被实例作用域改写过的路径。
+    let launcher_paths = paths;
     // 外部实例的版本、库、游戏目录都在它自己的目录树里。这一句之后的每一个
     // `paths` 都是这个实例的那一套。
-    // 这一次启动之前该不该拍一张。兜住「上次退出时崩了没拍成」，所以判据是
-    // 距上一张有多久，不是每次启动都拍。放在游戏目录被占用的检查之前没有
-    // 意义——那种情况下拍到的是别人正在写的文件——所以留到下面。
-    let launcher_paths = paths;
     let scoped = crate::instance::paths_for(paths, &profile);
     let paths = &scoped;
     // 同一份游戏目录跑两个进程，两边写同一批存档，而且没有任何报错。挡在最
@@ -208,9 +206,11 @@ pub async fn launch_instance(
             )
         });
     }
+    // 距上一张太久了就补一张，兜住「上次退出时崩了没拍成」。放在占用检查之后：
+    // 别人正开着这个游戏目录的时候，拍到的是他正在写的文件。
     if crate::backup::due_before_launch(launcher_paths, instance_id) {
         // 第一次可能要读完整个存档，界面上不该是一段没有说明的停顿。
-        job.step("备份存档");
+        job.step("拍摄快照");
         crate::backup::quietly(
             launcher_paths,
             instance_id,

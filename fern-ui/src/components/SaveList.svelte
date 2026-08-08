@@ -9,10 +9,13 @@
    * 「新的世界」的存档在列表里长得一模一样反而认不出来。
    */
   import { invoke } from '@tauri-apps/api/core'
+  import { save as pickPath } from '@tauri-apps/plugin-dialog'
   import { FolderOpen } from 'lucide-svelte'
   import Loading from './Loading.svelte'
   import { inTauri } from '../lib/instances.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
+  import { notices } from '../lib/notices.svelte'
+  import { exportWorld, fileStem } from '../lib/backup'
 
   interface SaveEntry {
     name: string
@@ -22,9 +25,11 @@
 
   interface Props {
     instanceId: string
+    /** 只用来给导出的文件起个默认名。 */
+    instanceName?: string
   }
 
-  let { instanceId }: Props = $props()
+  let { instanceId, instanceName = '' }: Props = $props()
 
   let saves = $state<SaveEntry[]>([])
   let loading = $state(true)
@@ -53,6 +58,32 @@
     instanceId
     void load()
   })
+
+  /**
+   * 把一个世界打成 zip。
+   *
+   * 这个动作长在存档那一行上，而不是收进导出面板：分享的单位是「这一个世界」，
+   * 而人是先认出那个世界、再想把它发出去的。
+   */
+  let exporting = $state('')
+
+  async function shareWorld(name: string) {
+    const destination = await pickPath({
+      defaultPath: `${fileStem(name)}.zip`,
+      filters: [{ name: '压缩包', extensions: ['zip'] }],
+    })
+    if (!destination) return
+    exporting = name
+    try {
+      const result = await exportWorld(instanceId, name, destination)
+      error = ''
+      notices.say({ title: `已导出「${name}」`, detail: formatBytes(result.bytes) })
+    } catch (cause) {
+      error = String(cause)
+    } finally {
+      exporting = ''
+    }
+  }
 </script>
 
 <section class="saves">
@@ -80,6 +111,13 @@
           <span class="name">{item.name}</span>
           <span class="t-mono when">{day(item.modified)}</span>
           <span class="t-mono size">{formatBytes(item.bytes)}</span>
+          <button
+            class="btn btn--link share"
+            disabled={exporting !== ''}
+            onclick={() => void shareWorld(item.name)}
+          >
+            {exporting === item.name ? '导出中' : '导出'}
+          </button>
         </li>
       {/each}
     </ul>
@@ -152,6 +190,20 @@
   .size {
     width: 9ch;
     text-align: right;
+  }
+
+  /* 一行一个动作，平时收着——列表是用来认出那个世界的，不是一排按钮。 */
+  .share {
+    flex: none;
+    width: 4ch;
+    opacity: 0;
+    transition: opacity var(--t-fast) var(--ease);
+  }
+
+  .row:hover .share,
+  .share:focus-visible,
+  .share:disabled {
+    opacity: 1;
   }
 
   .alert {

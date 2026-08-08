@@ -521,6 +521,149 @@ async fn preflight(instance_id: String) -> Result<Vec<fern_core::Finding>, Strin
     .await?
 }
 
+// ——— 快照 ———
+//
+// 全部走 `off_thread`：拍一张要读整个游戏目录，恢复要写回去，都是重活。
+
+/// 这个实例有哪些快照，从新到旧。
+#[tauri::command]
+async fn list_snapshots(instance_id: String) -> Result<Vec<fern_core::Snapshot>, String> {
+    off_thread(move || {
+        fern_core::list_snapshots(&paths()?, &instance_id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 手动拍一张。带标签的永久保留。
+#[tauri::command]
+async fn take_snapshot(
+    instance_id: String,
+    label: Option<String>,
+) -> Result<fern_core::Snapshot, String> {
+    off_thread(move || {
+        fern_core::take_snapshot(
+            &paths()?,
+            &instance_id,
+            fern_core::SnapshotReason::Manual,
+            label.filter(|text| !text.trim().is_empty()),
+        )
+        .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 恢复。`scope` 与 `mode` 是带标签的枚举，形状由核心那边定。
+#[tauri::command]
+async fn restore_snapshot(
+    instance_id: String,
+    snapshot: String,
+    scope: fern_core::RestoreScope,
+    mode: fern_core::RestoreMode,
+) -> Result<fern_core::Restored, String> {
+    off_thread(move || {
+        fern_core::restore_snapshot(&paths()?, &instance_id, &snapshot, &scope, &mode)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 删一张快照，顺手回收没人引用的内容。
+#[tauri::command]
+async fn delete_snapshot(instance_id: String, snapshot: String) -> Result<(), String> {
+    off_thread(move || {
+        let paths = paths()?;
+        fern_core::remove_snapshot(&paths, &instance_id, &snapshot)
+            .map_err(|error| format!("{error:#}"))?;
+        // 回收失败不该让「删掉了吗」这个问题变得没有答案——快照确实已经删了。
+        let _ = fern_core::collect_garbage(&paths);
+        Ok(())
+    })
+    .await?
+}
+
+/// 贴标签或者取消标签。贴过标签的永久保留。
+#[tauri::command]
+async fn label_snapshot(
+    instance_id: String,
+    snapshot: String,
+    label: Option<String>,
+) -> Result<fern_core::Snapshot, String> {
+    off_thread(move || {
+        fern_core::label_snapshot(&paths()?, &instance_id, &snapshot, label)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 按保留策略剪一批。
+#[tauri::command]
+async fn prune_snapshots(instance_id: String) -> Result<Vec<String>, String> {
+    off_thread(move || {
+        fern_core::prune_snapshots(&paths()?, &instance_id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 快照一共占多少磁盘。
+#[tauri::command]
+async fn backup_usage() -> Result<fern_core::Usage, String> {
+    off_thread(move || fern_core::backup_usage(&paths()?).map_err(|error| format!("{error:#}")))
+        .await?
+}
+
+/// 把一个世界打成 zip。
+#[tauri::command]
+async fn export_world(
+    instance_id: String,
+    save: String,
+    destination: String,
+) -> Result<fern_core::Exported, String> {
+    off_thread(move || {
+        fern_core::export_world(
+            &paths()?,
+            &instance_id,
+            &save,
+            std::path::Path::new(&destination),
+        )
+        .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 完整搬迁包。装得下就一定装得回去。
+#[tauri::command]
+async fn export_fernpack(
+    instance_id: String,
+    contents: fern_core::ExportContents,
+    destination: String,
+) -> Result<fern_core::Exported, String> {
+    off_thread(move || {
+        fern_core::export_fernpack(
+            &paths()?,
+            &instance_id,
+            contents,
+            std::path::Path::new(&destination),
+        )
+        .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// Modrinth 整合包。模组按哈希反查下载地址，所以这一条要联网。
+#[tauri::command]
+async fn export_mrpack(
+    instance_id: String,
+    destination: String,
+) -> Result<fern_core::Exported, String> {
+    fern_core::export_mrpack(
+        &paths()?,
+        &instance_id,
+        std::path::Path::new(&destination),
+    )
+    .await
+    .map_err(|error| format!("{error:#}"))
+}
+
 /// 现在有哪些游戏在跑。
 ///
 /// 界面每次回到前台都要问一次：进程可能在启动器不知情的时候没了（用户自己
@@ -1151,6 +1294,16 @@ pub fn run() {
             running_games,
             stop_game,
             preflight,
+            list_snapshots,
+            take_snapshot,
+            restore_snapshot,
+            delete_snapshot,
+            label_snapshot,
+            prune_snapshots,
+            backup_usage,
+            export_world,
+            export_fernpack,
+            export_mrpack,
             list_places,
             pearl_host,
             pearl_join,

@@ -78,7 +78,7 @@ pub fn world(
     }
     let directory = game_directory(paths, instance_id)?.join("saves").join(save);
     if !directory.join("level.dat").is_file() {
-        return Err(anyhow!("{save} 里没有 level.dat，它不是一个世界"));
+        return Err(anyhow!("{save} 中没有 level.dat，不是一个世界"));
     }
 
     let mut writer = open(destination)?;

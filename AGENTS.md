@@ -61,6 +61,17 @@ id 和参数（`crash.<规则 id>` / `preflight.<类型>`），句子在
 三条测试分别查「每条规则有 fixture 且命中它」「没有孤儿 fixture」「干净日志不许
 命中任何规则」。
 
+**快照入库绝不能用硬链接。** 硬链接和源文件是同一个 inode，而 Minecraft 原地
+重写 region 文件——对象仓库里那份内容会跟着变，哈希对不上，快照在没人察觉的
+时候就坏了。只能 reflink（写时复制，任何一边写入都会断开共享）或者老实复制。
+理由与其余取舍在 [docs/fern-backup-design.md](docs/fern-backup-design.md)。
+
+**跨语言的结构体改字段名不会有编译错误。** `Snapshot`、`RestoreScope`、
+`RestoreMode`、`Restored`、`Usage`、`Exported` 这几个直接过给 TypeScript，改错
+只会在运行时变成 `undefined`。`fern-core` 里的
+`the_interface_sees_the_field_names_it_expects` 把 JSON 形状钉死了，改了要同步
+改 `fern-ui/src/lib/backup.ts`。
+
 **事件与命令的 JSON 命名规则：** 类型标签用 snake_case（`launch_stage`、
 `preparing_java`），数据字段用 camelCase（`instanceId`）。前者是判别用的常量，
 后者在 JS 里当属性读。改了 Rust 侧要同步改 `fern-ui/src/lib/` 里对应的类型。

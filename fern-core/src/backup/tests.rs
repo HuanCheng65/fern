@@ -357,3 +357,92 @@ fn repeated_mod_changes_share_one_snapshot() {
 
     fs::remove_dir_all(root).expect("clean up");
 }
+
+/// 界面和后端之间那份约定。
+///
+/// 这几个类型是**跨语言**的：Rust 这边改一个字段名，TypeScript 那边不会有任何
+/// 编译错误，只会在运行时得到 `undefined`。`fern-ui/src-tauri` 在多数开发机上
+/// 编译不了（要 WebKitGTK），所以这一条测试是这份约定唯一的守卫。
+#[test]
+fn the_interface_sees_the_field_names_it_expects() {
+    let scope = |value: &str| serde_json::from_str::<Scope>(value).expect(value);
+    assert_eq!(scope(r#"{"kind":"all"}"#), Scope::All);
+    assert_eq!(scope(r#"{"kind":"config"}"#), Scope::Config);
+    assert_eq!(scope(r#"{"kind":"mods"}"#), Scope::Mods);
+    assert_eq!(
+        scope(r#"{"kind":"save","name":"家"}"#),
+        Scope::Save("家".to_owned())
+    );
+
+    let mode = |value: &str| serde_json::from_str::<Mode>(value).expect(value);
+    assert_eq!(mode(r#"{"kind":"replace"}"#), Mode::Replace);
+    assert_eq!(
+        mode(r#"{"kind":"copy","name":"家 (2026-08-07)"}"#),
+        Mode::Copy("家 (2026-08-07)".to_owned())
+    );
+
+    let snapshot = Snapshot {
+        id: "1786152000".to_owned(),
+        instance: "moss".to_owned(),
+        taken_at: 1_786_152_000,
+        reason: Reason::BeforeModChange.tag().to_owned(),
+        label: None,
+        files: 3,
+        bytes: 4096,
+        mods: 1,
+        saves: vec!["家".to_owned()],
+        minecraft: "1.20.1".to_owned(),
+        loader: "neoforge".to_owned(),
+        inconsistent: false,
+        skipped: vec![Skipped {
+            path: "logs/".to_owned(),
+            reason: SkipReason::Transient,
+        }],
+    };
+    let json = serde_json::to_value(&snapshot).expect("serialize");
+    // `label` 是 None 时不出现，界面上那一行因此走 `?? 默认` 而不是显示 null。
+    assert!(json.get("label").is_none());
+    assert_eq!(json["takenAt"], 1_786_152_000_u64);
+    assert_eq!(json["reason"], "before-mod-change");
+    assert_eq!(json["skipped"][0]["reason"], "transient");
+
+    let restored = serde_json::to_value(Restored {
+        written: 2,
+        bytes: 10,
+        removed: 1,
+        missing: vec![Missing {
+            path: "mods/create.jar".to_owned(),
+            sha1: Some("abc".to_owned()),
+        }],
+        safety: Some("1786152000".to_owned()),
+    })
+    .expect("serialize");
+    assert_eq!(restored["missing"][0]["path"], "mods/create.jar");
+    assert_eq!(restored["safety"], "1786152000");
+
+    let usage = serde_json::to_value(Usage {
+        bytes: 100,
+        mods_bytes: 40,
+        snapshots: 2,
+        instances: vec![InstanceUsage {
+            instance: "moss".to_owned(),
+            snapshots: 2,
+            reclaimable: 60,
+        }],
+    })
+    .expect("serialize");
+    assert_eq!(usage["modsBytes"], 40);
+    assert_eq!(usage["instances"][0]["reclaimable"], 60);
+
+    let contents: export::Contents =
+        serde_json::from_str(r#"{"saves":true,"mods":false}"#).expect("contents");
+    assert!(contents.saves && !contents.mods);
+    let exported = serde_json::to_value(export::Exported {
+        path: PathBuf::from("/tmp/a.mrpack"),
+        bytes: 5,
+        files: 2,
+        linked: Some(1),
+    })
+    .expect("serialize");
+    assert_eq!(exported["linked"], 1);
+}

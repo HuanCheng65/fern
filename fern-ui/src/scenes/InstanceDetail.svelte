@@ -12,14 +12,16 @@
    * 锚点，实例的身份感靠它建立。
    */
   import { invoke } from '@tauri-apps/api/core'
-  import { Check, FolderOpen, Play, RefreshCw } from 'lucide-svelte'
+  import { Check, FolderOpen, Play, RefreshCw, Share } from 'lucide-svelte'
   import Cover from '../components/Cover.svelte'
   import Detail from '../layouts/Detail.svelte'
+  import ExportInstance from '../components/ExportInstance.svelte'
   import InstanceSettings from '../components/InstanceSettings.svelte'
   import LogLines from '../components/LogLines.svelte'
   import ModList from '../components/ModList.svelte'
   import Advice from '../components/Advice.svelte'
   import SaveList from '../components/SaveList.svelte'
+  import Snapshots from '../components/Snapshots.svelte'
   import { instances, type Instance } from '../lib/instances.svelte'
   import { jobs } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
@@ -38,6 +40,7 @@
     { id: 'overview', label: '概览', reading: true },
     ...(instance.loader === 'Vanilla' ? [] : [{ id: 'mods', label: '模组' }]),
     { id: 'saves', label: '存档' },
+    { id: 'snapshots', label: '快照' },
     { id: 'settings', label: '设置', reading: true },
     { id: 'log', label: '日志' },
   ])
@@ -61,6 +64,9 @@
   $effect(() => {
     void preflight.check(instance.id)
   })
+
+  /** 导出是一次性的动作，不是一个 tab——按下去、选个位置、结束。 */
+  let exporting = $state(false)
 
   const played = $derived(
     instance.lastPlayed === undefined
@@ -158,6 +164,9 @@
       <button class="btn btn--link" onclick={() => void launch.repair(instance.id)}>
         <RefreshCw size={13} strokeWidth={1.9} />校验文件
       </button>
+      <button class="btn btn--link" onclick={() => (exporting = true)}>
+        <Share size={13} strokeWidth={1.9} />导出
+      </button>
     </div>
     {#if launch.error}
       <div class="alert">{launch.error}</div>
@@ -165,7 +174,9 @@
   {:else if tab === 'mods'}
     <ModList instanceId={instance.id} />
   {:else if tab === 'saves'}
-    <SaveList instanceId={instance.id} />
+    <SaveList instanceId={instance.id} instanceName={instance.name} />
+  {:else if tab === 'snapshots'}
+    <Snapshots instanceId={instance.id} />
   {:else if tab === 'settings'}
     <InstanceSettings
       instanceId={instance.id}
@@ -184,6 +195,14 @@
     </button>
   {/if}
 </Detail>
+
+{#if exporting}
+  <ExportInstance
+    instanceId={instance.id}
+    instanceName={instance.name}
+    onclose={() => (exporting = false)}
+  />
+{/if}
 
 <style>
   .mini-title {

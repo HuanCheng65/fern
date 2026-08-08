@@ -107,7 +107,7 @@ impl FileRecord {
         match self.chunks.as_slice() {
             [one] => Ok(one),
             _ => Err(anyhow!(
-                "{} 用了本版本还不认识的分块格式，请升级 Fern 后再恢复",
+                "{} 使用了当前版本不支持的分块格式，请升级 Fern 后再恢复",
                 self.path
             )),
         }
@@ -268,7 +268,7 @@ pub fn read(path: &Path) -> Result<Manifest> {
         serde_json::from_slice(&text).with_context(|| format!("解析 {}", path.display()))?;
     if manifest.version > FORMAT {
         return Err(anyhow!(
-            "这份快照是更新的 Fern 写的（格式 {}，本版本认得 {FORMAT}）",
+            "这张快照由更新版本的 Fern 写入（格式 {}，当前版本支持 {FORMAT}）",
             manifest.version
         ));
     }

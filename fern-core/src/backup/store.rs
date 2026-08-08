@@ -162,7 +162,7 @@ impl Store {
     pub fn extract(&self, id: &str, destination: &Path) -> Result<()> {
         let object = self
             .locate(id)
-            .ok_or_else(|| anyhow!("对象仓库里没有 {id}"))?;
+            .ok_or_else(|| anyhow!("备份中没有这份内容（{id}）"))?;
         let parent = destination
             .parent()
             .ok_or_else(|| anyhow!("{} 没有上级目录", destination.display()))?;
@@ -198,7 +198,7 @@ impl Store {
             Ok(_) => {
                 let _ = fs::remove_file(&temporary);
                 Err(anyhow!(
-                    "对象 {id} 的内容已损坏，{} 没有被改动",
+                    "备份中这份内容已损坏，{} 未被改动",
                     destination.display()
                 ))
             }
