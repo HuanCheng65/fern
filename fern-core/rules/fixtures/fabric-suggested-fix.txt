@@ -1,0 +1,3 @@
+#! loader=fabric mc=1.21.5 scope=console
+[15:03:53] [main/WARN] [FabricLoader/Resolution]: Mod resolution failed
+[15:03:53] [main/INFO] [FabricLoader/Resolution]: Fix: add [add:fabric-rendering-v1 11.1.11+081cc04307 ([[11.1.11+081cc04307,∞)]), add:fabric 0.71.0 ([[0.71.0,∞)])], remove [], replace [[architectury 16.1.4] -> add:architectury 1 ([(-∞,∞)]), [jade 18.0.3+fabric] -> add:jade 1 ([(-∞,∞)])]

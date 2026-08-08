@@ -1,0 +1,4 @@
+#! loader=fabric mc=1.21.5 scope=console
+[15:03:53] [main/WARN] [FabricLoader/Resolution]: Mod resolution failed
+[15:03:53] [main/INFO] [FabricLoader/Resolution]: Immediate reason: [HARD_DEP_NO_CANDIDATE appleskin 3.0.6+mc1.21.5 {depends fabric-api @ [*]}, ROOT_FORCELOAD_SINGLE appleskin 3.0.6+mc1.21.5]
+[15:03:53] [main/INFO] [FabricLoader/Resolution]: Reason: [HARD_DEP appleskin 3.0.6+mc1.21.5 {depends fabric-api @ [*]}, HARD_DEP architectury 16.1.4 {depends fabric-api @ [>=0.100.0]}, HARD_DEP commonnetworking 1.0.18-25w14craftmine {depends fabric @ [*]}, HARD_DEP c2me-opts-natives-math 0.3.3+alpha.0.2+25w14craftmine {depends java @ [>=22]}]

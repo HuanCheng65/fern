@@ -42,14 +42,18 @@ const backend = {
     detail:
       'Java 不接受这个参数，进程没有启动。它来自设置中的「额外 JVM 参数」，删除或更正后即可启动。',
   },
-  'crash.fabric-missing-dependency': {
+  'crash.fabric-unresolved-dependency': {
     title: '缺少前置模组：{need}',
-    detail: '当前实例中没有安装 {need}。',
+    detail: '{mod} {version} 需要 {need}（{range}），当前实例中没有能满足它的版本。',
+  },
+  'crash.fabric-suggested-fix': {
+    title: 'Fabric 给出的解决办法：安装 {need}',
+    detail: '按 Fabric 的计算，安装 {need} {version} 或更高版本可以让这套模组组合成立。',
   },
   'crash.fabric-incompatible-mods': {
     title: '模组之间不兼容',
     detail:
-      'Fabric 拒绝加载当前的模组组合。日志中「Incompatible mods found」之后的几行列出了具体是哪些。',
+      'Fabric 拒绝加载当前的模组组合。日志中「Mod resolution failed」之后的几行列出了具体是哪些。',
   },
   'crash.forge-missing-dependency': {
     title: '缺少前置模组：{need}',

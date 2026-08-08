@@ -1,5 +1,0 @@
-#! loader=fabric mc=1.21.1 scope=console
-[22:14:07] [main/ERROR] [FabricLoader]: Incompatible mods found!
-net.fabricmc.loader.impl.FormattedException: Incompatible mods found!
-	 - Mod 'Sodium' (sodium) 0.6.0 requires any version of fabric-api, which is missing!
-	 - You should install any version of Fabric API for the best experience.

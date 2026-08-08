@@ -1,4 +1,17 @@
-#! loader=fabric mc=1.21.1 scope=console
-[22:14:07] [main/ERROR] [FabricLoader]: Incompatible mods found!
-net.fabricmc.loader.impl.FormattedException: Incompatible mods found!
-	 - Mod 'Iris' (iris) 1.8.0 conflicts with any version of optifabric.
+#! loader=fabric mc=1.21.5 scope=console
+#
+# 一台中文系统上的真实日志。留着这一份是因为它同时是一份回归测试：
+# 「Mod resolution failed」认得出来，而它下面那段被翻译过的正文，我们一个字
+# 都不去碰。上一版规则锚在「requires … which is missing」上，在这份日志里
+# 一条都没命中。
+[15:03:53] [main/WARN] [FabricLoader/Resolution]: Mod resolution failed
+[15:03:53] [main/ERROR] [FabricLoader]: Incompatible mods found!
+net.fabricmc.loader.impl.FormattedException: Some of your mods are incompatible with the game or each other!
+确定了一种可能的解决方法，这样做可能会解决你的问题：
+     - 安装 fabric-rendering-v1，11.1.11+081cc04307 及以上版本。
+     - 安装 fabric，0.71.0 及以上版本。
+更多信息：
+     - 模组 'AppleSkin' (appleskin) 3.0.6+mc1.21.5 需要 fabric-api 的 任意版本，但没有安装它！
+     - 模组 'Common Network' (commonnetworking) 1.0.18-25w14craftmine 需要 fabric 的 任意版本，但没有安装它！
+	at net.fabricmc.loader.impl.FormattedException.ofLocalized(FormattedException.java:51)
+	at net.fabricmc.loader.impl.FabricLoaderImpl.load(FabricLoaderImpl.java:202)

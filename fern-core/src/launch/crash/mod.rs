@@ -226,11 +226,10 @@ mod tests {
     /// 守卫只收窄：Fabric 的报错格式不该在 Forge 实例上被认出来。
     #[test]
     fn a_guard_keeps_a_rule_off_the_wrong_loader() {
-        let text =
-            "- Mod 'Sodium' (sodium) 0.6.0 requires any version of fabric-api, which is missing!";
+        let text = "Immediate reason: [HARD_DEP_NO_CANDIDATE sodium 0.6.0 {depends fabric-api @ [*]}, ROOT_FORCELOAD_SINGLE sodium 0.6.0]";
         assert_eq!(
             diagnose(text, context(LoaderKind::Fabric))[0].id,
-            "fabric-missing-dependency"
+            "fabric-unresolved-dependency"
         );
         assert!(diagnose(text, context(LoaderKind::Forge)).is_empty());
     }
@@ -239,9 +238,10 @@ mod tests {
     #[test]
     fn a_missing_dependency_comes_with_something_to_press() {
         let found = diagnose(
-            "- Mod 'Sodium' (sodium) 0.6.0 requires any version of fabric-api, which is missing!",
+            "Immediate reason: [HARD_DEP_NO_CANDIDATE sodium 0.6.0 {depends fabric-api @ [*]}, ROOT_FORCELOAD_SINGLE sodium 0.6.0]",
             context(LoaderKind::Fabric),
         );
+        assert_eq!(found[0].args["mod"], "sodium");
         assert_eq!(found[0].args["need"], "fabric-api");
         assert_eq!(
             found[0].action,

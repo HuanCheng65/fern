@@ -40,19 +40,45 @@ scope = "console"
 match = '''Unrecognized (?:option|VM option): '?(?<option>[^'\s]+)'?'''
 
 # ── 模组依赖：Fabric / Quilt ───────────────────────────────────────────────
+#
+# **这一段一个字都不许锚在 Fabric 的散文上。** 那些句子（「requires … which is
+# missing」之类）走 Localization.format，按系统语言翻译——一台中文机器上的日志
+# 里，它们一个字都对不上。fabric-loader 自己打的三行不进翻译表：
+#
+#   Mod resolution failed
+#   Immediate reason: [HARD_DEP_NO_CANDIDATE appleskin 3.0.6 {depends fabric-api @ [*]}, …]
+#   Fix: add [add:fabric-api 0.100.0 (…)], remove [], replace […]
+#
+# 它们是 ModResolver.findCompatibleSet 里的硬编码格式串，内容是枚举名加
+# ModDependency 的 toString。禁区见 rules/fabric-messages.properties。
 
+# Fabric 自己算出来的最小归因：这一条依赖没有任何候选能满足，解就是从这里崩的。
+# 比散文那句准——散文把「没装」「版本不对」「被别的约束卡住」「环境不匹配」
+# 写成几乎一样的一句话，而这里它们是不同的枚举名。
 [[rule]]
-id = "fabric-missing-dependency"
-level = "named"
+id = "fabric-unresolved-dependency"
+level = "exact"
+scope = "console"
 loader = ["fabric", "quilt"]
-match = '''requires (?<requirement>[^,]+?) of (?<need>[A-Za-z0-9_.-]+), which is missing'''
+match = '''Immediate reason: \[HARD_DEP_NO_CANDIDATE (?<mod>[\w.-]+) (?<version>\S+) \{depends (?<need>[\w.-]+) @ \[(?<range>[^\]]*)\]\}'''
+action = { kind = "install-mod", query = "{need}" }
+
+# 求解器还会给出一个可行解。它涵盖我们没单独认出的那些情况（冲突、要换版本），
+# 而且带着最低版本号。只取第一条：要做的事不止一件时，先做完这一件再说。
+[[rule]]
+id = "fabric-suggested-fix"
+level = "named"
+scope = "console"
+loader = ["fabric", "quilt"]
+match = '''Fix: add \[add:(?<need>[\w.-]+) (?<version>[^\s(]+)'''
 action = { kind = "install-mod", query = "{need}" }
 
 [[rule]]
 id = "fabric-incompatible-mods"
 level = "generic"
+scope = "console"
 loader = ["fabric", "quilt"]
-match = '''Incompatible mods found!'''
+match = '''Mod resolution failed'''
 
 # ── 模组依赖：Forge / NeoForge ─────────────────────────────────────────────
 

@@ -304,8 +304,11 @@ fn fill(template: &str, values: &HashMap<String, String>) -> String {
 /// 数字换完不是数字就整条丢掉：**宁可没有按钮，也不能有一个点了会出错的按钮。**
 fn bind(action: &RawAction, values: &HashMap<String, String>) -> Option<Action> {
     Some(match action {
+        // 日志里点的名可能是 Fabric API 的某个模块（`fabric-rendering-v1`），
+        // 而那不是一个能在补给站搜到的东西。要装的是哪一个由 preflight 那条
+        // 现成的映射回答——同一件事实，不该在两处各写一份。
         RawAction::InstallMod { query } => Action::InstallMod {
-            query: fill(query, values),
+            query: crate::launch::preflight::supplier(&fill(query, values)).to_owned(),
         },
         RawAction::RemoveMod { file } => Action::RemoveMod {
             file: fill(file, values),
@@ -533,6 +536,80 @@ mod tests {
         let (evidence, context) = subject(&text);
         let found = apply(&evidence, &context);
         assert!(found.is_empty(), "正常的日志被认成了 {found:?}");
+    }
+
+    /// **不许有任何一条规则锚在会被翻译的句子上。**
+    ///
+    /// fabric-loader 的解析错误正文走 `Localization.format`，按系统语言翻译。
+    /// 锚在那些句子上的规则在非英文用户那里会静默失效——不是少认一条，是一条
+    /// 都不认。这件事查不出来：CI 跑在英文环境里，语料也是英文的。
+    ///
+    /// 所以把 loader 的英文文案表原样放进 `rules/fabric-messages.properties`，
+    /// 当禁区用：占位符换成一个像 modid 的词之后，规则的正则不许命中其中任何
+    /// 一句。该锚的是异常类名和 loader 自己打的结构化行，那些不进翻译表。
+    #[test]
+    fn no_rule_anchors_on_a_translatable_string() {
+        const BUNDLE: &str = include_str!("../../../rules/fabric-messages.properties");
+        // `{0}`、`{5, choice, 1# is|2#s are}` 一律换成一个既像 modid 又像散文的
+        // 词：不换的话正则里的 `[A-Za-z0-9_.-]+` 碰上 `{0}` 不会命中，这条测试
+        // 就成了摆设。
+        let placeholder = Regex::new(r"\{[^{}]*\}").expect("占位符");
+        let rules = compile(TABLE).expect("规则表");
+        for line in BUNDLE.lines() {
+            let line = line.trim();
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            // MessageFormat 里单引号写成两个。
+            let sentence = placeholder
+                .replace_all(value, "fabric-api")
+                .replace("''", "'");
+            for rule in &rules {
+                assert!(
+                    !rule.pattern.is_match(&sentence),
+                    "规则 {} 锚在 {key} 上，那句话会被翻译：{sentence}",
+                    rule.raw.id
+                );
+            }
+        }
+    }
+
+    /// 日志点的是模块名，能装的是整个 Fabric API。
+    #[test]
+    fn an_install_action_names_something_that_can_be_installed() {
+        let text = std::fs::read_to_string(fixtures().join("fabric-suggested-fix.txt"))
+            .expect("suggested fix fixture");
+        let (evidence, context) = subject(&text);
+        let found = apply(&evidence, &context);
+        let fix = found
+            .iter()
+            .find(|diagnosis| diagnosis.id == "fabric-suggested-fix")
+            .expect("命中");
+        // 说的仍然是日志里那个模块……
+        assert_eq!(fix.args["need"], "fabric-rendering-v1");
+        // ……但按钮指向真的能下下来的那一个。
+        assert_eq!(
+            fix.action,
+            Some(Action::InstallMod {
+                query: "fabric-api".to_owned()
+            })
+        );
+    }
+
+    /// 中文日志里认出来的东西，不比英文日志少。
+    #[test]
+    fn a_translated_log_is_diagnosed_just_the_same() {
+        let text = std::fs::read_to_string(fixtures().join("fabric-incompatible-mods.txt"))
+            .expect("中文 fixture");
+        let (evidence, context) = subject(&text);
+        assert!(
+            apply(&evidence, &context)
+                .iter()
+                .any(|diagnosis| diagnosis.id == "fabric-incompatible-mods")
+        );
     }
 
     /// 认得越具体的排越前面。
