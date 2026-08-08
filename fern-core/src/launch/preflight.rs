@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DataPaths, InstanceProfile, LoaderKind,
     instance::jar::{self, ModJar},
-    launch::{crash::Action, ranges},
+    launch::{crash::Action, mcversion, ranges},
 };
 
 /// 一条要说给用户的话。
@@ -93,7 +93,7 @@ pub enum Severity {
 /// 这个实例的游戏版本，两副面孔。
 ///
 /// `id` 是磁盘上、也是界面上那个名字；`semantic` 是 fabric-loader 归一化之后的
-/// 那个（`25w15a` → `1.21.6-alpha.25.15.a`，见 [`ranges::semantic`]）。
+/// 那个（`25w15a` → `1.21.6-alpha.25.15.a`，见 [`mcversion::semantic`]）。
 ///
 /// 要两份，是因为**两个加载器阵营比的不是同一个版本号**，见 [`Game::comparable`]。
 #[derive(Debug, Clone)]
@@ -108,7 +108,7 @@ impl Game {
     pub fn of(id: &str, release_target: Option<&str>) -> Self {
         Self {
             id: id.to_owned(),
-            semantic: ranges::semantic(id, release_target),
+            semantic: mcversion::semantic(id, release_target),
         }
     }
 
@@ -126,7 +126,7 @@ impl Game {
         match loader {
             LoaderKind::Fabric | LoaderKind::Quilt => self.semantic.as_deref(),
             LoaderKind::Forge | LoaderKind::NeoForge | LoaderKind::Vanilla => {
-                ranges::is_release(&self.id).then_some(self.id.as_str())
+                mcversion::is_release(&self.id).then_some(self.id.as_str())
             }
         }
     }
@@ -700,22 +700,66 @@ mod tests {
         assert_eq!(lower_bound("谁知道"), None);
     }
 
-    /// 快照的 id 不是版本号，翻不出来就不比——否则每一个模组都会被判成不兼容。
+    /// 快照上照样比，而且比得对——两个方向都要对。
+    ///
+    /// 这条检查在快照上一度是全错的：拿 `25w14craftmine` 去比区间，比出来的是
+    /// 「装的每一个模组都不兼容」。翻译（`mcversion`）之后它才有意义，而有意义
+    /// 意味着**两种结论都出得来**：为这个快照发布的说没事，为上一个正式版编译
+    /// 的照报。
     #[test]
-    fn a_snapshot_we_cannot_place_reports_no_version_mismatch() {
+    fn mods_are_judged_against_the_snapshot_they_are_written_for() {
+        let ready = |range: &str| {
+            let mut jar = jar("Sodium", "sodium", LoaderKind::Fabric);
+            jar.depends.push(Dependency {
+                mod_id: "minecraft".to_owned(),
+                range: range.to_owned(),
+                required: true,
+            });
+            jar
+        };
+        // 愚人节版本在 loader 的对照表里，client jar 说什么都不改变答案。
+        let craftmine = Game::of("25w14craftmine", Some("1.21.6"));
+        assert_eq!(
+            craftmine.semantic.as_deref(),
+            Some("1.21.6-alpha.25.14.craftmine")
+        );
+
+        // 为它发布的模组：不报。
+        assert!(
+            inspect(
+                &[ready(">=1.21.6-alpha.25.14.craftmine")],
+                LoaderKind::Fabric,
+                &craftmine,
+                None
+            )
+            .is_empty()
+        );
+        // 为上一个正式版编译的：照报，而且说给人听的仍然是他认得的那个 id。
+        let findings = inspect(&[ready("1.21.5")], LoaderKind::Fabric, &craftmine, None);
+        assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
+        assert_eq!(findings[0].args["minecraft"], "25w14craftmine");
+
+        // 周更快照走的是另一条路（年/周表），结论同样是两个方向都出得来。
+        let snapshot = Game::of("25w15a", None);
+        assert!(inspect(&[ready(">=1.21.6-")], LoaderKind::Fabric, &snapshot, None).is_empty());
+        assert_eq!(
+            inspect(&[ready(">=1.21.6")], LoaderKind::Fabric, &snapshot, None)[0].kind,
+            kind::WRONG_GAME_VERSION
+        );
+    }
+
+    /// 认不出来的版本仍然不比：那时说什么都是猜的。
+    #[test]
+    fn a_version_we_cannot_place_reports_nothing() {
         let mut sodium = jar("Sodium", "sodium", LoaderKind::Fabric);
         sodium.depends.push(Dependency {
             mod_id: "minecraft".to_owned(),
-            range: ">=1.21.6-alpha.25.14.craftmine".to_owned(),
+            range: ">=1.21.6".to_owned(),
             required: true,
         });
-        let craftmine = Game::of("25w14craftmine", Some("1.21.6"));
-        assert!(craftmine.semantic.is_none());
-        assert!(inspect(&[sodium.clone()], LoaderKind::Fabric, &craftmine, None).is_empty());
-
-        // 翻得出来的那些照常比，而且比得对。
-        let snapshot = Game::of("25w15a", Some("1.21.6"));
-        assert!(inspect(&[sodium], LoaderKind::Fabric, &snapshot, None).is_empty());
+        let unknown = Game::of("我的整合包", None);
+        assert!(unknown.semantic.is_none());
+        assert!(inspect(&[sodium], LoaderKind::Fabric, &unknown, None).is_empty());
     }
 
     /// Forge 那边比的是版本号原样，不是 loader 归一化过的那个。

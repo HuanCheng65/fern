@@ -12,88 +12,7 @@
 //! 的警告比没有警告更糟：他会去动一个本来没问题的模组。宁可漏报。
 //!
 //! 还有一件事：**左边那个版本号也不一定是版本号。** 快照的 id（`25w14a`）不
-//! 是语义化版本号，而模组写的区间是。那一半在 [`semantic`]。
-
-/// 把 Minecraft 的版本 id 翻成模组世界里那套语义化版本号。
-///
-/// 模组声明的区间是给 fabric-loader 看的，而 loader 手里的游戏版本号已经归一化
-/// 过了。拿磁盘上那个 id 直接去比，比的是两个不同的东西：`25w14a` 的第一段是
-/// `25`，`1.21.5` 的第一段是 `1`，于是**每一个模组都会被判成不兼容**。
-///
-/// 所以照 loader 那一套翻（`McVersionLookup`）：
-///
-/// ```text
-/// 1.21.5         1.21.5                 发行版原样
-/// 25w15a         1.21.6-alpha.25.15.a   快照：正式版 + 年.周.批次
-/// 1.21.5-pre2    1.21.5-beta.2          预发布
-/// 1.21.5-rc1     1.21.5-rc.1            候选
-/// ```
-///
-/// 「它属于哪个正式版」不是猜的：预发布和候选版自己就写在 id 里，快照则由游戏
-/// 写在 client jar 的 `version.json`（`release_target`）里，调用方读出来传进来。
-///
-/// **翻不出来就返回 `None`，那时候该做的是不比。** 愚人节那些版本（`25w14craftmine`
-/// 、`24w14potato`）在 loader 那边是一张手写的对照表，规律推不出来；1.16 及更早
-/// 的预发布也另有一套编号。编一个像模像样的版本号去比，比出来的照样是「全都不
-/// 兼容」，只是这次错得更不容易发现。
-pub fn semantic(id: &str, release_target: Option<&str>) -> Option<String> {
-    let id = id.trim();
-    if is_release(id) {
-        return Some(id.to_owned());
-    }
-    if let Some(normalized) = prerelease(id) {
-        return Some(normalized);
-    }
-    let (year, week, build) = snapshot(id)?;
-    let release = release_target?.trim();
-    is_release(release).then(|| format!("{release}-alpha.{year}.{week}.{build}"))
-}
-
-/// 一个光秃秃的正式版号：`1.21`、`1.21.5`。
-pub fn is_release(version: &str) -> bool {
-    let segments: Vec<&str> = version.split('.').collect();
-    segments.len() >= 2 && segments.iter().all(|segment| is_number(segment))
-}
-
-fn is_number(segment: &str) -> bool {
-    !segment.is_empty() && segment.chars().all(|c| c.is_ascii_digit())
-}
-
-/// `1.21.5-pre2` / `1.21.5-rc1`。
-///
-/// 只认 1.17 起的。再往前 loader 把预发布也算成候选版，还给 1.16 的候选版编号
-/// 整体加了 8——那是为了接上它自己的历史，规律不在版本号里，不猜。
-fn prerelease(id: &str) -> Option<String> {
-    const FORMS: [(&str, &str); 2] = [("-pre", "beta"), ("-rc", "rc")];
-    for (marker, tag) in FORMS {
-        let Some((release, build)) = id.split_once(marker) else {
-            continue;
-        };
-        if !is_release(release) || !is_number(build) {
-            continue;
-        }
-        if compare(release, "1.17") == std::cmp::Ordering::Less {
-            return None;
-        }
-        return Some(format!("{release}-{tag}.{build}"));
-    }
-    None
-}
-
-/// `25w15a` → `(25, 15, "a")`。
-///
-/// 批次只认单个字母。`25w14craftmine` 这样的也长成这个样子，但 loader 那边它们
-/// 在对照表里，映射到的正式版和周数都不一定是 id 上写着的那些——认了就是猜。
-fn snapshot(id: &str) -> Option<(&str, &str, &str)> {
-    let (year, rest) = id.split_at_checked(2)?;
-    let rest = rest.strip_prefix('w')?;
-    let (week, build) = rest.split_at_checked(2)?;
-    let ok = is_number(year)
-        && is_number(week)
-        && build.len() == 1
-        && build.chars().all(|c| c.is_ascii_lowercase());
-    ok.then_some((year, week, build))
-}
+//! 是语义化版本号，而模组写的区间是。那一半在 [`super::mcversion`]。
 
 /// `version` 落在 `range` 里吗。看不懂就返回 `true`。
 pub fn satisfies(range: &str, version: &str) -> bool {
@@ -226,10 +145,16 @@ pub fn compare(left: &str, right: &str) -> std::cmp::Ordering {
 }
 
 fn segments(version: &str) -> impl Iterator<Item = &str> {
+    let version = version.trim();
+    // 结尾那一道分隔符是有意义的，不能跟着空段一起丢掉：`>=1.21.6-` 是模组声明
+    // 「支持 1.21.6 的快照」的标准写法——空的先行版本段比任何一个先行版本段都
+    // 小，于是 `1.21.6-alpha.25.15.a` 落在它上面，而 `1.21.6` 本身也落在上面。
+    // 丢掉它，这个区间就退化成 `>=1.21.6`，为快照发布的模组会被判成不兼容。
+    let open_ended = version.ends_with(['.', '-', '+', '_']);
     version
-        .trim()
         .split(['.', '-', '+', '_'])
         .filter(|part| !part.is_empty())
+        .chain(open_ended.then_some(""))
 }
 
 fn compare_segment(left: &str, right: &str) -> std::cmp::Ordering {
@@ -278,40 +203,21 @@ mod tests {
         assert!(!satisfies("[1.16,1.17),[1.20,1.21)", "1.18"));
     }
 
-    /// 快照的 id 不是版本号。不翻一道，每一个模组都会被判成不兼容。
+    /// `>=1.21.6-` 是「1.21.6 连同它的快照」，不是 `>=1.21.6`。
     #[test]
-    fn a_snapshot_id_becomes_the_version_the_mods_are_written_against() {
+    fn a_trailing_dash_opens_a_range_up_to_the_pre_releases() {
+        assert!(satisfies(">=1.21.6-", "1.21.6-alpha.25.15.a"));
+        assert!(satisfies(">=1.21.6-", "1.21.6"));
+        assert!(satisfies(">=1.21.6-", "1.21.7"));
+        assert!(!satisfies(">=1.21.6-", "1.21.5"));
+        // 没有那道横杠时，快照比正式版旧。
+        assert!(!satisfies(">=1.21.6", "1.21.6-alpha.25.15.a"));
+        // 空的先行版本段排在所有先行版本段前面，也排在正式版前面。
+        assert_eq!(compare("1.21.6-", "1.21.6"), std::cmp::Ordering::Less);
         assert_eq!(
-            semantic("25w15a", Some("1.21.6")).as_deref(),
-            Some("1.21.6-alpha.25.15.a")
+            compare("1.21.6-", "1.21.6-alpha.1"),
+            std::cmp::Ordering::Less
         );
-        // 发行版原样，正式版号是什么都不影响它。
-        assert_eq!(semantic("1.21.5", None).as_deref(), Some("1.21.5"));
-        // 预发布和候选版自己就写着属于哪个正式版。
-        assert_eq!(
-            semantic("1.21.5-pre2", None).as_deref(),
-            Some("1.21.5-beta.2")
-        );
-        assert_eq!(semantic("1.21.5-rc1", None).as_deref(), Some("1.21.5-rc.1"));
-
-        // 翻完之后，区间才比得对。
-        let craft = semantic("25w15a", Some("1.21.6")).expect("normalized");
-        assert!(satisfies(">=1.21.5", &craft));
-        assert!(satisfies(">=1.21.6-alpha.25.15.a", &craft));
-        // 快照比它指向的正式版旧，这是语义化版本号本来的规矩。
-        assert!(!satisfies(">=1.21.6", &craft));
-    }
-
-    /// 翻不出来的宁可不比。编一个像模像样的版本号，错得更不容易发现。
-    #[test]
-    fn an_id_we_cannot_place_is_left_alone() {
-        // 愚人节版本在 loader 那边是一张手写的对照表。
-        assert_eq!(semantic("25w14craftmine", Some("1.21.6")), None);
-        // 快照不知道自己属于哪个正式版时同样不猜。
-        assert_eq!(semantic("25w15a", None), None);
-        assert_eq!(semantic("25w15a", Some("谁知道")), None);
-        // 1.16 及更早的预发布另有一套编号。
-        assert_eq!(semantic("1.16-pre1", None), None);
     }
 
     #[test]

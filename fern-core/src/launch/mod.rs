@@ -13,6 +13,7 @@ pub(crate) mod crash;
 pub(crate) mod forge;
 pub(crate) mod gamelog;
 pub(crate) mod loader;
+pub(crate) mod mcversion;
 pub(crate) mod memory;
 pub(crate) mod preflight;
 pub(crate) mod prepare;
