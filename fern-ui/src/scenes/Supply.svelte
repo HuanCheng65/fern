@@ -13,7 +13,7 @@
    * 再返回，接着看，不用重新往下滑一遍。
    */
   import { Check, Search } from 'lucide-svelte'
-  import Cover from 'fern-kit/Cover.svelte'
+  import SupplyCard from 'fern-kit/SupplyCard.svelte'
   import FilterGroup from '../components/FilterGroup.svelte'
   import Loading from '../components/Loading.svelte'
   import Browse from '../layouts/Browse.svelte'
@@ -21,7 +21,7 @@
   import { instances } from '../lib/instances.svelte'
   import { expand, riseIn } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
-  import { compactNumber, KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
+  import { KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
 
   let results = $state<HTMLElement>()
   let sentinel = $state<HTMLElement>()
@@ -221,21 +221,9 @@
 
         <div class="grid">
           {#each supply.hits as hit, index (hit.projectId)}
-            <button class="card" onclick={() => open(hit.slug, hit.title)} in:riseIn={{ index }}>
-              <span class="icon">
-                {#if hit.iconUrl}
-                  <img src={hit.iconUrl} alt="" loading="lazy" />
-                {:else}
-                  <!-- 没有图标的项目用生成式色块补位，网格才不会破相。 -->
-                  <Cover seed={hit.slug} quality={0.4} />
-                {/if}
-              </span>
-              <span class="text">
-                <strong>{hit.title}</strong>
-                <small class="desc">{hit.description}</small>
-                <small class="t-mono meta">{compactNumber(hit.downloads)} · {hit.author}</small>
-              </span>
-            </button>
+            <div in:riseIn={{ index }}>
+              <SupplyCard {hit} onopen={() => open(hit.slug, hit.title)} />
+            </div>
           {/each}
         </div>
 
@@ -388,66 +376,6 @@
     align-content: start;
   }
 
-  .card {
-    display: flex;
-    gap: var(--s3);
-    padding: var(--s3);
-    border-radius: var(--r2);
-    text-align: left;
-    transition: background var(--t-fast) var(--ease);
-  }
-
-  .card:hover {
-    background: var(--tint-1);
-  }
-
-  .icon {
-    display: block;
-    width: 46px;
-    height: 46px;
-    flex: none;
-    overflow: hidden;
-    border-radius: var(--r1);
-    background: var(--tint-1);
-  }
-
-  .icon img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .text {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .text strong {
-    overflow: hidden;
-    color: var(--ink);
-    font-size: var(--t-body);
-    font-weight: 500;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* 描述压到两行：卡片高度一致，网格才立得住。 */
-  .desc {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-    color: var(--ink-3);
-    font-size: var(--t-micro);
-    line-height: 1.5;
-  }
-
-  .meta {
-    color: var(--ink-4);
-    font-size: var(--t-micro);
-  }
 
   .hint {
     margin: 0;

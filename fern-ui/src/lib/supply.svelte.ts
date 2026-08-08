@@ -13,6 +13,9 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { commands, palette, providesRemote, type Subject } from 'fern-kit/palette'
+// 一条结果的形状和下载量的写法都在 kit 里，官网也用同一份。
+export { compactNumber, type Hit } from 'fern-kit/supply'
+import type { Hit } from 'fern-kit/supply'
 import { nav } from './nav.svelte'
 import { inTauri, instances } from './instances.svelte'
 
@@ -33,17 +36,6 @@ export const SORTS: { id: string; label: string }[] = [
   { id: 'updated', label: '最近更新' },
   { id: 'newest', label: '最新发布' },
 ]
-
-export interface Hit {
-  projectId: string
-  slug: string
-  title: string
-  description: string
-  author: string
-  downloads: number
-  iconUrl?: string
-  categories: string[]
-}
 
 export interface GalleryImage {
   url: string
@@ -145,12 +137,6 @@ export interface InstallOutcome {
 
 const PAGE = 40
 
-export const compactNumber = (value: number) =>
-  value >= 1_000_000
-    ? `${(value / 1_000_000).toFixed(1)}M`
-    : value >= 1000
-      ? `${(value / 1000).toFixed(0)}K`
-      : String(value)
 
 /**
  * 一个版本能不能装进这个实例。
