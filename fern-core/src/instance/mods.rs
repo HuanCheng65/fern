@@ -89,6 +89,7 @@ pub fn set_enabled(
     file_name: &str,
     enabled: bool,
 ) -> Result<String> {
+    crate::backup::before_mod_change(paths, instance_id);
     let directory = mods_directory(paths, instance_id)?;
     let current = safe_entry(&directory, file_name)?;
     let target_name = if enabled {
@@ -109,6 +110,7 @@ pub fn set_enabled(
 
 /// 删掉一个模组。
 pub fn remove(paths: &DataPaths, instance_id: &str, file_name: &str) -> Result<()> {
+    crate::backup::before_mod_change(paths, instance_id);
     let directory = mods_directory(paths, instance_id)?;
     let path = safe_entry(&directory, file_name)?;
     std::fs::remove_file(&path).with_context(|| format!("删除 {}", path.display()))
@@ -126,6 +128,7 @@ pub fn install(paths: &DataPaths, instance_id: &str, source: &Path) -> Result<Mo
     if !file_name.ends_with(".jar") {
         return Err(anyhow!("{file_name} 不是 jar 文件"));
     }
+    crate::backup::before_mod_change(paths, instance_id);
     let directory = mods_directory(paths, instance_id)?;
     std::fs::create_dir_all(&directory)?;
     let destination = safe_entry(&directory, &file_name)?;

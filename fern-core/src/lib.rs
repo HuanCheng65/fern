@@ -21,6 +21,7 @@
 //! 名字，看不见目录结构。所以内部怎么分层是可以改的，改了不牵动前端。
 
 mod account;
+mod backup;
 mod data;
 mod event;
 mod instance;
@@ -44,6 +45,18 @@ pub use account::roster::{
 pub use account::yggdrasil::{
     YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
     prefetched as prefetched_metadata,
+};
+pub use backup::export::{Contents as ExportContents, Exported};
+pub use backup::export::{
+    fernpack as export_fernpack, mrpack as export_mrpack, world as export_world,
+};
+pub use backup::manifest::Reason as SnapshotReason;
+pub use backup::select::{SkipReason, Skipped};
+pub use backup::{
+    InstanceUsage, Missing, Mode as RestoreMode, Restored, Scope as RestoreScope, Snapshot, Usage,
+    collect_garbage, label as label_snapshot, list as list_snapshots, prune as prune_snapshots,
+    reasons as snapshot_reasons, remove as remove_snapshot, restore as restore_snapshot,
+    take as take_snapshot, usage as backup_usage,
 };
 pub use data::settings::{
     AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,
@@ -121,6 +134,16 @@ pub fn message_ids() -> Vec<String> {
             launch::preflight::kind::ALL
                 .iter()
                 .map(|kind| format!("preflight.{kind}")),
+        )
+        .chain(
+            backup::manifest::Reason::ALL
+                .iter()
+                .map(|reason| format!("snapshot.{}", reason.tag())),
+        )
+        .chain(
+            backup::select::SkipReason::ALL
+                .iter()
+                .map(|reason| format!("snapshot.skipped.{}", reason.tag())),
         )
         .collect();
     ids.sort();

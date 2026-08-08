@@ -153,6 +153,41 @@ const backend = {
     title: '{dependency} 已被禁用',
     detail: '{mod} 需要它。在模组列表中重新启用即可。',
   },
+
+  // ── 快照 ────────────────────────────────────────────────────────────────
+  // 标题是快照列表里那一行的名字，说明回答「它为什么在这里」。
+  'snapshot.manual': {
+    title: '手动',
+    detail: '你在快照列表中拍下的。手动快照不会被保留策略清理。',
+  },
+  'snapshot.before-mod-change': {
+    title: '改动模组之前',
+    detail: '安装、删除、启用或禁用模组之前自动拍下。它记录的是改动前的状态。',
+  },
+  'snapshot.after-session': {
+    title: '游戏结束之后',
+    detail: '游戏正常退出后自动拍下，记录这一次游玩的进度。',
+  },
+  'snapshot.before-launch': {
+    title: '启动之前',
+    detail: '距上一张快照已超过六小时，启动前补拍一张。',
+  },
+  'snapshot.before-restore': {
+    title: '恢复之前',
+    detail: '恢复其他快照之前自动拍下，用于撤销那次恢复。',
+  },
+  'snapshot.skipped.too-large': {
+    title: '文件过大',
+    detail: '单个文件超过 512 MB，未纳入快照。',
+  },
+  'snapshot.skipped.transient': {
+    title: '可重新生成',
+    detail: '日志、崩溃报告与缓存不纳入快照，它们会自行重新生成。',
+  },
+  'snapshot.skipped.not-selected': {
+    title: '不在备份范围内',
+    detail: '快照只包含存档、配置、模组、资源包与截图。此项不在其中。',
+  },
 } satisfies Record<BackendMessage, Message>
 
 /**

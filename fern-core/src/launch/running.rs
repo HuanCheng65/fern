@@ -153,6 +153,45 @@ pub(crate) fn wait(child: &Arc<Mutex<Child>>) -> Result<Option<i32>, std::io::Er
     }
 }
 
+/// 给别的模块的测试用。
+///
+/// 「游戏跑着的时候不许拍快照」这条规则的测试需要一个「正在跑」的状态，而它
+/// 真正依赖的只有这张表里有没有那一条记录——不需要真的有个进程。
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+
+    pub(crate) struct Occupied(String);
+
+    impl Drop for Occupied {
+        fn drop(&mut self) {
+            unregister(&self.0);
+        }
+    }
+
+    /// 假装某个实例正占着这个游戏目录，直到返回值被丢弃。
+    pub(crate) fn occupy(instance_id: &str, game_directory: &Path) -> Occupied {
+        sessions().push(Session {
+            instance_id: instance_id.to_owned(),
+            game_directory: game_directory.to_path_buf(),
+            process_id: 0,
+            started_at: 0,
+            ready: false,
+            child: Arc::new(Mutex::new(
+                std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
+                    .args(if cfg!(windows) {
+                        vec!["/C", "exit"]
+                    } else {
+                        vec![]
+                    })
+                    .spawn()
+                    .expect("spawn a placeholder process"),
+            )),
+        });
+        Occupied(instance_id.to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

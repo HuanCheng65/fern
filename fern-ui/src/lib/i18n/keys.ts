@@ -31,6 +31,14 @@ export const BACKEND_MESSAGES = [
   'preflight.no-loader',
   'preflight.wrong-game-version',
   'preflight.wrong-loader',
+  'snapshot.after-session',
+  'snapshot.before-launch',
+  'snapshot.before-mod-change',
+  'snapshot.before-restore',
+  'snapshot.manual',
+  'snapshot.skipped.not-selected',
+  'snapshot.skipped.too-large',
+  'snapshot.skipped.transient',
 ] as const
 
 export type BackendMessage = (typeof BACKEND_MESSAGES)[number]

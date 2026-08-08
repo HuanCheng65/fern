@@ -188,6 +188,10 @@ pub async fn launch_instance(
     let version_id = version::effective_id(&profile);
     // 外部实例的版本、库、游戏目录都在它自己的目录树里。这一句之后的每一个
     // `paths` 都是这个实例的那一套。
+    // 这一次启动之前该不该拍一张。兜住「上次退出时崩了没拍成」，所以判据是
+    // 距上一张有多久，不是每次启动都拍。放在游戏目录被占用的检查之前没有
+    // 意义——那种情况下拍到的是别人正在写的文件——所以留到下面。
+    let launcher_paths = paths;
     let scoped = crate::instance::paths_for(paths, &profile);
     let paths = &scoped;
     // 同一份游戏目录跑两个进程，两边写同一批存档，而且没有任何报错。挡在最
@@ -204,6 +208,16 @@ pub async fn launch_instance(
             )
         });
     }
+    if crate::backup::due_before_launch(launcher_paths, instance_id) {
+        // 第一次可能要读完整个存档，界面上不该是一段没有说明的停顿。
+        job.step("备份存档");
+        crate::backup::quietly(
+            launcher_paths,
+            instance_id,
+            crate::SnapshotReason::BeforeLaunch,
+        );
+    }
+
     let metadata = version::resolve(paths, &version_id)
         .with_context(|| format!("读取 {version_id} 的版本描述"))?;
     // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。哪一份是
@@ -538,6 +552,7 @@ pub async fn launch_instance(
     let crash_loader = profile.loader;
     let crash_minecraft = profile.game_version.clone();
     let crash_mods_directory = plan.working_directory.join("mods");
+    let snapshot_paths = launcher_paths.clone();
     let session = SessionRecord {
         paths: paths.clone(),
         instance_id: instance_id.to_owned(),
@@ -601,6 +616,14 @@ pub async fn launch_instance(
                 &log_tail,
             );
             let _ = wait_events.send(LauncherEvent::GameCrashed(report));
+        }
+
+        // 这一次的成果就在那里，而且已经没有进程占着那些文件了。
+        //
+        // 崩了的那一次不拍：拍到的可能是一个写到一半的世界，而这恰恰是最需要
+        // 「上一张还好着的快照」的时刻——不能让一张坏的把它挤下去。
+        if exit_code == Some(0) {
+            crate::backup::after_session(&snapshot_paths, &wait_instance);
         }
     });
     Ok(LaunchResult {

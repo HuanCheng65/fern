@@ -236,6 +236,8 @@ provides(() =>
       title: item.name,
       hint: `${item.gameVersion} · ${item.loader}`,
       seed: item.cover,
+      // 玩过的时间就是面板要的那个先验：不必等它从零学起。
+      seen: item.lastPlayed,
       run: () => {
         instances.select(item.id)
         nav.go('launch')

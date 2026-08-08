@@ -322,6 +322,9 @@ struct RawFile {
 struct RawHashes {
     #[serde(default)]
     sha1: String,
+    /// 导出 mrpack 时要写进 `hashes`，格式要求两个都有，而这一个只有上游算得出来。
+    #[serde(default)]
+    sha512: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -741,6 +744,11 @@ pub async fn install(
         .ok_or_else(|| anyhow!("整合包要用来新建实例，不能装进已有的实例"))?;
     // 装到这个实例真正的游戏目录里去——外部实例的那个在别人的目录树下。
     let profile = crate::read_instance(paths, instance_id)?;
+    if kind == ResourceKind::Mod {
+        // 改模组之前先拍一张。用户以为自己只是装了个模组，而这一步可能让
+        // 存档打不开（docs/fern-backup-design.md §1）。
+        crate::backup::before_mod_change(paths, instance_id);
+    }
     let directory = crate::instance::paths_for(paths, &profile)
         .game_directory(instance_id)
         .join(subdirectory);
@@ -808,6 +816,69 @@ pub struct InstallOutcome {
     pub files: Vec<String>,
     /// 已经有了、这次跳过的前置。
     pub reused: Vec<String>,
+}
+
+/// 磁盘上一个 jar 在 Modrinth 上的身份。
+///
+/// 按内容哈希反查，而不是靠安装时记下来的来源：后者对用户自己拖进来的 jar
+/// 无效，也会随时间和实际文件对不上，而哈希描述的永远是磁盘上真正的那一份。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownFile {
+    pub project_id: String,
+    pub version_id: String,
+    pub url: String,
+    pub file_name: String,
+    pub size: u64,
+    pub sha1: String,
+    /// mrpack 的 `hashes` 两个都要，而 sha512 只有上游算得出来。
+    pub sha512: String,
+}
+
+/// 一批 sha1 分别属于哪个版本。查不到的不在返回值里。
+///
+/// 一次请求问完全部：三百个模组发三百次请求会被速率限制挡下来，而这个端点
+/// 本来就是为批量查询设计的。
+pub(crate) async fn known_files(
+    hashes: &[String],
+) -> Result<std::collections::HashMap<String, KnownFile>> {
+    if hashes.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let response = client()
+        .post(format!("{API}/version_files"))
+        .json(&serde_json::json!({ "hashes": hashes, "algorithm": "sha1" }))
+        .send()
+        .await
+        .context("向 Modrinth 反查模组来源")?
+        .error_for_status()
+        .context("Modrinth 拒绝了这次反查")?;
+    let raw: std::collections::HashMap<String, RawVersion> =
+        response.json().await.context("解析 Modrinth 的响应")?;
+
+    Ok(raw
+        .into_iter()
+        .filter_map(|(hash, version)| {
+            // 一个版本可能挂好几个文件，要的是哈希对得上的那一个。
+            let file = version
+                .files
+                .iter()
+                .find(|file| file.hashes.sha1.eq_ignore_ascii_case(&hash))?;
+            Some((
+                hash.to_ascii_lowercase(),
+                KnownFile {
+                    project_id: version.project_id.clone(),
+                    version_id: version.id.clone(),
+                    url: file.url.clone(),
+                    file_name: file.filename.clone(),
+                    size: file.size,
+                    sha1: file.hashes.sha1.clone(),
+                    sha512: file.hashes.sha512.clone(),
+                },
+            ))
+        })
+        .collect())
 }
 
 /// 只转义查询串里真正会出事的那几个字符。

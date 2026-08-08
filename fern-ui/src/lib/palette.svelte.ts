@@ -48,6 +48,14 @@ export interface Subject {
   /** 生成式封面的种子。没有就画一个类型图标。 */
   seed?: string
   /**
+   * 上一次**真的**用到它是什么时候（毫秒）。
+   *
+   * 面板自己的那份习惯只记得「在面板里选过什么」，所以一台刚装好的机器上它
+   * 一片空白，排序退回注册顺序——而应用早就知道你昨天玩的是哪个实例。有真
+   * 数据就别等着重新学一遍。没有这个数字的东西不填，不编。
+   */
+  seen?: number
+  /**
    * 只在下钻里出现，不平铺在顶层。
    *
    * 给那些「不是这个面板的主角」的对象用：一份五个账户的名单会把实例和动作
@@ -308,11 +316,18 @@ function startsAWord(text: string, at: number): boolean {
 }
 
 const FRECENCY_KEY = 'fern.palette.frecency'
+const RECALL_KEY = 'fern.palette.recall'
 const HALF_LIFE_DAYS = 14
 
 interface Habit {
   count: number
   at: number
+}
+
+/** 一次使用值多少：次数取对数（第十次不该是第一次的十倍），再按半衰期折旧。 */
+function decay(habit: Habit): number {
+  const days = (Date.now() - habit.at) / 86_400_000
+  return Math.log2(1 + habit.count) * Math.pow(0.5, days / HALF_LIFE_DAYS)
 }
 
 /**
@@ -340,13 +355,67 @@ let habits = $state(readHabits())
 
 function weight(key: string): number {
   const habit = habits[key]
-  if (!habit) return 0
-  const days = (Date.now() - habit.at) / 86_400_000
-  return Math.log2(1 + habit.count) * Math.pow(0.5, days / HALF_LIFE_DAYS)
+  return habit ? decay(habit) : 0
 }
 
-/** 用过的东西往上抬多少。 */
+/**
+ * 打过的字 → 在那串字下面选过什么，各选过几次。
+ *
+ * 上面那份 `habits` 记的是「这个东西我常用」，与查询无关。但人对一个东西的
+ * 叫法是**属于那个人的**：打十次 `gc` 选十次垃圾回收器，第十一次打 `gc`，它
+ * 仍然只能靠通用分数排队——「gc 对我而言就是它」这条信息没被记住。
+ *
+ * 记次数而不是记绑定，理由和输入法一样：同一串读音下面本来就可能有好几个候选，
+ * 绑定假设只有一个正确答案，答错了就没有退路；次数排得出先后，也允许第二个
+ * 候选慢慢爬上来。
+ */
+type Recall = Record<string, Record<string, Habit>>
+
+function readRecall(): Recall {
+  try {
+    return JSON.parse(localStorage.getItem(RECALL_KEY) ?? '{}') as Recall
+  } catch {
+    return {}
+  }
+}
+
+let recall = $state(readRecall())
+
+/** 记多少：每串字留几个候选、一共留几串。它是习惯的缓存，不是输入历史。 */
+const RECALL_PICKS = 5
+const RECALL_QUERIES = 120
+
+/** 同一件事的两种写法要落在同一个键上。 */
+const asked = (query: string) => query.trim().toLowerCase().replace(/\s+/g, ' ')
+
+/**
+ * 此刻这串字下面，每个候选积攒了多少。
+ *
+ * 一次查询算一遍，不是一行算一遍——这是个查询级的量，挂在行上算就是把同一份
+ * 遍历做了几十遍。
+ */
+function recalled(query: string): Map<string, number> {
+  const out = new Map<string, number>()
+  const now = asked(query)
+  if (!now) return out
+  for (const [before, picks] of Object.entries(recall)) {
+    // 打到一半也算数：`g` 用得上 `gc` 攒下的那些。但不该像打完那样确定，
+    // 所以按打了多少折一下。
+    if (!before.startsWith(now)) continue
+    const share = now.length / before.length
+    for (const [key, habit] of Object.entries(picks)) {
+      const value = share * decay(habit)
+      if (value > (out.get(key) ?? 0)) out.set(key, value)
+    }
+  }
+  return out
+}
+
+/** 用过的东西往上抬多少；在这串字下面选过的，抬得更多。 */
 const HABIT = 0.3
+const RECALL = 0.5
+/** 抬到头为止。学得再久也不该让一个半像的东西压过一个正打中的。 */
+const RECALL_CAP = 2
 
 /**
  * 习惯是**乘**上去的，不是加上去的。
@@ -356,16 +425,51 @@ const HABIT = 0.3
  * 的是这几个字，出来的却是别的」。乘法只放大一个已经成立的匹配：常用的东西
  * 在势均力敌时胜出，但救不回一个不像的。
  */
-const lift = (key: string) => 1 + HABIT * weight(key)
+const lift = (key: string, memory: Map<string, number>, seen?: number) =>
+  1 +
+  // 取大者而不是相加：面板里选过它和真的玩过它，说的是同一件事，记两遍就把
+  // 常用的东西抬了两次。
+  HABIT * Math.max(weight(key), fresh(seen)) +
+  RECALL * Math.min(memory.get(key) ?? 0, RECALL_CAP)
 
-function remember(key: string) {
-  const habit = habits[key]
-  habits = { ...habits, [key]: { count: (habit?.count ?? 0) + 1, at: Date.now() } }
+/** 上次真的用到它是多久以前。同一条半衰期，这样它和面板里的习惯可比。 */
+function fresh(seen: number | undefined): number {
+  if (!seen) return 0
+  return Math.pow(0.5, (Date.now() - seen) / 86_400_000 / HALF_LIFE_DAYS)
+}
+
+function remember(key: string, query: string) {
+  habits = { ...habits, [key]: { count: (habits[key]?.count ?? 0) + 1, at: Date.now() } }
+  const now = asked(query)
+  if (now) {
+    const picks = { ...(recall[now] ?? {}) }
+    picks[key] = { count: (picks[key]?.count ?? 0) + 1, at: Date.now() }
+    recall = prune({ ...recall, [now]: keepTop(picks, RECALL_PICKS) })
+  }
   try {
     localStorage.setItem(FRECENCY_KEY, JSON.stringify(habits))
+    localStorage.setItem(RECALL_KEY, JSON.stringify(recall))
   } catch {
-    // 无痕模式：这次生效，下次打开重新开始学。
+    // 无痕模式或者写满了：这次生效，下次打开重新开始学。
   }
+}
+
+/** 一串字下面只留分最高的那几个候选。 */
+function keepTop(picks: Record<string, Habit>, keep: number): Record<string, Habit> {
+  const entries = Object.entries(picks)
+  if (entries.length <= keep) return picks
+  entries.sort(([, left], [, right]) => decay(right) - decay(left))
+  return Object.fromEntries(entries.slice(0, keep))
+}
+
+/** 串数封顶，扔掉最久没碰过的那些。一份不断长大的缓存迟早会撑爆 localStorage。 */
+function prune(all: Recall): Recall {
+  const keys = Object.keys(all)
+  if (keys.length <= RECALL_QUERIES) return all
+  const freshness = (query: string) =>
+    Math.max(...Object.values(all[query] ?? {}).map((habit) => habit.at), 0)
+  keys.sort((left, right) => freshness(right) - freshness(left))
+  return Object.fromEntries(keys.slice(0, RECALL_QUERIES).map((key) => [key, all[key]!]))
 }
 
 /** `at` 与 `via` 是给界面解释这一行为什么在这儿用的，见 `Rank`。 */
@@ -455,12 +559,14 @@ class PaletteStore {
   readonly rows = $derived.by<Row[]>(() => {
     const query = this.query.trim()
     const scope = this.scope
+    // 这串字下面选过什么，一次查询算一遍。
+    const memory = recalled(query)
 
     if (scope?.kind === 'actions') {
       const subject = scope.subject
       return this.actions
         .filter((action) => action.accepts === subject.type)
-        .map((action) => this.asRow(action, query))
+        .map((action) => this.asRow(action, query, memory))
         .filter((row) => row.points >= 0)
         .sort((left, right) => right.points - left.points)
     }
@@ -468,7 +574,7 @@ class PaletteStore {
     if (scope) {
       return this.subjects
         .filter((subject) => subject.type === scope.type)
-        .map((subject) => this.asRow(subject, query))
+        .map((subject) => this.asRow(subject, query, memory))
         .filter((row) => row.points >= 0)
         .sort((left, right) => right.points - left.points)
     }
@@ -480,11 +586,11 @@ class PaletteStore {
     const rows: Row[] = []
     for (const subject of this.subjects) {
       if (subject.scoped) continue
-      const row = this.asRow(subject, query)
+      const row = this.asRow(subject, query, memory)
       if (row.points >= 0) rows.push(row)
     }
     for (const action of this.actions) {
-      const row = this.asRow(action, query)
+      const row = this.asRow(action, query, memory)
       if (row.points >= 0) rows.push(row)
     }
     rows.sort((left, right) => right.points - left.points)
@@ -509,7 +615,7 @@ class PaletteStore {
    * 三个分支都从这一个口子出来：下钻列对象、下钻列动作、顶层混排。分开写就是
    * 三份会慢慢走散的规则——「切换器里为什么不按常用排」正是那么来的。
    */
-  private asRow(item: Subject | Action, query: string): Row {
+  private asRow(item: Subject | Action, query: string, memory: Map<string, number>): Row {
     if ('accepts' in item) {
       const key = `action:${item.id}`
       const hit = like(item.title, item.hint, query)
@@ -518,7 +624,7 @@ class PaletteStore {
         kind: 'action',
         key,
         action: item,
-        points: hit ? hit.points * ACTION * lift(key) : -1,
+        points: hit ? hit.points * ACTION * lift(key, memory) : -1,
         at: hit?.at ?? [],
       }
     }
@@ -528,7 +634,7 @@ class PaletteStore {
       kind: 'subject',
       key,
       subject: item,
-      points: hit ? hit.points * lift(key) : -1,
+      points: hit ? hit.points * lift(key, memory, item.seen) : -1,
       at: hit?.at ?? [],
       // 只有别名看不见才需要交代。命中落在 hint 上时它就写在那一行里，
       // 再补一遍就成了「1.20.1 · fabric · fabric」。
@@ -540,7 +646,8 @@ class PaletteStore {
    * 空态那几条：最近用过的排前面，不够就用实例补齐。
    *
    * 用实例补齐而不是补动作：这个面板的主角是东西，而一台新装的机器上还没有
-   * 任何习惯可学，那时列出实例至少是有用的。
+   * 任何习惯可学，那时列出实例至少是有用的。而「还没学到」不等于「什么都不
+   * 知道」：真的玩过的时间也算数，所以第一次打开面板就该是昨天那个实例在前。
    */
   private suggest(): Row[] {
     const pool: Row[] = [
@@ -550,7 +657,7 @@ class PaletteStore {
           kind: 'subject' as const,
           key: `${subject.type}:${subject.id}`,
           subject,
-          points: weight(`${subject.type}:${subject.id}`),
+          points: Math.max(weight(`${subject.type}:${subject.id}`), fresh(subject.seen)),
           at: [],
         })),
       ...this.actions.map((action) => ({
@@ -607,7 +714,7 @@ class PaletteStore {
    * scope，回到列表去问「对谁做」。
    */
   run(row: Row): boolean {
-    remember(row.key)
+    remember(row.key, this.query)
     const scope = this.scope
 
     // 「对这个对象做什么」——宾语已经定了，这里挑的是动词。
