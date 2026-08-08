@@ -90,7 +90,7 @@
 
     <div class="grid">
       {#each instances.recent as item, index (item.id)}
-        <div class="card" class:on={instances.current?.id === item.id} in:riseIn={{ index }}>
+        <div class="card" in:riseIn={{ index }}>
           <button class="face" onclick={() => nav.open(item.id)} title="打开 {item.name}">
             <Cover seed={item.cover} quality={0.55} />
           </button>
@@ -107,7 +107,10 @@
           </button>
 
           <button class="text" onclick={() => nav.open(item.id)}>
-            <strong>{item.name}</strong>
+            <span class="line">
+              <strong>{item.name}</strong>
+              {#if instances.current?.id === item.id}<span class="now">当前</span>{/if}
+            </span>
             <small class="t-mono">{item.gameVersion} · {item.loader}</small>
           </button>
         </div>
@@ -184,9 +187,28 @@
     transform: translateY(-2px);
   }
 
-  /* 当前实例只用一道描边标出来，不加角标——封面本身已经在说它是谁。 */
-  .card.on .face {
-    box-shadow: 0 0 0 1.5px var(--accent);
+  /*
+   * 当前实例标在名字旁边，不标在封面上。
+   *
+   * 封面是这一屏的主视觉，上一版在它外沿描了一圈强调色——一道 1.5px 的硬边
+   * 贴着一张生成的图，读起来是「这张图被选中了」，而要说的是「这个实例是当前
+   * 的」。那句话属于名字，不属于画。
+   */
+  .line {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .now {
+    flex: none;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+    font-size: var(--t-micro);
+    line-height: 1.7;
   }
 
   .go {
@@ -228,6 +250,7 @@
   }
 
   .text strong {
+    min-width: 0;
     overflow: hidden;
     color: var(--ink);
     font-size: var(--t-body);
