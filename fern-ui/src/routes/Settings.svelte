@@ -89,16 +89,28 @@
   const target = $derived(location.length >= 3 ? location[2] : '')
 
   let section = $state<SectionId>('appearance')
+  /**
+   * 上一次落在哪儿。
+   *
+   * 「亮一下」回答的是「你要找的在这里」，那是**被送过来**才需要的一句话。从
+   * 二级页返回时人本来就是从这一行进去的，用不着有人再指一次——退回来看见它
+   * 闪，读起来像是「这一行出事了」。两种情形在 `at` 上分得开：返回是从
+   * `分区/行/目标` 退到 `分区/行`，前一个位置在后一个的里面。
+   */
+  let came = ''
   // 外面指定了落点就跟着走。设置已经开着时也生效——命令面板搜到一个设置项，
   // 该把人直接带到那一行，而不是在第一屏放下就不管了。
   $effect(() => {
     const [wanted, row] = location
+    const from = came
+    came = location.join('/')
     if (!wanted || !sections.some((item) => item.id === wanted)) return
     section = wanted as SectionId
     // 在二级页上时不闪那一行：人已经不在那一屏上了。
     if (!row || target) return
     const at = `${wanted}/${row}`
-    focused = at
+    // 从这一行的二级页退回来：把它滚回视野里，但不指它。
+    focused = from.startsWith(`${at}/`) ? '' : at
     // 等这一节渲染出来再找它。分区是刚刚才切过去的，这一帧里它还不在 DOM 里。
     requestAnimationFrame(() => {
       document
