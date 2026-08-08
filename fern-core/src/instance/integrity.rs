@@ -70,9 +70,11 @@ const AT_ONCE: usize = 3;
 /// 而一批 jar 被改写完全不影响游戏能否启动——两件事不在一条轴上。该用什么分量
 /// 呈现由是哪一条 [`kind`] 决定，程度由参数里的数字说话。
 ///
-/// 动作共用崩溃分析那一套，界面上是同一颗按钮。目前四条都没有动作：真正该有
-/// 的是「恢复到变化之前的那张快照」，而那要给 `Action` 添一个取值——那颗按钮
-/// 对崩溃分析同样有用，该单独做，不该藏在这个功能里。
+/// 动作共用崩溃分析那一套，界面上是同一颗按钮：三条讲文件变化的都给
+/// [`Action::RestoreMods`]，指向那次改动**之前**的最后一张快照。找不到那样一张
+/// 快照就没有按钮——一颗按下去会把用户带到更远处的按钮，比没有按钮糟得多。
+///
+/// [`kind::LEDGER_BROKEN`] 没有动作：恢复文件修不好一份对不上的账。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
@@ -286,7 +288,7 @@ pub fn notices(paths: &DataPaths, instance_id: &str, compared: &Compared) -> Vec
             id: kind::REWRITTEN_TOGETHER.to_owned(),
             kind: kind::REWRITTEN_TOGETHER.to_owned(),
             args: args([("count", batch.to_string())]),
-            action: None,
+            action: restore_before(paths, instance_id, &silent),
         });
     }
 
@@ -303,7 +305,7 @@ pub fn notices(paths: &DataPaths, instance_id: &str, compared: &Compared) -> Vec
                 ("count", left.len().to_string()),
                 ("file", display_name(&first.file)),
             ]),
-            action: None,
+            action: restore_before(paths, instance_id, &left),
         });
     }
 
@@ -315,7 +317,7 @@ pub fn notices(paths: &DataPaths, instance_id: &str, compared: &Compared) -> Vec
                 id: format!("{}:{}", kind::SILENT_REWRITE, change.file),
                 kind: kind::SILENT_REWRITE.to_owned(),
                 args: args([("file", display_name(&change.file))]),
-                action: None,
+                action: restore_before(paths, instance_id, std::slice::from_ref(&change)),
             });
         }
     }
@@ -333,6 +335,30 @@ fn args<const N: usize>(pairs: [(&str, String); N]) -> BTreeMap<String, String> 
 /// `mods/sodium.jar` → `sodium.jar`。文案里说的是文件，不是路径。
 fn display_name(file: &str) -> String {
     file.rsplit('/').next().unwrap_or(file).to_owned()
+}
+
+/// 「把模组恢复到这些文件被改之前的样子」。
+///
+/// 挑的是**最早那次改动之前**的最后一张快照，依据是文件的修改时间，不是上次
+/// 记账的时间：一个模组可能几个月没动过，拿那个时刻去找快照，会把这期间所有
+/// 正常的改动一起回滚掉。
+///
+/// 找不到合适的快照就没有这颗按钮。给一颗按下去会把用户带到更远处的按钮，比
+/// 没有按钮糟得多。
+fn restore_before(paths: &DataPaths, instance_id: &str, changes: &[&Change]) -> Option<Action> {
+    let earliest = changes
+        .iter()
+        .map(|change| change.modified_at)
+        .filter(|at| *at > 0)
+        .min()?;
+    let snapshot = crate::backup::list(paths, instance_id)
+        .ok()?
+        .into_iter()
+        .filter(|snapshot| snapshot.taken_at <= earliest && snapshot.mods > 0)
+        .max_by_key(|snapshot| snapshot.taken_at)?;
+    Some(Action::RestoreMods {
+        snapshot: snapshot.id,
+    })
 }
 
 /// 把第一次见到的那些记成基线。
@@ -765,6 +791,48 @@ mod tests {
         let compared = compare(&paths, &id, Depth::Full);
         assert_eq!(compared.changes.len(), 20);
         assert!(kinds(&paths, &id, &compared).is_empty());
+    }
+
+    #[test]
+    fn without_a_snapshot_from_before_the_change_there_is_no_button() {
+        let paths = paths("no-snapshot");
+        let (id, game) = instance(&paths, "没有快照");
+        let path = game.join("mods/sodium.jar");
+        jar(&path, "0.6.13", "");
+        adopt(&paths, &id);
+        jar(&path, "0.6.13", "appended");
+
+        let compared = compare(&paths, &id, Depth::Full);
+        let reported = notices(&paths, &id, &compared);
+        assert_eq!(reported.len(), 1);
+        assert!(
+            reported[0].action.is_none(),
+            "一颗按下去会把用户带到更远处的按钮，比没有按钮糟得多"
+        );
+    }
+
+    #[test]
+    fn the_button_points_at_the_last_snapshot_from_before_the_change() {
+        let paths = paths("pick-snapshot");
+        let (id, game) = instance(&paths, "挑快照");
+        let path = game.join("mods/sodium.jar");
+        jar(&path, "0.6.13", "");
+        adopt(&paths, &id);
+        let wanted = crate::take_snapshot(&paths, &id, crate::SnapshotReason::Manual, None)
+            .expect("snapshot");
+
+        // 改动的修改时间必须晚于快照，否则挑不到它。
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        jar(&path, "0.6.13", "appended");
+
+        let compared = compare(&paths, &id, Depth::Full);
+        let reported = notices(&paths, &id, &compared);
+        assert_eq!(
+            reported[0].action,
+            Some(Action::RestoreMods {
+                snapshot: wanted.id
+            })
+        );
     }
 
     #[test]
