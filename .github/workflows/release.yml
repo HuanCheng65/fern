@@ -160,15 +160,20 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # `createUpdaterArtifacts` 用命令行覆盖，不写进 tauri.conf.json：写进去的话
-      # 每一次普通构建都会要求私钥在环境里，而 package.yml 跑在每个 PR 上。
+      # `createUpdaterArtifacts` 是一个**独立的配置文件**，不写进 tauri.conf.json：
+      # 写进去的话每一次普通构建都会要求私钥在环境里，而 package.yml 跑在每个 PR 上。
+      #
+      # 用文件而不是内联 JSON，是因为这一步在 Windows 上跑在 pwsh 里，而 PowerShell
+      # 往原生命令传参时会把内嵌的双引号吃掉——tauri 收到的是
+      # `{bundle:{createUpdaterArtifacts:true}}`，然后报「key must be a string」。
+      # 这事真发生过。文件路径没有引号，三个平台走同一条路。
       #
       # 它在 macOS 上产出 .app.tar.gz、在 Linux 上给 AppImage 配一个 .sig。
       # Windows 走 --no-bundle，没有 bundler 参与，所以下一步单独签。
       - name: Build and sign
         run: >
           pnpm tauri build ${{ matrix.build_args }}
-          --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          --config src-tauri/updater.conf.json
         working-directory: fern-ui
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
