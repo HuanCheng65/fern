@@ -1,0 +1,7 @@
+# 三个包：产品、官网，以及两边共用的那部分。
+# 没有这份 workspace 之前，官网靠一条指向 ../fern-ui/src 的路径 alias 硬引产品源码，
+# 于是 SSR 找不到模块、样式要在构建期改写作用域——都是没有边界的症状。
+packages:
+  - fern-ui
+  - fern-site
+  - fern-kit

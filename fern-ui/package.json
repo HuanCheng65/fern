@@ -12,8 +12,8 @@
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.7.2",
+    "fern-kit": "workspace:*",
     "lucide-svelte": "^0.469.0",
-    "pinyin-pro": "^3.28.2",
     "svelte": "^5.19.0"
   },
   "devDependencies": {

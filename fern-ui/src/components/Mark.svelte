@@ -15,7 +15,7 @@
    *
    * 颜色继承 `currentColor`，所以它跟着所在位置的文字色走，不自带颜色。
    */
-  import { CELLS, CELLS_COMPACT, layout } from '../lib/mark'
+  import { CELLS, CELLS_COMPACT, layout } from 'fern-kit/mark'
   import { theme } from '../lib/theme.svelte'
 
   interface Props {

@@ -1,6 +1,9 @@
 /target/
 /fern-ui/src-tauri/target/
+/node_modules/
 /fern-ui/node_modules/
+/fern-kit/node_modules/
+/fern-site/node_modules/
 /fern-ui/dist/
 /fern-ui/src-tauri/gen/
 *.log

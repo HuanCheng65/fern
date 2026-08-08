@@ -18,7 +18,7 @@
  */
 
 import { platform } from './frame.svelte'
-import { commands, provides } from './palette.svelte'
+import { commands, provides } from 'fern-kit/palette'
 
 export type SceneId = 'launch' | 'instances' | 'supply' | 'multiplayer' | 'wardrobe'
 

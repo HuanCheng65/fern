@@ -12,7 +12,7 @@
   import { ArrowRight, CornerDownLeft, Search, X } from 'lucide-svelte'
   import Overlay from './Overlay.svelte'
   import Cover from './Cover.svelte'
-  import { palette, pieces, TYPE_LABEL, type Row } from '../lib/palette.svelte'
+  import { palette, pieces, TYPE_LABEL, type Row } from 'fern-kit/palette'
 
   interface Props {
     onclose: () => void

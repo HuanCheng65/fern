@@ -3,7 +3,7 @@
  * 回去。取消是尽力而为——同步的 paint 打断不了,只保证画完的结果不会送出去。
  */
 
-import { paintBitmap, type BiomeOptions } from './biome'
+import { paintBitmap, type BiomeOptions } from 'fern-kit/biome'
 
 interface RenderMessage {
   type: 'render'

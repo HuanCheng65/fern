@@ -15,7 +15,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { inTauri } from './instances.svelte'
 import { launch } from './launch.svelte'
-import { onOpen, provides, type Subject } from './palette.svelte'
+import { onOpen, provides, type Subject } from 'fern-kit/palette'
 
 export interface Place {
   instanceId: string

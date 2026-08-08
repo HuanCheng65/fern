@@ -10,7 +10,7 @@
    * 都不在这里——玩家要的是「能不能玩」，不是一份网络报告。
    */
   import { onMount } from 'svelte'
-  import { paint } from '../lib/biome'
+  import { paint } from 'fern-kit/biome'
   import { renderBiome, supportsBiomeWorker } from '../lib/biome-client'
   import { isConnected, type Peer } from '../lib/pearl-session.svelte'
   import { PATH_LABEL, PATH_QUALITY, PUNCH_STAGE_LABEL, type PathState } from '../lib/pearl-types'

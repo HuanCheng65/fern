@@ -1,0 +1,10 @@
+{
+  "name": "fern",
+  "private": true,
+  "_comment": "工作区根，只为把三个包串起来；每个包各自有自己的脚本。",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

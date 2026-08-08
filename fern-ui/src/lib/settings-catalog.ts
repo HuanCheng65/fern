@@ -16,7 +16,7 @@
  */
 
 import { nav } from './nav.svelte'
-import { provides, type Subject } from './palette.svelte'
+import { provides, type Subject } from 'fern-kit/palette'
 
 export interface SettingsSection {
   id: string

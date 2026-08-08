@@ -12,7 +12,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { commands, palette, providesRemote, type Subject } from './palette.svelte'
+import { commands, palette, providesRemote, type Subject } from 'fern-kit/palette'
 import { nav } from './nav.svelte'
 import { inTauri, instances } from './instances.svelte'
 

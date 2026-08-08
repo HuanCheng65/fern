@@ -10,7 +10,7 @@
    * 也能当详情页顶上的整条封面。
    */
   import { onMount } from 'svelte'
-  import { paint } from '../lib/biome'
+  import { paint } from 'fern-kit/biome'
   import { renderBiome, supportsBiomeWorker } from '../lib/biome-client'
 
   interface Props {

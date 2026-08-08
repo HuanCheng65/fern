@@ -7,7 +7,7 @@
  * 同步画,所以这里只管「能用 Worker 的那条路」。
  */
 
-import type { BiomeOptions } from './biome'
+import type { BiomeOptions } from 'fern-kit/biome'
 
 interface DoneMessage {
   type: 'done'

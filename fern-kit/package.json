@@ -1,0 +1,19 @@
+{
+  "name": "fern-kit",
+  "private": true,
+  "_comment_version": "不发布，npm 只是要求这里有个字段。产品版本在 src-tauri/Cargo.toml。",
+  "version": "0.0.0",
+  "type": "module",
+  "_comment_exports": "源码包，不构建：两边都是 Vite，让各自的构建去编译，省一层产物和一层 sourcemap。",
+  "exports": {
+    "./mark": "./src/mark.ts",
+    "./biome": "./src/biome.ts",
+    "./palette": "./src/palette.svelte.ts"
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.28.2"
+  },
+  "peerDependencies": {
+    "svelte": "^5.19.0"
+  }
+}
