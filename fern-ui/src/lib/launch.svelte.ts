@@ -20,6 +20,7 @@ import { commands } from './palette.svelte'
 import { jobs } from './jobs.svelte'
 import { nav } from './nav.svelte'
 import { prefs } from './prefs.svelte'
+import type { FixAction } from './advice'
 
 export type LaunchStage =
   | 'resolving_version'
@@ -32,17 +33,33 @@ export type LaunchStage =
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
 
-export interface CrashDiagnosis {
+/** 认出来的一条原因。文案在 i18n 那边按 `crash.<id>` 查。 */
+export interface Diagnosis {
   id: string
-  title: string
-  detail: string
+  /** exact 认得出具体是哪两个东西撞了 / named 说得出主语 / generic 只认类别。 */
+  level: 'exact' | 'named' | 'generic'
+  args: Record<string, string>
+  action?: FixAction
+}
+
+/** 可能有关的模组。和有没有认出原因无关。 */
+export interface Suspect {
+  modId: string
+  name: string
+  version?: string
+  /** 它在栈里第几帧出现，越小越可疑。 */
+  depth: number
+  reason: 'stack' | 'mixin'
 }
 
 export interface CrashReport {
   instanceId: string
   exitCode: number | null
-  diagnosis: CrashDiagnosis | null
-  reportPath: string | null
+  /** 认得越具体的排越前面。空表示一条都没认出来，界面照实说。 */
+  diagnoses: Diagnosis[]
+  suspects: Suspect[]
+  reportPath?: string
+  hsErrPath?: string
   excerpt: string
 }
 

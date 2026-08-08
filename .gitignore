@@ -4,3 +4,4 @@
 /fern-ui/dist/
 /fern-ui/src-tauri/gen/
 *.log
+corpus/

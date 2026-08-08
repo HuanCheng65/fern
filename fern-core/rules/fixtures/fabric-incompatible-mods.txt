@@ -1,0 +1,4 @@
+#! loader=fabric mc=1.21.1 scope=console
+[22:14:07] [main/ERROR] [FabricLoader]: Incompatible mods found!
+net.fabricmc.loader.impl.FormattedException: Incompatible mods found!
+	 - Mod 'Iris' (iris) 1.8.0 conflicts with any version of optifabric.

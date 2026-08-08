@@ -13,6 +13,7 @@
    * 它带着这个实例跳到补给站。
    */
   import { invoke } from '@tauri-apps/api/core'
+  import { preflight } from '../lib/preflight.svelte'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import { FolderOpen, Plus, Trash2 } from 'lucide-svelte'
   import { onMount } from 'svelte'
@@ -42,6 +43,11 @@
 
   const enabledCount = $derived(mods.filter((item) => item.enabled).length)
 
+  /** 模组变了，启动前预检查的结论也就变了。 */
+  function recheck() {
+    preflight.refresh(instanceId)
+  }
+
   async function load() {
     if (!inTauri()) {
       loading = false
@@ -64,6 +70,7 @@
         fileName: item.fileName,
         enabled: !item.enabled,
       })
+      recheck()
       await load()
     } catch (cause) {
       error = String(cause)
@@ -73,6 +80,7 @@
   async function remove(item: ModFile) {
     try {
       await invoke('remove_mod', { instanceId, fileName: item.fileName })
+      recheck()
       await load()
     } catch (cause) {
       error = String(cause)
@@ -87,6 +95,7 @@
     }
     try {
       await invoke('install_mods', { instanceId, pathsToInstall: jars })
+      recheck()
       error = ''
       await load()
     } catch (cause) {

@@ -49,6 +49,18 @@ print('没注册:', sorted(c-r), '| 没定义:', sorted(r-c))"
 的——本平台照常编译，另一个平台上「unresolved import」刷屏。这事真发生过。
 `check-platform-deps.py` 就是为它而写，新增平台专属依赖时要同步改脚本里的白名单。
 
+**面向用户的新文案不要写在 Rust 里。** 崩溃诊断和启动前预检查的后端只发文案
+id 和参数（`crash.<规则 id>` / `preflight.<类型>`），句子在
+`fern-ui/src/lib/i18n/`。`fern-core` 的 `message_ids()` 是这条契约，`cargo test`
+会照着它重写 `i18n/keys.ts`；文案表声明成 `Record<BackendMessage, Message>`，
+少一条就是 `pnpm check` 的编译错误。界面里已有的中文不做一次性搬迁——改到哪一屏
+顺手搬哪一屏。
+
+**加一条崩溃规则 = 往 `fern-core/rules/crash.toml` 追加一段 + 放一份
+`rules/fixtures/<id>.txt` + 在文案表里写两句话。** 没有第四步，也少不了任何一步：
+三条测试分别查「每条规则有 fixture 且命中它」「没有孤儿 fixture」「干净日志不许
+命中任何规则」。
+
 **事件与命令的 JSON 命名规则：** 类型标签用 snake_case（`launch_stage`、
 `preparing_java`），数据字段用 camelCase（`instanceId`）。前者是判别用的常量，
 后者在 JS 里当属性读。改了 Rust 侧要同步改 `fern-ui/src/lib/` 里对应的类型。

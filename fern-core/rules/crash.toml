@@ -1,0 +1,131 @@
+# 崩溃原因识别表。
+#
+# 一条规则 = 一个必须命中的正则 + 若干只做收窄的守卫。取值靠命名捕获组，
+# 捕获组的值作为参数交给界面，动作里也可以用 `{name}` 引用。引擎见 crash/rules.rs。
+#
+# **这里没有文案。** 一条规则给出的是 id 和捕获到的参数，措辞在
+# fern-ui/src/lib/i18n/ 里按 `crash.<id>` 查，翻译也在那边。
+#
+# 规矩三条：
+#   1. 每条规则必须在 rules/fixtures/<id>.txt 有一份对应的真实文本，测试会查。
+#   2. 正则尽量锚在**不会变的东西**上——异常类名、加载器自己的错误结构。
+#      锚在散文上的规则会在下一个版本悄悄失效。
+#   3. 拿不准就别写。一句听着像那么回事、其实不对的诊断，比「不认识」更浪费
+#      用户的时间。
+#
+# level：exact 认得出具体是哪两个东西撞了 / named 说得出主语 / generic 只认类别。
+
+# ── 内存 ───────────────────────────────────────────────────────────────────
+
+[[rule]]
+id = "out-of-memory"
+level = "named"
+match = '''java\.lang\.OutOfMemoryError: (?<kind>Java heap space|GC overhead limit exceeded|Metaspace|Direct buffer memory|unable to create native thread)'''
+
+# ── Java ───────────────────────────────────────────────────────────────────
+
+# class 文件版本到 Java 大版本是一张固定的表（55=11、61=17、65=21），但插值
+# 只做替换不做算术，所以这里只说事实，具体该换哪个版本由启动前预检查回答——
+# 它知道这个版本要求什么，比从崩溃里反推可靠。
+[[rule]]
+id = "java-too-old"
+level = "named"
+match = '''java\.lang\.UnsupportedClassVersionError: (?<class>\S+) has been compiled by a more recent version of the Java Runtime \(class file version (?<needed>\d+)\.0\), this version of the Java Runtime only recognizes class file versions up to (?<current>\d+)\.0'''
+
+# 用户自己填的 JVM 参数写错时，JVM 连起都起不来，而原因就在我们的设置里。
+[[rule]]
+id = "unrecognized-jvm-option"
+level = "exact"
+scope = "console"
+match = '''Unrecognized (?:option|VM option): '?(?<option>[^'\s]+)'?'''
+
+# ── 模组依赖：Fabric / Quilt ───────────────────────────────────────────────
+
+[[rule]]
+id = "fabric-missing-dependency"
+level = "named"
+loader = ["fabric", "quilt"]
+match = '''requires (?<requirement>[^,]+?) of (?<need>[A-Za-z0-9_.-]+), which is missing'''
+action = { kind = "install-mod", query = "{need}" }
+
+[[rule]]
+id = "fabric-incompatible-mods"
+level = "generic"
+loader = ["fabric", "quilt"]
+match = '''Incompatible mods found!'''
+
+# ── 模组依赖：Forge / NeoForge ─────────────────────────────────────────────
+
+[[rule]]
+id = "forge-missing-dependency"
+level = "named"
+loader = ["forge", "neoforge"]
+match = '''Mod ID: '(?<need>[^']+)', Requested by: '(?<by>[^']+)', Expected range: '(?<range>[^']*)', Actual version: '\[MISSING\]''''
+action = { kind = "install-mod", query = "{need}" }
+
+[[rule]]
+id = "forge-mandatory-dependencies"
+level = "generic"
+loader = ["forge", "neoforge"]
+match = '''Missing or unsupported mandatory dependencies'''
+
+# ── 重复装了同一个模组 ────────────────────────────────────────────────────
+
+[[rule]]
+id = "duplicate-mod"
+level = "named"
+match = '''Found a duplicate mod (?<name>[A-Za-z0-9_.-]+) at (?<path>\S+)'''
+action = { kind = "remove-mod", file = "{path}" }
+
+[[rule]]
+id = "forge-duplicate-mods"
+level = "generic"
+loader = ["forge", "neoforge"]
+match = '''Found duplicate mods:'''
+
+# ── Mixin ─────────────────────────────────────────────────────────────────
+
+# mixin 配置名的前缀就是 modid，所以这一条说得出是谁——比栈还准。
+[[rule]]
+id = "mixin-failure-named"
+level = "exact"
+match = '''org\.spongepowered\.asm\.mixin\.(?:injection\.throwables\.InvalidInjectionException|transformer\.throwables\.MixinApplyError|throwables\.MixinApplyError)[\s\S]{0,400}?(?<config>[A-Za-z0-9_.-]+)\.mixins\.json'''
+
+[[rule]]
+id = "mixin-failure"
+level = "generic"
+match = '''org\.spongepowered\.asm\.mixin\.(?:injection\.throwables\.InvalidInjectionException|transformer\.throwables\.MixinApplyError|throwables\.MixinApplyError)'''
+
+# ── 图形 ───────────────────────────────────────────────────────────────────
+
+# hs_err 里那一行是原生崩溃唯一的线索：Java 侧什么都没有。
+[[rule]]
+id = "graphics-driver-crash"
+level = "exact"
+scope = "hs-err"
+match = '''\[(?<library>(?:nvoglv64|nvoglv32|ig9icd64|ig11icd64|igxelpicd64|atio6axx|atioglxx|amdvlk64)\.dll)'''
+
+[[rule]]
+id = "graphics-unavailable"
+level = "generic"
+match = '''(?:Pixel format not accelerated|Failed to initialize GLFW|Couldn't set pixel format|WGL_ARB_create_context|No OpenGL context found|OpenGL 1\.[0-9] is not supported)'''
+
+# ── 文件 ───────────────────────────────────────────────────────────────────
+
+[[rule]]
+id = "corrupt-archive"
+level = "generic"
+match = '''(?:java\.util\.zip\.ZipException|Invalid CEN header|java\.util\.zip\.ZipError|error in opening zip file)'''
+
+[[rule]]
+id = "broken-config"
+level = "generic"
+loader = ["forge", "neoforge"]
+match = '''com\.electronwill\.nightconfig\.core\.io\.ParsingException'''
+
+# ── 网络 ───────────────────────────────────────────────────────────────────
+
+[[rule]]
+id = "port-in-use"
+level = "generic"
+match = '''java\.net\.BindException: Address already in use'''

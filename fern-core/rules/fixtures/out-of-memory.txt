@@ -1,0 +1,16 @@
+#! loader=fabric mc=1.21.1
+---- Minecraft Crash Report ----
+// Everything's going to plan. No, really, that was supposed to happen.
+
+Time: 2025-03-11 22:14:07
+Description: Exception in server tick loop
+
+java.lang.OutOfMemoryError: Java heap space
+	at java.base/java.util.Arrays.copyOf(Arrays.java:3537)
+	at net.minecraft.world.level.chunk.LevelChunk.<init>(LevelChunk.java:118)
+
+-- System Details --
+Details:
+	Minecraft Version: 1.21.1
+	Java Version: 21.0.5, Eclipse Adoptium
+	Memory: 82345600 bytes (78 MiB) / 4294967296 bytes (4096 MiB) up to 4294967296 bytes (4096 MiB)

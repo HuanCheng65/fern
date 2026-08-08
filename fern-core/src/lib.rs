@@ -82,7 +82,31 @@ pub use java::{
     requirement as java_requirement, select as select_java,
 };
 pub use job::{Job, JobEvent};
-pub use launch::crash::{CrashDiagnosis, CrashReport, diagnose as diagnose_crash};
+pub use launch::crash::{
+    Action as FixAction, CrashReport, Diagnosis, Level as DiagnosisLevel, Reason as SuspectReason,
+    Suspect, diagnose as diagnose_crash, rules::Context as CrashContext,
+};
+pub use launch::preflight::{Finding, Severity, check as preflight_instance};
+
+/// 后端会发出的全部文案 id。
+///
+/// 后端不产出句子，只产出 id 和参数（见 `launch::crash::rules` 与
+/// `launch::preflight`）。这个清单是它与界面之间的契约：界面必须为每一条备好
+/// 文案，而 `fern-ui/src/lib/i18n/keys.ts` 由测试照着它生成，少一条就是编译错误。
+pub fn message_ids() -> Vec<String> {
+    let mut ids: Vec<String> = launch::crash::rules::ids()
+        .into_iter()
+        .map(|id| format!("crash.{id}"))
+        .chain(
+            launch::preflight::kind::ALL
+                .iter()
+                .map(|kind| format!("preflight.{kind}")),
+        )
+        .collect();
+    ids.sort();
+    ids
+}
+
 pub use launch::gamelog::{LogLine, LogParser};
 pub use launch::loader::{
     LoaderOption, LoaderVersion, display_name as loader_display_name,
@@ -123,4 +147,45 @@ pub use supply::{
 pub fn pearl_dependency_present() -> bool {
     let _ = std::any::TypeId::of::<pearl_core::identity::NodeId>();
     true
+}
+
+#[cfg(test)]
+mod message_tests {
+    /// 生成界面那边的 id 清单，并盯着它别过期。
+    ///
+    /// 后端加了一条规则、界面还没写文案时，`pnpm check` 会报错——因为文案表
+    /// 声明成了 `Record<BackendMessage, …>`。这条测试负责把 id 清单同步过去；
+    /// 清单变了它会自己重写文件并失败一次，再跑一遍就过。
+    #[test]
+    fn the_interface_has_the_current_list_of_message_ids() {
+        let mut text = String::new();
+        text.push_str(
+            "// 由 `cargo test` 生成，不要手改（见 fern-core/src/lib.rs 的 message_ids）。\n",
+        );
+        text.push_str("//\n");
+        text.push_str(
+            "// 后端只发 id 和参数，不发句子。这里的每一条都必须在文案表里有标题与说明——\n",
+        );
+        text.push_str("// 少一条是编译错误，不是运行时才发现的空白。\n");
+        text.push_str("export const BACKEND_MESSAGES = [\n");
+        for id in super::message_ids() {
+            text.push_str(&format!("  '{id}',\n"));
+        }
+        text.push_str(
+            "] as const\n\nexport type BackendMessage = (typeof BACKEND_MESSAGES)[number]\n",
+        );
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fern-ui/src/lib/i18n/keys.ts");
+        // 单独编译 fern-core 时没有界面那一半，跳过。
+        let Some(parent) = path.parent().filter(|parent| parent.exists()) else {
+            return;
+        };
+        let _ = parent;
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        if current != text {
+            std::fs::write(&path, &text).expect("写 keys.ts");
+            panic!("文案 id 清单变了，已重写 {}，再跑一遍。", path.display());
+        }
+    }
 }

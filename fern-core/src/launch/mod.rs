@@ -14,7 +14,9 @@ pub(crate) mod forge;
 pub(crate) mod gamelog;
 pub(crate) mod loader;
 pub(crate) mod memory;
+pub(crate) mod preflight;
 pub(crate) mod prepare;
+pub(crate) mod ranges;
 pub(crate) mod rules;
 pub(crate) mod running;
 pub(crate) mod version;
@@ -534,6 +536,10 @@ pub async fn launch_instance(
     let wait_instance = instance_id.to_owned();
     let wait_directory = plan.working_directory.clone();
     let wait_running = running.clone();
+    // 崩溃分析要的上下文。在这里取，因为等待线程里没有 profile。
+    let crash_loader = profile.loader;
+    let crash_minecraft = profile.game_version.clone();
+    let crash_mods_directory = plan.working_directory.join("mods");
     let session = SessionRecord {
         paths: paths.clone(),
         instance_id: instance_id.to_owned(),
@@ -584,10 +590,16 @@ pub async fn launch_instance(
         // （exit_code 为 None）也算——那多半是被 OOM killer 收走了。
         if exit_code != Some(0) {
             let report = crash::build_report(
-                &wait_instance,
-                &wait_directory,
-                started_at,
-                exit_code,
+                &crash::Situation {
+                    instance_id: &wait_instance,
+                    game_directory: &wait_directory,
+                    started_at,
+                    exit_code,
+                    loader: crash_loader,
+                    minecraft: &crash_minecraft,
+                    // 崩了之后才读 mods：这一步几百毫秒，不该占着启动的路。
+                    mods: crash::known_in(&crash_mods_directory),
+                },
                 &log_tail,
             );
             let _ = wait_events.send(LauncherEvent::GameCrashed(report));

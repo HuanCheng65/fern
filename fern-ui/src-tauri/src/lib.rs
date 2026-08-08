@@ -480,6 +480,20 @@ struct Places {
     servers: Vec<PlaceEntry>,
 }
 
+/// 启动之前先看一眼这个实例。
+///
+/// 不阻止启动，只是把能提前看出来的问题说出来——缺前置、装了两份、加载器不对。
+#[tauri::command]
+async fn preflight(instance_id: String) -> Result<Vec<fern_core::Finding>, String> {
+    off_thread(move || {
+        let paths = paths()?;
+        let profile = fern_core::read_instance(&paths, &instance_id)
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(fern_core::preflight_instance(&paths, &profile))
+    })
+    .await?
+}
+
 /// 现在有哪些游戏在跑。
 ///
 /// 界面每次回到前台都要问一次：进程可能在启动器不知情的时候没了（用户自己
@@ -1108,6 +1122,7 @@ pub fn run() {
             launch_instance,
             running_games,
             stop_game,
+            preflight,
             list_places,
             pearl_host,
             pearl_join,

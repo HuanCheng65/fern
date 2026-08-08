@@ -17,6 +17,8 @@
   import { instances } from '../lib/instances.svelte'
   import { fraction, jobs, measure } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
+  import { nav } from '../lib/nav.svelte'
+  import { preflight } from '../lib/preflight.svelte'
 
   interface Props {
     onswitch: () => void
@@ -37,6 +39,15 @@
   /** 这个实例现在跑到哪一段了。undefined 是没在跑。 */
   const phase = $derived(current ? launch.phaseOf(current.id) : undefined)
   const working = $derived(phase === 'preparing' || job !== undefined)
+  /**
+   * 启动之前能看出来的问题，只说大概率起不来的那些。
+   *
+   * 这一屏只有一颗按钮，不该变成一张检查清单——详细的几条在实例详情里。
+   */
+  const blocking = $derived(current ? preflight.blocking(current.id) : [])
+  $effect(() => {
+    if (current) void preflight.check(current.id)
+  })
 </script>
 
 <Stage>
@@ -94,6 +105,18 @@
           <span class="detail t-mono">{measure(job)}</span>
         {/if}
       </div>
+
+      <!--
+        只说一句，不在这一屏展开：它不拦启动，但按下去多半会崩，用户有权在
+        按之前知道。详细的几条在实例详情里。
+      -->
+      {#if blocking.length > 0}
+        <button class="warn" onclick={() => nav.enter('instances', current.id)}>
+          {blocking.length === 1
+            ? blocking[0].title
+            : `启动前有 ${blocking.length} 个问题`}<span class="t-quiet">查看</span>
+        </button>
+      {/if}
 
       {#if launch.error}
         <div class="alert error">
@@ -203,6 +226,20 @@
     display: inline-flex;
     align-items: center;
     gap: var(--s2);
+  }
+
+  /* 不是错误，是一条提醒——所以它安静，但点得开。 */
+  .warn {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    margin-top: var(--s3);
+    color: var(--ink-2);
+    font-size: var(--t-small);
+  }
+
+  .warn:hover {
+    color: var(--ink);
   }
 
   .detail {

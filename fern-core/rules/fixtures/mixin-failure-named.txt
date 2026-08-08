@@ -1,0 +1,4 @@
+#! loader=fabric mc=1.21.1 scope=console
+[22:14:07] [main/ERROR] [mixin]: Mixin apply failed
+org.spongepowered.asm.mixin.injection.throwables.InvalidInjectionException: @Inject annotation on renderLevel could not find any targets matching 'render' in net.minecraft.client.renderer.LevelRenderer. [PREINJECT Applicator Phase -> sodium.mixins.json:features.render.MixinLevelRenderer]
+	at org.spongepowered.asm.mixin.injection.struct.InjectionInfo.readAnnotation(InjectionInfo.java:434)

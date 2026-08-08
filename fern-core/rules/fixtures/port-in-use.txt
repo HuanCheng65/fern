@@ -1,0 +1,4 @@
+#! loader=vanilla mc=1.21.1 scope=console
+[22:14:07] [Server thread/ERROR]: Failed to start the server
+java.net.BindException: Address already in use
+	at java.base/sun.nio.ch.Net.bind0(Native Method)

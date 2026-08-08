@@ -1,0 +1,4 @@
+#! loader=fabric mc=1.21.1 scope=console
+[22:14:07] [main/ERROR]: Failed to start the game
+java.lang.UnsupportedClassVersionError: net/caffeinemc/mods/sodium/client/SodiumClientMod has been compiled by a more recent version of the Java Runtime (class file version 65.0), this version of the Java Runtime only recognizes class file versions up to 61.0
+	at java.base/java.lang.ClassLoader.defineClass1(Native Method)

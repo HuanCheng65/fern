@@ -1,0 +1,4 @@
+#! loader=fabric mc=1.21.1 scope=console
+[22:14:07] [main/ERROR] [mixin]: Mixin apply failed
+org.spongepowered.asm.mixin.transformer.throwables.MixinApplyError: Mixin transformation of net.minecraft.client.Minecraft failed
+	at org.spongepowered.asm.mixin.transformer.MixinProcessor.applyMixins(MixinProcessor.java:392)

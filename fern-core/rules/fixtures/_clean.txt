@@ -1,0 +1,6 @@
+#! loader=fabric mc=1.21.1 scope=console
+[22:10:02] [main/INFO] [FabricLoader]: Loading 87 mods
+[22:10:05] [Render thread/INFO]: Setting user: Player
+[22:10:09] [Render thread/INFO]: OpenAL initialized on device OpenAL Soft
+[22:10:12] [Render thread/INFO]: Created: 1024x512x4 minecraft:textures/atlas/blocks.png-atlas
+[22:31:44] [Render thread/INFO]: Stopping!

@@ -24,6 +24,9 @@ regex = "1.11.1"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
 tar = "0.4"
+# 规则表与 Forge 的 mods.toml。后者有 `[[dependencies.x]]` 这样的嵌套表，
+# 手写行解析扛不住。
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tokio = { version = "1.46.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }

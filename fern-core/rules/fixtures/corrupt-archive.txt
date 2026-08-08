@@ -1,0 +1,4 @@
+#! loader=fabric mc=1.21.1 scope=console
+[22:14:07] [main/ERROR]: Could not open jar
+java.util.zip.ZipException: zip END header not found
+	at java.base/java.util.zip.ZipFile$Source.zerror(ZipFile.java:1691)

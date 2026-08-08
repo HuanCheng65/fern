@@ -7,6 +7,7 @@
 
 pub(crate) mod catalog;
 pub(crate) mod external;
+pub(crate) mod jar;
 pub(crate) mod mods;
 pub(crate) mod saves;
 pub(crate) mod servers;

@@ -1,0 +1,4 @@
+#! loader=forge mc=1.20.1 scope=console
+[22:14:07] [main/ERROR] [Config]: Failed to load config
+com.electronwill.nightconfig.core.io.ParsingException: Invalid TOML data at line 12
+	at com.electronwill.nightconfig.toml.TableParser.parseNormal(TableParser.java:69)

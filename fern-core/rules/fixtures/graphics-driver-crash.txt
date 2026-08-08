@@ -1,0 +1,10 @@
+#! scope=hs-err
+#
+# A fatal error has been detected by the Java Runtime Environment:
+#
+#  EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x00007ffa1b2c4f10, pid=12044, tid=8820
+#
+# JRE version: OpenJDK Runtime Environment Temurin-21.0.5+11
+# Problematic frame:
+# C  [nvoglv64.dll+0x8c4f10]
+#

@@ -18,12 +18,14 @@
   import InstanceSettings from '../components/InstanceSettings.svelte'
   import LogLines from '../components/LogLines.svelte'
   import ModList from '../components/ModList.svelte'
+  import Advice from '../components/Advice.svelte'
   import SaveList from '../components/SaveList.svelte'
   import { instances, type Instance } from '../lib/instances.svelte'
   import { jobs } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
+  import { preflight } from '../lib/preflight.svelte'
 
   interface Props {
     instance: Instance
@@ -48,6 +50,17 @@
   const ownLog = $derived(launch.instanceId === instance.id ? launch.log : [])
   /** 这个实例现在跑到哪一段了。undefined 是没在跑。 */
   const phase = $derived(launch.phaseOf(instance.id))
+
+  /**
+   * 启动之前能看出来的问题。
+   *
+   * 进这一屏就查一次：用户来到这里多半是准备启动，而这一步不联网、几百毫秒。
+   * 查出来也不拦着启动——摆在那里，按不按由他定。
+   */
+  const advisories = $derived(preflight.for(instance.id))
+  $effect(() => {
+    void preflight.check(instance.id)
+  })
 
   const played = $derived(
     instance.lastPlayed === undefined
@@ -116,6 +129,20 @@
   {/snippet}
 
   {#if tab === 'overview'}
+    {#if advisories.length > 0}
+      <section class="advisories">
+        {#each advisories as item (item.id)}
+          <Advice
+            title={item.title}
+            detail={item.detail}
+            tone={item.severity}
+            action={item.action}
+            instanceId={instance.id}
+            ondone={() => preflight.refresh(instance.id)}
+          />
+        {/each}
+      </section>
+    {/if}
     <dl class="grid">
       <div><dt>Minecraft</dt><dd class="t-mono">{instance.gameVersion}</dd></div>
       <div><dt>加载器</dt><dd class="t-mono">{instance.loader}</dd></div>
@@ -206,6 +233,12 @@
 
   .now :global(svg) {
     color: var(--accent);
+  }
+
+  /* 摆在最上面：它说的是「现在按启动会怎样」，属于这一屏最先要读的东西。 */
+  .advisories {
+    display: grid;
+    margin-bottom: var(--s5);
   }
 
   .grid {

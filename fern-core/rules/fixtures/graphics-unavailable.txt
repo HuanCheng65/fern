@@ -1,0 +1,4 @@
+#! loader=vanilla mc=1.21.1 scope=console
+[22:14:07] [Render thread/ERROR]: Failed to create window
+java.lang.IllegalStateException: Failed to initialize GLFW, errors: GLFW error during init: [0x1000E]Failed to detect any supported platform
+	at com.mojang.blaze3d.systems.RenderSystem.initBackendSystem(RenderSystem.java:194)
