@@ -120,6 +120,7 @@ pub fn known_in(mods_directory: &Path) -> Vec<Known> {
             name: jar.name,
             version: jar.version,
             packages: jar.packages,
+            provides: jar.provides,
         })
         .collect()
 }

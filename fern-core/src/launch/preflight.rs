@@ -209,9 +209,11 @@ fn wrong_game_version(enabled: &[&ModJar], minecraft: &str) -> Vec<Finding> {
 /// 必需的前置没装。这是最常见、也最容易修的一条。
 fn missing_dependencies(all: &[ModJar], enabled: &[&ModJar], loader: LoaderKind) -> Vec<Finding> {
     // 加载器和游戏自己也是依赖项，但它们不在 mods 目录里，不该被当成缺失。
+    // 一个 jar 里打包的那些 jar 同样算装了（`ModJar::provides`）——Fabric API
+    // 的四十来个模块就是这么进来的。
     let provided: std::collections::HashSet<String> = enabled
         .iter()
-        .filter_map(|jar| jar.mod_id.clone())
+        .flat_map(|jar| jar.mod_id.iter().chain(jar.provides.iter()).cloned())
         .chain(builtin(loader))
         .collect();
 
@@ -219,34 +221,34 @@ fn missing_dependencies(all: &[ModJar], enabled: &[&ModJar], loader: LoaderKind)
     let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
     for jar in enabled {
         for dependency in &jar.depends {
-            if !dependency.required
-                || provided.contains(&dependency.mod_id)
-                || !reported.insert(dependency.mod_id.clone())
-            {
+            if !dependency.required || provided.contains(&dependency.mod_id) {
+                continue;
+            }
+            // 缺的是 Fabric API 的某个模块时，要说的是「装 Fabric API」——
+            // 模块名单独拿去搜什么也搜不到。
+            let wanted = supplier(&dependency.mod_id);
+            if !reported.insert(wanted.to_owned()) {
                 continue;
             }
             // 装了但被关掉了是另一回事：让用户开回来，而不是再下一份。
             let disabled = all
                 .iter()
-                .find(|other| !other.enabled && other.mod_id.as_ref() == Some(&dependency.mod_id));
+                .find(|other| !other.enabled && other.supplies(&dependency.mod_id));
             findings.push(match disabled {
                 Some(off) => Finding {
-                    id: format!("{}:{}", kind::DISABLED_DEPENDENCY, dependency.mod_id),
+                    id: format!("{}:{wanted}", kind::DISABLED_DEPENDENCY),
                     kind: kind::DISABLED_DEPENDENCY.to_owned(),
                     severity: Severity::Blocking,
                     args: args([("dependency", off.name.clone()), ("mod", jar.name.clone())]),
                     action: None,
                 },
                 None => Finding {
-                    id: format!("{}:{}", kind::MISSING_DEPENDENCY, dependency.mod_id),
+                    id: format!("{}:{wanted}", kind::MISSING_DEPENDENCY),
                     kind: kind::MISSING_DEPENDENCY.to_owned(),
                     severity: Severity::Blocking,
-                    args: args([
-                        ("dependency", dependency.mod_id.clone()),
-                        ("mod", jar.name.clone()),
-                    ]),
+                    args: args([("dependency", wanted.to_owned()), ("mod", jar.name.clone())]),
                     action: Some(Action::InstallMod {
-                        query: dependency.mod_id.clone(),
+                        query: wanted.to_owned(),
                     }),
                 },
             });
@@ -254,6 +256,23 @@ fn missing_dependencies(all: &[ModJar], enabled: &[&ModJar], loader: LoaderKind)
     }
     findings.sort_by(|left, right| left.id.cmp(&right.id));
     findings
+}
+
+/// 缺了这个 id，实际要装的是哪个模组。
+///
+/// 只有一条规则，因为只有一处名实不符：Fabric API 的模块 id 长成
+/// `fabric-<名字>-v<数字>`（外加一个 `fabric-api-base`），它们没有一个是能单独
+/// 下载的东西，全都在 `fabric-api` 这一个 jar 里。`fabric-language-kotlin` 这类
+/// 真的独立模组不带 `-v<数字>` 结尾，落不进这条规则。
+fn supplier(mod_id: &str) -> &str {
+    if mod_id == "fabric-api-base" {
+        return "fabric-api";
+    }
+    let module = mod_id.starts_with("fabric-")
+        && mod_id.rsplit_once("-v").is_some_and(|(head, tail)| {
+            !head.is_empty() && !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit())
+        });
+    if module { "fabric-api" } else { mod_id }
 }
 
 /// 加载器自带的那些 id。模组会把它们写进 depends，但它们不是 mods 里的文件。
@@ -299,6 +318,7 @@ mod tests {
             name: name.to_owned(),
             version: Some("1.0".to_owned()),
             loader,
+            provides: Vec::new(),
             depends: Vec::new(),
             packages: Vec::new(),
         }
@@ -432,6 +452,55 @@ mod tests {
             "1.21.1",
         );
         assert_eq!(findings[0].kind, kind::NO_LOADER);
+    }
+
+    /// Fabric API 的模块不是单独的 jar，它们在 Fabric API 里面。装了 Fabric
+    /// API 却被告知缺 `fabric-block-getter-api-v2`，用户是修不了的——那个名字
+    /// 在任何一个模组站上都搜不到。
+    #[test]
+    fn the_modules_inside_fabric_api_count_as_installed() {
+        let mut api = jar("Fabric API", "fabric-api", LoaderKind::Fabric);
+        api.provides = vec![
+            "fabric-block-getter-api-v2".to_owned(),
+            "fabric-rendering-v1".to_owned(),
+        ];
+        let jars = vec![
+            needs(
+                jar("Sodium", "sodium", LoaderKind::Fabric),
+                "fabric-rendering-v1",
+                "*",
+            ),
+            api,
+        ];
+        assert!(inspect(&jars, LoaderKind::Fabric, "1.21.1").is_empty());
+    }
+
+    /// 没装的时候要说的是「装 Fabric API」，而且只说一次——十个模块缺了，
+    /// 要做的仍然只有一件事。
+    #[test]
+    fn missing_fabric_api_modules_are_reported_as_fabric_api() {
+        let mut sodium = needs(
+            jar("Sodium", "sodium", LoaderKind::Fabric),
+            "fabric-rendering-v1",
+            "*",
+        );
+        sodium = needs(sodium, "fabric-block-getter-api-v2", "*");
+        sodium = needs(sodium, "fabric-api-base", "*");
+        // 名字里带 fabric- 的独立模组不该被并进去。
+        sodium = needs(sodium, "fabric-language-kotlin", "*");
+
+        let findings = inspect(&[sodium], LoaderKind::Fabric, "1.21.1");
+        let missing: Vec<&str> = findings
+            .iter()
+            .map(|finding| finding.args["dependency"].as_str())
+            .collect();
+        assert_eq!(missing, vec!["fabric-api", "fabric-language-kotlin"]);
+        assert_eq!(
+            findings[0].action,
+            Some(Action::InstallMod {
+                query: "fabric-api".to_owned()
+            })
+        );
     }
 
     #[test]

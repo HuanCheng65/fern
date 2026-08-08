@@ -68,6 +68,17 @@ pub struct Known {
     pub version: Option<String>,
     /// 这个 jar 里的顶层包，例如 `net.caffeinemc.mods.sodium`。
     pub packages: Vec<String>,
+    /// 它还替哪些 id 作数（打包在它里面的那些模块）。失败的 mixin 配置报的是
+    /// 模块名——`fabric-rendering-v1.mixins.json` 要能指回 Fabric API。
+    pub provides: Vec<String>,
+}
+
+impl Known {
+    fn answers_to(&self, name: &str) -> bool {
+        // Mixin 配置名里的 `-` 有时写成 `_`，两种都认。
+        let matches = |id: &String| id == name || id.replace('-', "_") == name;
+        matches(&self.mod_id) || self.provides.iter().any(matches)
+    }
 }
 
 /// 按可疑程度排好序。空表示栈里没有一帧落在已知的模组上。
@@ -93,10 +104,7 @@ pub fn identify(facts: &Facts, known: &[Known]) -> Vec<Suspect> {
             continue;
         };
         for config in mixin_configs(message) {
-            if let Some(entry) = known
-                .iter()
-                .find(|entry| entry.mod_id == config || entry.mod_id.replace('-', "_") == config)
-            {
+            if let Some(entry) = known.iter().find(|entry| entry.answers_to(&config)) {
                 push(&mut suspects, entry, 0, Reason::Mixin);
             }
         }
@@ -179,7 +187,33 @@ mod tests {
             name: "Sodium".to_owned(),
             version: Some("0.6.0".to_owned()),
             packages: vec!["net.caffeinemc.mods.sodium".to_owned()],
+            provides: Vec::new(),
         }
+    }
+
+    /// Fabric API 里的模块崩了，报出来的是模块名；能指认的只有 Fabric API。
+    fn fabric_api() -> Known {
+        Known {
+            mod_id: "fabric-api".to_owned(),
+            name: "Fabric API".to_owned(),
+            version: Some("0.100.0".to_owned()),
+            packages: vec!["net.fabricmc.fabric".to_owned()],
+            provides: vec!["fabric-rendering-v1".to_owned()],
+        }
+    }
+
+    #[test]
+    fn a_module_inside_a_mod_is_attributed_to_the_mod_that_ships_it() {
+        let facts = extract(&Evidence {
+            report: None,
+            console: "org.spongepowered.asm.mixin.injection.throwables.InjectionError: \
+                      Critical injection failure in fabric-rendering-v1.mixins.json\n",
+            hs_err: None,
+        });
+        let suspects = identify(&facts, &[fabric_api()]);
+        assert_eq!(suspects.len(), 1);
+        assert_eq!(suspects[0].mod_id, "fabric-api");
+        assert_eq!(suspects[0].reason, Reason::Mixin);
     }
 
     #[test]
