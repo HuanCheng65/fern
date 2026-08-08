@@ -29,6 +29,8 @@ sudo apt install libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev \
 ```
 
 The implementation roadmap lives in [docs/launcher-core-dev.md](docs/launcher-core-dev.md).
+Backup, snapshots and export are designed in
+[docs/fern-backup-design.md](docs/fern-backup-design.md).
 Conventions and hard-won gotchas are in [AGENTS.md](AGENTS.md).
 
 ## CI packages
