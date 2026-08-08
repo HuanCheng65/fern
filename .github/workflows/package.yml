@@ -81,6 +81,11 @@ jobs:
       - name: Check dependency resolution across platforms
         run: python3 .github/check-platform-deps.py
 
+      # YAML 合法不等于 run: 里的 shell 合法。少一个引号只会在这一段真的
+      # 跑起来时才报错，而 release.yml 里的同类错误要等到发版当天。
+      - name: Check workflow shell syntax
+        run: python3 .github/check-workflows.py
+
       # 更新日志是界面的一部分（进更新清单的 notes），所以它的写法值得在这里挡。
       # 只查机器查得动的：一提交最多一条、类型对不对、句号、长度、有没有空话。
       - name: Check release notes
@@ -95,7 +100,7 @@ jobs:
             echo "找不到比较基准，跳过。"
             exit 0
           fi
-          python3 .github/check-release-notes.py "$base..HEAD
+          python3 .github/check-release-notes.py "$base..HEAD"
 
   package:
     name: Package ${{ matrix.name }}
