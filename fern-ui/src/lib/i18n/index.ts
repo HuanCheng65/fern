@@ -33,6 +33,14 @@ export const locale: Locale = 'zh-CN'
 
 const catalog = CATALOGS[locale]
 
+/**
+ * 界面自己的文案，按属性访问：`ui.about.notOfficial`。
+ *
+ * 写错的名字是编译错误，而且读组件时那句话在哪一眼看得见。字符串键那一套
+ * （`describe`）留给后端发过来的 id——那些只有运行时才知道。
+ */
+export const ui = catalog.ui
+
 /** 加载器的显示名。后端传 `fabric` 这样的取值。 */
 export const loaderName = (tag: string) =>
   catalog.loader[tag as keyof typeof catalog.loader] ?? tag

@@ -35,6 +35,7 @@
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { accounts } from '../lib/accounts.svelte'
   import { SETTINGS_SECTIONS } from '../lib/settings-catalog'
+  import { ui } from '../lib/i18n'
   import { expand } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
@@ -227,13 +228,46 @@
 
   let themeCode = $state('')
   let copied = $state(false)
+  let copiedReport = $state(false)
+  /** 关于页那几行。空串表示还没问到，或者不在 Tauri 里。 */
+  let about = $state({ version: '', commit: '', built: '', platform: '', webview: '' })
   let importError = $state('')
 
   const sourceName = { official: '官方源', bmclapi: 'BMCLAPI' } as const
 
+  const REPOSITORY = 'https://github.com/HuanCheng65/fern'
+
+  /** 交给系统浏览器。后端只放行 https。 */
+  const openInBrowser = (url: string) => void invoke('open_external', { url })
+
+  /**
+   * 一段可以直接贴进 issue 的话。
+   *
+   * 反馈问题时最费时间的是来回问三轮「什么系统、什么版本、日志在哪」。Java
+   * 那一行由这一屏本来就加载着的清单拼出来，不额外查一次。
+   */
+  const report = $derived(
+    [
+      `Fern ${about.version}${about.commit ? ` (${about.commit}, ${about.built})` : ''}`,
+      [about.platform, about.webview && `WebView ${about.webview}`].filter(Boolean).join(' · '),
+      `数据目录 ${paths.root || '—'}`,
+      `Java ${
+        groups.flatMap((group) => group.runtimes).map((runtime) => runtime.version).join('、') ||
+        '未检测到'
+      }`,
+    ].join('\n'),
+  )
+
+  async function copyReport() {
+    await navigator.clipboard.writeText(report)
+    copiedReport = true
+    setTimeout(() => (copiedReport = false), 1400)
+  }
+
   onMount(() => {
     themeCode = theme.export()
     if (!inTauri()) return
+    void invoke<typeof about>('about').then((value) => (about = value))
     void invoke<{ root: string; game: string; logs: string; portable: boolean }>('data_paths')
       .then((value) => (paths = value))
       .catch((error) => (pathError = String(error)))
@@ -665,7 +699,37 @@
           {#if pathError}<div class="alert">{pathError}</div>{/if}
         {:else}
           <SettingRow id="about/version" found={focused === 'about/version'}>
-            <span class="t-mono value">Fern 0.1.0</span>
+            <div class="identity">
+              <p class="t-mono value">Fern {about.version || '—'}</p>
+              <p class="t-quiet build t-mono">
+                {about.commit ? `${ui.about.build} ${about.commit} · ${about.built}` : ui.about.unknownBuild}
+              </p>
+              <p class="t-quiet build">{ui.about.tagline} {ui.about.author}</p>
+            </div>
+          </SettingRow>
+
+          <SettingRow id="about/diagnostics" found={focused === 'about/diagnostics'}>
+            <pre class="t-mono report selectable">{report}</pre>
+            <button class="btn btn--ghost" onclick={() => void copyReport()}>
+              {#if copiedReport}<Check size={14} />{:else}<Copy size={13} strokeWidth={1.9} />{/if}
+              {copiedReport ? ui.about.copied : ui.about.copy}
+            </button>
+          </SettingRow>
+
+          <SettingRow id="about/links" found={focused === 'about/links'}>
+            <div class="links">
+              <button class="btn btn--link" onclick={() => openInBrowser(REPOSITORY)}>
+                {ui.about.repository}
+              </button>
+              <button class="btn btn--link" onclick={() => openInBrowser(`${REPOSITORY}/issues`)}>
+                {ui.about.issues}
+              </button>
+            </div>
+          </SettingRow>
+
+          <SettingRow id="about/legal" found={focused === 'about/legal'}>
+            <p class="legal">{ui.about.license}{ui.about.licenseFork}</p>
+            <p class="legal t-quiet">{ui.about.notOfficial}</p>
           </SettingRow>
         {/if}
   </Form>
@@ -857,6 +921,49 @@
 
   .code-row .input {
     font-size: var(--t-small);
+  }
+
+  .links {
+    display: flex;
+    gap: var(--s4);
+  }
+
+  .identity {
+    display: grid;
+    gap: 2px;
+  }
+
+  .identity p {
+    margin: 0;
+  }
+
+  .build {
+    font-size: var(--t-small);
+  }
+
+  /* 一段能整段选中、整段复制的文本。等宽是因为它要贴到 issue 里去。 */
+  .report {
+    margin: 0 0 var(--s3);
+    padding: var(--s3);
+    border-radius: var(--r1);
+    background: var(--tint-1);
+    color: var(--ink-3);
+    font-size: var(--t-micro);
+    line-height: 1.7;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .legal {
+    margin: 0 0 var(--s2);
+    max-width: 56ch;
+    color: var(--ink-2);
+    font-size: var(--t-small);
+    line-height: 1.7;
+  }
+
+  .legal:last-child {
+    margin-bottom: 0;
   }
 
   .path {

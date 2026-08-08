@@ -179,6 +179,33 @@ fn app_name() -> &'static str {
     "Fern"
 }
 
+/// 关于页要说的：这是哪一份构建，跑在什么上面。
+///
+/// 版本号从构建来，不是界面里写死的字符串——写死的那个和 `tauri.conf.json`、
+/// `Cargo.toml` 各写各的，迟早对不上。构建标识（短哈希与日期）由 build.rs 注入。
+#[tauri::command]
+fn about() -> About {
+    About {
+        version: env!("CARGO_PKG_VERSION"),
+        // 源码包里没有 .git，那时候是空串，界面照实不显示。
+        commit: env!("FERN_COMMIT"),
+        built: env!("FERN_BUILD_DATE"),
+        platform: fern_core::platform(),
+        // 「只有我这台打不开」十有八九是它。用户自己查不到，我们查得到。
+        webview: tauri::webview_version().unwrap_or_default(),
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct About {
+    version: &'static str,
+    commit: &'static str,
+    built: &'static str,
+    platform: String,
+    webview: String,
+}
+
 #[tauri::command]
 fn data_paths() -> Result<DataLocation, String> {
     // 纯算路径，不碰磁盘，留在主线程上。
@@ -1069,6 +1096,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_name,
+            about,
             data_paths,
             list_instances,
             list_versions,

@@ -147,7 +147,21 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     stack: true,
   },
 
-  { id: 'about/version', label: '版本', keywords: 'version about 关于' },
+  { id: 'about/version', label: '版本', keywords: 'version about 关于 build 构建' },
+  {
+    id: 'about/diagnostics',
+    label: '诊断信息',
+    note: '版本、系统与运行环境。反馈问题时附上它。',
+    keywords: 'diagnostics report bug 诊断 反馈 报错 版本 系统',
+    stack: true,
+  },
+  { id: 'about/links', label: '源码与反馈', keywords: 'github source issue 源码 仓库 反馈 开源' },
+  {
+    id: 'about/legal',
+    label: '许可与声明',
+    keywords: 'license gpl legal 许可 协议 开源 声明 mojang',
+    stack: true,
+  },
 ]
 
 const byId = new Map(SETTINGS_ROWS.map((row) => [row.id, row]))

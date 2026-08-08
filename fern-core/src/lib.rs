@@ -88,6 +88,26 @@ pub use launch::crash::{
 };
 pub use launch::preflight::{Finding, Severity, check as preflight_instance};
 
+/// 这台机器是什么。反馈问题时的第一句话。
+///
+/// 版本号从 `launch::rules::os_version` 来——那一份本来是给版本元数据里的
+/// `^10\.` 之类规则求值用的，顺手在这里也用上，不必再写一遍三个平台的读法。
+pub fn platform() -> String {
+    let name = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        other => other,
+    };
+    let version = launch::rules::os_version();
+    let architecture = std::env::consts::ARCH;
+    if version.is_empty() {
+        format!("{name} · {architecture}")
+    } else {
+        format!("{name} {version} · {architecture}")
+    }
+}
+
 /// 后端会发出的全部文案 id。
 ///
 /// 后端不产出句子，只产出 id 和参数（见 `launch::crash::rules` 与

@@ -145,4 +145,33 @@ const backend = {
   },
 } satisfies Record<BackendMessage, Message>
 
-export const zhCN = { loader, backend }
+/**
+ * 界面自己的文案。
+ *
+ * 按属性访问（`ui.about.notOfficial`）而不是按字符串键查表：写错的名字是编译
+ * 错误，读代码时也仍然看得见那句话在哪。字符串键那一套留给后端发过来的 id，
+ * 因为那些只有运行时才知道。
+ *
+ * 关于页是第一屏搬过来的。其余屏改到哪一屏顺手搬哪一屏，不做一次性全量搬迁。
+ */
+const ui = {
+  about: {
+    tagline: '一个 Minecraft 启动器。',
+    // 「构建」而不是「版本」：版本号相同的两次构建是常事，哈希才对得上。
+    build: '构建',
+    unknownBuild: '未知构建',
+    diagnostics: '诊断信息',
+    diagnosticsNote: '反馈问题时请附上这段内容，可以省去几轮来回确认。',
+    copy: '复制',
+    copied: '已复制',
+    repository: '源码仓库',
+    issues: '反馈问题',
+    license: '本软件为自由软件，依 GNU 通用公共许可证第 3 版或更新版本发布。',
+    licenseFork: '修改版不得沿用 Fern 的名称、字标与图标。',
+    notOfficial:
+      'Fern 不是 Minecraft 的官方产品，与 Mojang Studios 及 Microsoft 无关。',
+    author: 'Astral Studio',
+  },
+}
+
+export const zhCN = { loader, backend, ui }
