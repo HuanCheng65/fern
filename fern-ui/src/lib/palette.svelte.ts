@@ -131,38 +131,88 @@ export const TYPE_LABEL: Record<SubjectType, string> = {
 }
 
 /**
- * 匹配与打分。
+ * 一段文本和一个查询有多像，**归一化到 0..1**。
  *
  * 一条路走完全部情况：拉丁子序列、直接打汉字、全拼、首字母，以及它们的混搭
  * （`scfserver` 命中「生存服 Server」）。空格和符号在查询里可有可无——人凭
  * 记忆报一个名字的时候，不会记得那里到底有没有连字符。
  *
- * `match` 只回答「命中落在哪几个位置」，排序要的分由位置算出来：落在词首的
- * 位置和连续的位置各自加权，于是紧凑的、从词头开始的匹配排在前面。这比自己
- * 写一遍子序列更准——无论命中来自原文还是拼音，位置的含义都是同一个。
+ * `match` 只回答「命中落在哪几个位置」，像不像由位置算出来，分三个问题：
  *
- * 返回 undefined 表示没命中。
+ *   紧凑   命中是连着的吗、是不是落在词首——`sc` 打中「生存」的两个字头，
+ *          比它在一串字母里东捡一个西捡一个更像
+ *   靠前   第一个命中离开头多远
+ *   占满   命中占了这段文本的多少——同样紧凑时，「圆角」整个就是答案，
+ *          而「恢复默认外观」里的那两个字只是它的一部分
+ *
+ * 归一化不是洁癖：分数要跨字段（标题 vs 别名）和跨长度比较，累加出来的原始
+ * 点数做不到这件事——一个十二字的标题命中四个字，点数天然高过一个两字标题
+ * 被整个打中，而后者显然更像。
+ *
+ * 返回 undefined 表示没命中。空查询是「没问」，一律满分，排序交给别的项。
  */
 export function score(text: string, query: string): number | undefined {
   const needle = query.trim()
-  if (!needle) return 0
+  if (!needle) return 1
   let hit: number[] | null
   try {
     hit = match(text, needle)
   } catch {
     // 拼音那一层出了意外也不该让整个面板空掉，退回最朴素的包含判断。
-    return text.toLowerCase().includes(needle.toLowerCase()) ? 1 : undefined
+    return text.toLowerCase().includes(needle.toLowerCase()) ? 0.5 : undefined
   }
   if (!hit || hit.length === 0) return undefined
 
+  const span = Math.max(text.length, 1)
   let points = 0
-  let streak = 0
   for (let n = 0; n < hit.length; n += 1) {
     const at = hit[n]!
-    streak = n > 0 && hit[n - 1] === at - 1 ? streak + 1 : 0
-    points += 1 + streak + (startsAWord(text, at) ? 3 : 0)
+    const joined = n > 0 && hit[n - 1] === at - 1
+    points += 1 + (joined ? 1 : 0) + (startsAWord(text, at) ? 1 : 0)
   }
-  return points
+  // 满分是「每个字符都连着上一个、且都落在词首」。第一个字符连不上任何东西。
+  const tight = points / (hit.length * 3 - 1)
+  const lead = 1 - hit[0]! / span
+  const covers = hit.length / span
+  return 0.6 * tight + 0.25 * lead + 0.15 * covers
+}
+
+/** 副文本的分打个折。命中标题和命中别名不是一回事。 */
+const ASIDE = 0.6
+
+/** 动作稍稍让位于对象：面板的主角是东西，动词是对它们做的事。 */
+const ACTION = 0.9
+
+/**
+ * 副文本按词再各算一遍，取最好的。
+ *
+ * 别名是一袋并列的词，不是一句话：`bmclapi` 整个就是其中一个词，不该因为它
+ * 旁边还写着另外五个而掉分——按整袋算的话，「占了多少」和「离头多远」都会被
+ * 那五个词稀释，稀释到比一个跨词凑出来的假命中还低。整袋也照算一次并取大者，
+ * 因为首字母本来就是跨词的：`gc` 是 garbage collector 两个词的头。
+ */
+function bag(text: string, query: string): number | undefined {
+  let best = score(text, query)
+  for (const word of text.split(/\s+/)) {
+    if (!word) continue
+    const one = score(word, query)
+    if (one !== undefined && (best === undefined || one > best)) best = one
+  }
+  return best
+}
+
+/**
+ * 一个对象有多像，取它最像的那个字段。
+ *
+ * 字段各匹配各的，而不是拼成一长串——拼起来有两个后果：跨字段的子序列会凭空
+ * 成立（`gc` 在「颜色 · accent color」上拼得出来，两个字母分别来自标题和别名），
+ * 以及命中落在标题上还是落在别名上一样重，而人心里显然不是这么排的。
+ */
+function like(title: string, aside: string | undefined, query: string): number | undefined {
+  const head = score(title, query)
+  const tail = aside ? bag(aside, query) : undefined
+  if (head === undefined && tail === undefined) return undefined
+  return Math.max(head ?? 0, (tail ?? 0) * ASIDE)
 }
 
 /**
@@ -177,9 +227,6 @@ function startsAWord(text: string, at: number): boolean {
   if (/[\u4e00-\u9fff]/.test(text[at]!)) return true
   return /[^\p{L}\p{N}]/u.test(text[at - 1]!)
 }
-
-/** 一个对象拿去匹配的全部文本。见 `Subject.terms`。 */
-const haystack = (subject: Subject) => `${subject.title} ${subject.terms ?? subject.hint ?? ''}`
 
 const FRECENCY_KEY = 'fern.palette.frecency'
 const HALF_LIFE_DAYS = 14
@@ -218,6 +265,19 @@ function weight(key: string): number {
   const days = (Date.now() - habit.at) / 86_400_000
   return Math.log2(1 + habit.count) * Math.pow(0.5, days / HALF_LIFE_DAYS)
 }
+
+/** 用过的东西往上抬多少。 */
+const HABIT = 0.3
+
+/**
+ * 习惯是**乘**上去的，不是加上去的。
+ *
+ * 加法要求两个量同一个量纲，而它们不是：一个说「有多像」，一个说「用得有多
+ * 勤」。加起来的后果是习惯能把一个根本不像的东西顶到第一行——那正是「明明打
+ * 的是这几个字，出来的却是别的」。乘法只放大一个已经成立的匹配：常用的东西
+ * 在势均力敌时胜出，但救不回一个不像的。
+ */
+const lift = (key: string) => 1 + HABIT * weight(key)
 
 function remember(key: string) {
   const habit = habits[key]
@@ -320,12 +380,7 @@ class PaletteStore {
       const subject = scope.subject
       return this.actions
         .filter((action) => action.accepts === subject.type)
-        .map((action) => ({
-          kind: 'action' as const,
-          key: `action:${action.id}`,
-          action,
-          points: score(action.title, query) ?? -1,
-        }))
+        .map((action) => this.asRow(action, query))
         .filter((row) => row.points >= 0)
         .sort((left, right) => right.points - left.points)
     }
@@ -333,12 +388,7 @@ class PaletteStore {
     if (scope) {
       return this.subjects
         .filter((subject) => subject.type === scope.type)
-        .map((subject) => ({
-          kind: 'subject' as const,
-          key: `${subject.type}:${subject.id}`,
-          subject,
-          points: score(haystack(subject), query) ?? -1,
-        }))
+        .map((subject) => this.asRow(subject, query))
         .filter((row) => row.points >= 0)
         .sort((left, right) => right.points - left.points)
     }
@@ -350,17 +400,12 @@ class PaletteStore {
     const rows: Row[] = []
     for (const subject of this.subjects) {
       if (subject.scoped) continue
-      const key = `${subject.type}:${subject.id}`
-      const points = score(haystack(subject), query)
-      if (points === undefined) continue
-      rows.push({ kind: 'subject', key, subject, points: points + weight(key) * 4 })
+      const row = this.asRow(subject, query)
+      if (row.points >= 0) rows.push(row)
     }
     for (const action of this.actions) {
-      const key = `action:${action.id}`
-      const points = score(`${action.title} ${action.hint ?? ''}`, query)
-      if (points === undefined) continue
-      // 动作稍稍让位于对象：面板的主角是东西，动词是对它们做的事。
-      rows.push({ kind: 'action', key, action, points: points + weight(key) * 4 - 1 })
+      const row = this.asRow(action, query)
+      if (row.points >= 0) rows.push(row)
     }
     rows.sort((left, right) => right.points - left.points)
 
@@ -376,6 +421,33 @@ class PaletteStore {
     }
     return rows
   })
+
+  /**
+   * 打一行的分。没命中记 -1，由调用方筛掉。
+   *
+   * 三个分支都从这一个口子出来：下钻列对象、下钻列动作、顶层混排。分开写就是
+   * 三份会慢慢走散的规则——「切换器里为什么不按常用排」正是那么来的。
+   */
+  private asRow(item: Subject | Action, query: string): Row {
+    if ('accepts' in item) {
+      const key = `action:${item.id}`
+      const hit = like(item.title, item.hint, query)
+      return {
+        kind: 'action',
+        key,
+        action: item,
+        points: hit === undefined ? -1 : hit * ACTION * lift(key),
+      }
+    }
+    const key = `${item.type}:${item.id}`
+    const hit = like(item.title, item.terms ?? item.hint, query)
+    return {
+      kind: 'subject',
+      key,
+      subject: item,
+      points: hit === undefined ? -1 : hit * lift(key),
+    }
+  }
 
   /**
    * 空态那几条：最近用过的排前面，不够就用实例补齐。

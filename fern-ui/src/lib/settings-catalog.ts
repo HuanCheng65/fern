@@ -195,7 +195,11 @@ provides(() => [
     (section): Subject => ({
       type: 'place',
       id: `settings/${section.id}`,
-      title: `设置 · ${section.label}`,
+      // 「外观 · 设置」而不是标题里写「设置 · 外观」：人打的是「外观」，而
+      // 一个被整个打中的标题才该拿满分——多出来的两个字只会把它压到那一节
+      // 里某一行的下面去。位置归位置，写在 hint 里。
+      title: section.label,
+      hint: '设置',
       run: () => nav.show('settings', section.id),
     }),
   ),
