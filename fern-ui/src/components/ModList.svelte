@@ -40,6 +40,14 @@
   let loading = $state(true)
   let error = $state('')
   let dropping = $state(false)
+  /**
+   * 正在改的那一个。
+   *
+   * 装、删、开关模组之前，核心会先拍一张快照（见 docs/fern-backup-design.md
+   * §5）——第一次要读完整个游戏目录，几秒起步。没有这个状态的话，那几秒里
+   * 界面看起来就是「点了没反应」。
+   */
+  let busy = $state('')
 
   const enabledCount = $derived(mods.filter((item) => item.enabled).length)
 
@@ -64,6 +72,7 @@
   }
 
   async function toggle(item: ModFile) {
+    busy = item.fileName
     try {
       await invoke('set_mod_enabled', {
         instanceId,
@@ -74,16 +83,21 @@
       await load()
     } catch (cause) {
       error = String(cause)
+    } finally {
+      busy = ''
     }
   }
 
   async function remove(item: ModFile) {
+    busy = item.fileName
     try {
       await invoke('remove_mod', { instanceId, fileName: item.fileName })
       recheck()
       await load()
     } catch (cause) {
       error = String(cause)
+    } finally {
+      busy = ''
     }
   }
 
@@ -157,12 +171,13 @@
   {:else}
     <ul class="list">
       {#each mods as item (item.fileName)}
-        <li class="row" class:off={!item.enabled}>
+        <li class="row" class:off={!item.enabled} class:busy={busy === item.fileName}>
           <button
             class="toggle"
             role="switch"
             aria-checked={item.enabled}
             aria-label={item.enabled ? `停用 ${item.name}` : `启用 ${item.name}`}
+            disabled={busy !== ''}
             onclick={() => void toggle(item)}
           ></button>
           <span class="name">{item.name}</span>
@@ -172,6 +187,7 @@
             class="btn btn--icon"
             aria-label={`删除 ${item.name}`}
             title="删除"
+            disabled={busy !== ''}
             onclick={() => void remove(item)}
           >
             <Trash2 size={13} strokeWidth={1.8} />
@@ -251,6 +267,42 @@
   /* 停用的压暗但不移走：文件还在磁盘上，从列表里消失会让人以为被删了。 */
   .row.off {
     opacity: 0.45;
+  }
+
+  /*
+   * 正在改的那一行。改动模组之前要先拍一张快照，第一次可能要几秒——那几秒里
+   * 这一行得看得出来「正在处理」，否则就是「点了没反应」。
+   *
+   * 用一道横向扫过的高光，不加转圈：这一行的高度只有二十来像素，塞一个
+   * spinner 会把整行的节奏打乱，而它要说的只是「还在动」。
+   */
+  .row.busy {
+    background: var(--tint-1);
+  }
+
+  .row.busy .name::after {
+    content: '';
+    display: inline-block;
+    width: 3.2em;
+    height: 1px;
+    margin-left: var(--s2);
+    vertical-align: middle;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: sweep calc(var(--t-slow) * 4) linear infinite;
+  }
+
+  @keyframes sweep {
+    from {
+      opacity: 0.15;
+      transform: translateX(-40%);
+    }
+    50% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.15;
+      transform: translateX(40%);
+    }
   }
 
   /* 开关是一条短横，亮起表示启用——比一个方形复选框安静。 */
