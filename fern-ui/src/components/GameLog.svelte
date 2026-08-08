@@ -9,7 +9,7 @@
    * 免得过滤和配色在两个地方各长各的。
    */
   import { X } from 'lucide-svelte'
-  import Overlay from './Overlay.svelte'
+  import Overlay from 'fern-kit/Overlay.svelte'
   import LogLines from './LogLines.svelte'
   import { launch } from '../lib/launch.svelte'
 

@@ -14,7 +14,7 @@
   import { untrack } from 'svelte'
   import { Check, Pencil, X } from 'lucide-svelte'
   import Choice from './Choice.svelte'
-  import Overlay from './Overlay.svelte'
+  import Overlay from 'fern-kit/Overlay.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { notices } from '../lib/notices.svelte'

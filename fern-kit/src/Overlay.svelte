@@ -4,9 +4,13 @@
    *
    * 命令面板、新建实例、任何需要打断当前场景的东西都走这里，所以它们的
    * 圆角、玻璃、影子、进出方式只在这一个文件里定义过一次。
+   *
+   * 面板那身玻璃原来是基础样式里的 `.panel` 类，搬进来的时候一起搬了：整个
+   * 项目里只有这里用它，而这个组件要能落在任何一页上，不该指望宿主先铺好
+   * 一张样式表。
    */
   import { fade, scale } from 'svelte/transition'
-  import { theme } from '../lib/theme.svelte'
+  import { host } from './host.svelte'
 
   interface Props {
     label: string
@@ -20,7 +24,7 @@
 
   let { label, width = '440px', align = 'center', onclose, children }: Props = $props()
 
-  const ms = (base: number) => Math.round(base * theme.motionScale)
+  const ms = (base: number) => Math.round(base * host.motionScale)
 </script>
 
 <div
@@ -32,7 +36,7 @@
 
 <div class="dock" class:top={align === 'top'}>
   <div
-    class="panel sheet"
+    class="sheet"
     style:width
     role="dialog"
     aria-modal="true"
@@ -77,5 +81,12 @@
     flex-direction: column;
     min-height: 0;
     pointer-events: auto;
+    border-radius: var(--r3);
+    background: var(--panel);
+    box-shadow:
+      inset 0 0 0 1px var(--panel-line),
+      var(--shadow-lg);
+    -webkit-backdrop-filter: blur(26px) saturate(1.3);
+    backdrop-filter: blur(26px) saturate(1.3);
   }
 </style>

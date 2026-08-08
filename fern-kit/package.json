@@ -9,9 +9,14 @@
     "./mark": "./src/mark.ts",
     "./biome": "./src/biome.ts",
     "./palette": "./src/palette.svelte.ts",
+    "./host": "./src/host.svelte.ts",
     "./tokens": "./src/tokens.css",
+    "./Mark.svelte": "./src/Mark.svelte",
+    "./Cover.svelte": "./src/Cover.svelte",
+    "./Overlay.svelte": "./src/Overlay.svelte",
     "./PaletteRow.svelte": "./src/PaletteRow.svelte",
-    "./PalettePanel.svelte": "./src/PalettePanel.svelte"
+    "./PalettePanel.svelte": "./src/PalettePanel.svelte",
+    "./CommandPalette.svelte": "./src/CommandPalette.svelte"
   },
   "dependencies": {
     "lucide-svelte": "^0.469.0",

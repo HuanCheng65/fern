@@ -15,7 +15,7 @@
    * 一行只做一件最常用的事：**点名字切换到它**。其余的进档案。
    */
   import { Check, ChevronRight, Plus } from 'lucide-svelte'
-  import Cover from './Cover.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
   import { accounts, KIND_LABEL, siteName } from '../lib/accounts.svelte'
   import { nav } from '../lib/nav.svelte'
 

@@ -7,7 +7,7 @@
    * 不编造数据，也不写「敬请期待」这类替代内容的文案。
    */
   import { ArrowRight } from 'lucide-svelte'
-  import Cover from '../components/Cover.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
 
   interface Props {
     /** 生成色块的种子，用场景名——每个场景有自己的一块颜色。 */

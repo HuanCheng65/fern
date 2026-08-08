@@ -15,7 +15,7 @@
    */
   import { FolderOpen, Play, Plus } from 'lucide-svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
-  import Cover from '../components/Cover.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
   import Loading from '../components/Loading.svelte'
   import Collection from '../layouts/Collection.svelte'
   import InstanceDetail from './InstanceDetail.svelte'

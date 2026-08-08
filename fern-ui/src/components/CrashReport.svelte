@@ -11,7 +11,7 @@
    * 的代码里」往往是唯一的线索，所以嫌疑模组独立于诊断显示。
    */
   import { ChevronRight, FolderOpen } from 'lucide-svelte'
-  import Overlay from './Overlay.svelte'
+  import Overlay from 'fern-kit/Overlay.svelte'
   import Advice from './Advice.svelte'
   import { describe } from '../lib/i18n'
   import type { CrashReport } from '../lib/launch.svelte'

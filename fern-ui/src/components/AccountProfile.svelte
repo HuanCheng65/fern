@@ -15,7 +15,7 @@
    * 数字的时候才说得清楚。
    */
   import { Check, Trash2 } from 'lucide-svelte'
-  import Cover from './Cover.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
   import { accounts, KIND_LABEL, siteName } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
   import { notices } from '../lib/notices.svelte'

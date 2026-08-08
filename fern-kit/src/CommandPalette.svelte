@@ -6,14 +6,14 @@
    * 前者带着一枚锁定实例类型的 chip 进来。下钻（「校验哪个实例」）和预过滤
    * （「只看实例」）共用这一个机制，不写两套。
    *
-   * 板子本身在 fern-kit 里（`PalettePanel`），这里只做三件事：套上浮层、接上
-   * 那个全局 store、收键盘。搜什么、怎么排、执行之后关不关，全在
-   * fern-kit/palette 里——那是语法所在的地方。
+   * 板子本身是隔壁的 `PalettePanel`，这里只做三件事：套上浮层、接上那个全局
+   * store、收键盘。搜什么、怎么排、执行之后关不关，全在 ./palette.svelte 里
+   * ——那是语法所在的地方。
    */
   import Overlay from './Overlay.svelte'
   import Cover from './Cover.svelte'
-  import PalettePanel from 'fern-kit/PalettePanel.svelte'
-  import { palette, type Row } from 'fern-kit/palette'
+  import PalettePanel from './PalettePanel.svelte'
+  import { palette, type Row } from './palette.svelte'
 
   interface Props {
     onclose: () => void
@@ -89,7 +89,7 @@
   }
 </script>
 
-<!-- 有种子的行画封面。行在 fern-kit 里，它不认识 worker，也不该认识。 -->
+<!-- 有种子的行画封面。行自己不认识封面，也不该认识：它只知道有个种子。 -->
 {#snippet cover(seed: string)}<Cover {seed} quality={0.4} />{/snippet}
 
 <Overlay label="命令面板" width="600px" align="top" {onclose}>

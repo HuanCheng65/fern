@@ -9,7 +9,7 @@
    * 延迟 160ms 才出现：本地读盘和缓存命中往往几十毫秒就回来了，立刻画一个
    * 加载指示只会闪一下，那一闪比等待本身更烦人。
    */
-  import Mark from './Mark.svelte'
+  import Mark from 'fern-kit/Mark.svelte'
 
   interface Props {
     /** 一句话说清在等什么。不给就只有动画。 */

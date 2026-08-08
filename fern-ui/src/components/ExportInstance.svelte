@@ -13,7 +13,7 @@
    * 东西」，而那句话本该在按下去之前就说。
    */
   import { save } from '@tauri-apps/plugin-dialog'
-  import Overlay from './Overlay.svelte'
+  import Overlay from 'fern-kit/Overlay.svelte'
   import Choice from './Choice.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import { notices } from '../lib/notices.svelte'

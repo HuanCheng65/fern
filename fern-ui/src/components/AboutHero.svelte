@@ -18,8 +18,8 @@
    *
    * 动效关掉时（`theme.motionScale === 0`）不画，直接是完整的标志。
    */
-  import Cover from './Cover.svelte'
-  import Mark from './Mark.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
+  import Mark from 'fern-kit/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
   import { ui } from '../lib/i18n'
 

@@ -14,6 +14,7 @@
  * 在所有可见元素之上，两边各写各的，不打架。
  */
 
+import { host } from 'fern-kit/host'
 import { patch, snapshot } from './persist'
 
 export type AccentMode = 'biome' | 'locked'
@@ -173,6 +174,8 @@ class ThemeStore {
     style.setProperty('--density', String(DENSITY_SCALE[theme.density]))
     style.setProperty('--radius', String(RADIUS_SCALE[theme.radius]))
     style.setProperty('--motion', String(MOTION_SCALE[theme.motion]))
+    // fern-kit 里的组件（浮层、标志）也要认这个档位，但它们读不到这个 store。
+    host.motionScale = MOTION_SCALE[theme.motion]
     if (theme.accentMode === 'locked') {
       const [r, g, b] = hex2rgb(theme.accent)
       style.setProperty('--accent', theme.accent)

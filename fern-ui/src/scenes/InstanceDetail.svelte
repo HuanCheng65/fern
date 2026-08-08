@@ -13,7 +13,7 @@
    */
   import { invoke } from '@tauri-apps/api/core'
   import { Check, FolderOpen, Play, RefreshCw, Share } from 'lucide-svelte'
-  import Cover from '../components/Cover.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
   import Detail from '../layouts/Detail.svelte'
   import ExportInstance from '../components/ExportInstance.svelte'
   import InstanceSettings from '../components/InstanceSettings.svelte'

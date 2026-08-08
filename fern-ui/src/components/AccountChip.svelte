@@ -11,7 +11,7 @@
    * 玩过别的。绑定不需要一个绑定界面，它是「记住上次」的副产品。
    */
   import { Check } from 'lucide-svelte'
-  import Cover from './Cover.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
   import { accounts, KIND_LABEL, siteName } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
   import { nav } from '../lib/nav.svelte'

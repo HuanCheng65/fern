@@ -13,7 +13,7 @@
    * 再返回，接着看，不用重新往下滑一遍。
    */
   import { Check, Search } from 'lucide-svelte'
-  import Cover from '../components/Cover.svelte'
+  import Cover from 'fern-kit/Cover.svelte'
   import FilterGroup from '../components/FilterGroup.svelte'
   import Loading from '../components/Loading.svelte'
   import Browse from '../layouts/Browse.svelte'
