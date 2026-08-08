@@ -462,7 +462,7 @@ pub async fn launch_instance(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    apply_priority(&mut command, effective.process_priority);
+    configure_process(&mut command, effective.process_priority);
     let mut child = command
         .spawn()
         .with_context(|| format!("start Java from {}", java_binary.display()))?;
@@ -742,26 +742,32 @@ impl SessionRecord {
     }
 }
 
-/// 让游戏进程跑在指定的优先级上（文档 §6.3）。
+/// 起游戏进程之前要在 `Command` 上做的平台设置。
 ///
-/// 默认不动——调度器本来就偏向前台进程，绝大多数情况下调它没有意义。存在的
-/// 理由是「一边挂机一边干别的」这类场景，那时候用户明确知道自己要什么。
-fn apply_priority(command: &mut Command, priority: crate::ProcessPriority) {
-    if priority == crate::ProcessPriority::Normal {
-        return;
-    }
-
+/// 两件事：优先级（文档 §6.3）和 Windows 上不要控制台窗口。合成一个函数是因为
+/// 在 Windows 上它们写的是同一个字段，分开设后一次会盖掉前一次。
+///
+/// 优先级默认不动——调度器本来就偏向前台进程，绝大多数情况下调它没有意义。存在
+/// 的理由是「一边挂机一边干别的」这类场景，那时候用户明确知道自己要什么。
+fn configure_process(command: &mut Command, priority: crate::ProcessPriority) {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         // 这两个常量在 std 里没有，值来自 Win32 的 processthreadsapi.h。
         const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
         const ABOVE_NORMAL_PRIORITY_CLASS: u32 = 0x0000_8000;
-        command.creation_flags(match priority {
-            crate::ProcessPriority::Low => BELOW_NORMAL_PRIORITY_CLASS,
-            crate::ProcessPriority::High => ABOVE_NORMAL_PRIORITY_CLASS,
-            crate::ProcessPriority::Normal => return,
-        });
+        // 优先级和「不要控制台窗口」写的是同一个字段，只能一次设好。
+        crate::process::with_creation_flags(
+            command,
+            match priority {
+                crate::ProcessPriority::Low => BELOW_NORMAL_PRIORITY_CLASS,
+                crate::ProcessPriority::High => ABOVE_NORMAL_PRIORITY_CLASS,
+                crate::ProcessPriority::Normal => 0,
+            },
+        );
+    }
+
+    if priority == crate::ProcessPriority::Normal {
+        return;
     }
 
     #[cfg(unix)]

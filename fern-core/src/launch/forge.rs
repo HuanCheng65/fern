@@ -490,7 +490,11 @@ async fn run_one(
 
     let binary = java_binary.to_owned();
     let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(&binary).args(arguments).output()
+        let mut command = std::process::Command::new(&binary);
+        command.args(arguments);
+        // 一次安装要跑十来个 processor，少了这一行就是十来个黑框接连闪过。
+        crate::process::without_console(&mut command);
+        command.output()
     })
     .await?
     .with_context(|| format!("运行 {main_class}"))?;

@@ -28,6 +28,7 @@ mod instance;
 mod java;
 mod job;
 mod launch;
+mod process;
 mod supply;
 
 pub use account::Account;

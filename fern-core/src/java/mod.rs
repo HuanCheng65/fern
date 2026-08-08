@@ -466,8 +466,11 @@ fn read_release(home: &Path) -> Option<ReleaseFile> {
 }
 
 fn ask_java_itself(executable: &Path) -> Result<(u16, String)> {
-    let output = Command::new(executable)
-        .arg("-version")
+    let mut command = Command::new(executable);
+    command.arg("-version");
+    // 发现 Java 会挨个探测，每一次都是一个黑框闪一下。
+    crate::process::without_console(&mut command);
+    let output = command
         .output()
         .with_context(|| format!("运行 {}", executable.display()))?;
     if !output.status.success() {
