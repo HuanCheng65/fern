@@ -92,10 +92,10 @@ pub enum Severity {
 
 /// 这个实例的游戏版本，两副面孔。
 ///
-/// `id` 是磁盘上、也是界面上那个名字；`semantic` 是拿去和模组声明的区间比的那
-/// 一个。发行版两者一样，快照不一样（`25w15a` 对模组来说是
-/// `1.21.6-alpha.25.15.a`，见 [`ranges::semantic`]），翻不出来就是 `None`——那时
-/// 不比，而不是拿 id 去凑。
+/// `id` 是磁盘上、也是界面上那个名字；`semantic` 是 fabric-loader 归一化之后的
+/// 那个（`25w15a` → `1.21.6-alpha.25.15.a`，见 [`ranges::semantic`]）。
+///
+/// 要两份，是因为**两个加载器阵营比的不是同一个版本号**，见 [`Game::comparable`]。
 #[derive(Debug, Clone)]
 pub struct Game {
     pub id: String,
@@ -109,6 +109,25 @@ impl Game {
         Self {
             id: id.to_owned(),
             semantic: ranges::semantic(id, release_target),
+        }
+    }
+
+    /// 拿去和这个加载器的模组声明的区间比的那个版本号。`None` 是「比不了」。
+    ///
+    /// Fabric 和 Quilt 的模组写的是 loader 归一化之后的语义化版本号，所以比的是
+    /// `semantic`。Forge 和 NeoForge 不归一化：FML 把 minecraft 当成一个版本号就是
+    /// `1.21.1` 的内置模组，`versionRange = "[1.21.1,1.22)"` 直接拿它原样比，所以
+    /// 这一边比的是 `id`。
+    ///
+    /// 但只在正式版上比。Maven 区间容不下 `25w14craftmine` 这种 id——`[1.21.6,)`
+    /// 对上它，得出的照样是「一个模组都不兼容」。这两个加载器本来也只为正式版
+    /// 出构建，落到这里说明这是一份我们不认识的东西，不猜。
+    fn comparable(&self, loader: LoaderKind) -> Option<&str> {
+        match loader {
+            LoaderKind::Fabric | LoaderKind::Quilt => self.semantic.as_deref(),
+            LoaderKind::Forge | LoaderKind::NeoForge | LoaderKind::Vanilla => {
+                ranges::is_release(&self.id).then_some(self.id.as_str())
+            }
         }
     }
 }
@@ -228,7 +247,7 @@ pub fn inspect(
 
     findings.extend(duplicates(&enabled));
     findings.extend(wrong_loader(&enabled, loader));
-    findings.extend(wrong_game_version(&enabled, minecraft));
+    findings.extend(wrong_game_version(&enabled, minecraft, loader));
     findings.extend(missing_dependencies(jars, &enabled, loader));
     findings.extend(wrong_java(&enabled, java_major));
     findings.sort_by_key(|finding| finding.severity);
@@ -297,11 +316,11 @@ fn accepts(instance: LoaderKind, jar: LoaderKind) -> bool {
 
 /// 模组自己声明的 MC 版本区间不含这个实例的版本。
 ///
-/// 比之前先要有一个**比得了**的版本号。快照的 id 翻不成语义化版本号时这一整项
-/// 就不做：拿 `25w14craftmine` 去比 `>=1.21.6`，比出来的是「一个模组都不兼容」，
-/// 而那句话本身才是错的。
-fn wrong_game_version(enabled: &[&ModJar], minecraft: &Game) -> Vec<Finding> {
-    let Some(version) = minecraft.semantic.as_deref() else {
+/// 比之前先要有一个**比得了**的版本号，而是哪一个要看加载器（[`Game::comparable`]）。
+/// 拿不到就整项不做：`25w14craftmine` 去比 `>=1.21.6`，比出来的是「一个模组都不
+/// 兼容」，而那句话本身才是错的。
+fn wrong_game_version(enabled: &[&ModJar], minecraft: &Game, loader: LoaderKind) -> Vec<Finding> {
+    let Some(version) = minecraft.comparable(loader) else {
         return Vec::new();
     };
     enabled
@@ -697,6 +716,52 @@ mod tests {
         // 翻得出来的那些照常比，而且比得对。
         let snapshot = Game::of("25w15a", Some("1.21.6"));
         assert!(inspect(&[sodium], LoaderKind::Fabric, &snapshot, None).is_empty());
+    }
+
+    /// Forge 那边比的是版本号原样，不是 loader 归一化过的那个。
+    ///
+    /// FML 把 minecraft 当成一个版本号就是 `1.21.1` 的内置模组，`versionRange`
+    /// 直接拿它比。把 Fabric 的写法套上去，`[1.21.6,)` 会对上
+    /// `1.21.6-alpha.25.15.a`——语义化版本号里快照比正式版旧，于是整屋子模组
+    /// 又全成了不兼容。
+    #[test]
+    fn the_forge_side_compares_the_plain_version_number() {
+        let mut applied = jar("AE2", "ae2", LoaderKind::NeoForge);
+        applied.depends.push(Dependency {
+            mod_id: "minecraft".to_owned(),
+            range: "[1.21.6,1.22)".to_owned(),
+            required: true,
+        });
+
+        // 正式版照常比，两边都比得对。
+        assert!(
+            inspect(
+                &[applied.clone()],
+                LoaderKind::NeoForge,
+                &Game::of("1.21.6", None),
+                None
+            )
+            .is_empty()
+        );
+        let findings = inspect(
+            &[applied.clone()],
+            LoaderKind::NeoForge,
+            &Game::of("1.21.1", None),
+            None,
+        );
+        assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
+
+        // 快照上不比：这两个加载器只为正式版出构建，落到这里的是我们不认识的
+        // 东西，而 Maven 区间容不下一个快照 id。
+        assert!(
+            inspect(
+                &[applied],
+                LoaderKind::NeoForge,
+                &Game::of("25w15a", Some("1.21.6")),
+                None
+            )
+            .is_empty()
+        );
     }
 
     #[test]

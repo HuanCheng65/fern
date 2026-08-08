@@ -50,7 +50,7 @@ pub fn semantic(id: &str, release_target: Option<&str>) -> Option<String> {
 }
 
 /// 一个光秃秃的正式版号：`1.21`、`1.21.5`。
-fn is_release(version: &str) -> bool {
+pub fn is_release(version: &str) -> bool {
     let segments: Vec<&str> = version.split('.').collect();
     segments.len() >= 2 && segments.iter().all(|segment| is_number(segment))
 }
