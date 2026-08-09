@@ -15,8 +15,8 @@
    * 数字的时候才说得清楚。
    */
   import { Check, Trash2 } from 'lucide-svelte'
-  import Cover from 'fern-kit/Cover.svelte'
-  import { accounts, KIND_LABEL, siteName } from '../lib/accounts.svelte'
+  import AccountFace from './AccountFace.svelte'
+  import { accounts, KIND_LABEL } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
   import { notices } from '../lib/notices.svelte'
 
@@ -30,7 +30,7 @@
 
   const account = $derived(accounts.list.find((item) => item.id === accountId))
   const isActive = $derived(accounts.active?.id === accountId)
-  /** 记着用这个账户的实例。它们是「移除会影响到什么」的答案。 */
+  /** 钉住这个账户的实例。它们是「移除会影响到什么」的答案。 */
   const bound = $derived(instances.list.filter((item) => item.accountId === accountId))
 
   const OFFLINE_NAME = /^[A-Za-z0-9_]{3,16}$/
@@ -70,7 +70,7 @@
 {:else}
   <div class="profile">
     <header class="who">
-      <span class="face"><Cover seed={account.uuid} quality={0.6} /></span>
+      <AccountFace {account} size={54} />
       <div class="names">
         {#if renaming}
           <form
@@ -89,9 +89,8 @@
         {:else}
           <h2>{account.playerName}</h2>
         {/if}
-        <p class="kind t-quiet">
-          {KIND_LABEL[account.kind]}{account.apiRoot ? ` · ${siteName(account.apiRoot)}` : ''}
-        </p>
+        <!-- 皮肤站是下面的一行事实，这里不重复一遍。 -->
+        <p class="kind t-quiet">{KIND_LABEL[account.kind]}</p>
       </div>
 
       {#if isActive}
@@ -125,13 +124,13 @@
     {/if}
 
     <!--
-      「谁在用它」必须说。移除一个被三个实例记着的账户，那三个实例下次启动
+      「谁在用它」必须说。移除一个被三个实例钉着的账户，那三个实例下次启动
       会退回当前账户——这件事该在按下移除之前就看得见。
     -->
     <section>
-      <h3>使用这个账户的实例</h3>
+      <h3>固定使用这个账户的实例</h3>
       {#if bound.length === 0}
-        <p class="t-quiet">没有实例专门记着它。实例第一次成功启动时会记下当时用的账户。</p>
+        <p class="t-quiet">没有实例固定使用它。实例默认跟随当前账户，可在实例设置中单独固定。</p>
       {:else}
         <ul class="bound">
           {#each bound as item (item.id)}
@@ -179,15 +178,6 @@
     display: flex;
     align-items: center;
     gap: var(--s4);
-  }
-
-  .face {
-    display: block;
-    flex: none;
-    width: 64px;
-    height: 64px;
-    overflow: hidden;
-    border-radius: var(--r2);
   }
 
   .names {

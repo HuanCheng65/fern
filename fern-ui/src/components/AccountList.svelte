@@ -15,8 +15,8 @@
    * 一行只做一件最常用的事：**点名字切换到它**。其余的进档案。
    */
   import { Check, ChevronRight, Plus } from 'lucide-svelte'
-  import Cover from 'fern-kit/Cover.svelte'
-  import { accounts, KIND_LABEL, siteName } from '../lib/accounts.svelte'
+  import AccountFace from './AccountFace.svelte'
+  import { accounts, originOf } from '../lib/accounts.svelte'
   import { nav } from '../lib/nav.svelte'
 
   /** 二级页的地址。这一行本身的 id 是 `account/list`。 */
@@ -31,8 +31,7 @@
   <ul class="roster">
     {#each accounts.list as account (account.id)}
       <li class="row" class:on={accounts.active?.id === account.id}>
-        <!-- 封面那套生成式图形当头像用：每个身份一张恒定的脸，不必去拉皮肤。 -->
-        <span class="face"><Cover seed={account.uuid} quality={0.4} /></span>
+        <AccountFace {account} size={30} />
 
         <button
           class="who"
@@ -40,9 +39,8 @@
           onclick={() => void accounts.use(account.id)}
         >
           <strong>{account.playerName}</strong>
-          <small>
-            {KIND_LABEL[account.kind]}{account.apiRoot ? ` · ${siteName(account.apiRoot)}` : ''}
-          </small>
+          <!-- 这一处永远写全出处：这份名单的职责就是把同名的人分开。 -->
+          <small>{originOf(account)}</small>
         </button>
 
         {#if accounts.active?.id === account.id}
@@ -86,15 +84,6 @@
     align-items: center;
     gap: var(--s3);
     padding: var(--s2) 0;
-  }
-
-  .face {
-    display: block;
-    flex: none;
-    width: 30px;
-    height: 30px;
-    overflow: hidden;
-    border-radius: calc(var(--r1) * 0.8);
   }
 
   /* 整块名字都是切换按钮：一行里最大的那块该是最常用的动作。 */

@@ -45,6 +45,19 @@ export function siteName(apiRoot: string | null): string {
   }
 }
 
+/**
+ * 名字后面那一截：这个身份是从哪儿来的。
+ *
+ * 同一个名字可以合法地存在好几份——正版的 Steve、离线的 Steve、某个皮肤站上的
+ * Steve。后端的去重键是 `(kind, uuid, api_root)`（见 `roster.rs::adopt_session`），
+ * 所以判别式是**名字加出处**，光有名字分不开人。
+ *
+ * 外置写站点域名而不是「外置登录」四个字：同名号之间真正不同的就是那个站，
+ * 而类型名对每一个外置号都一样，说了等于没说。
+ */
+export const originOf = (account: Account) =>
+  account.apiRoot ? siteName(account.apiRoot) : KIND_LABEL[account.kind]
+
 class AccountStore {
   list = $state<Account[]>([])
   activeId = $state('')

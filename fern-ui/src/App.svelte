@@ -199,7 +199,6 @@
             <MultiplayerScene />
           {:else}
             <Placeholder
-              seed="wardrobe"
               title="衣柜尚未开放"
               note="皮肤与披风的预览与切换将在此处提供。"
               onback={() => nav.go('launch')}

@@ -19,11 +19,13 @@
 //!
 //! 这一层的其余部分：名册在 `roster.rs`（账户是复数，见文档 §3.4），两种要
 //! 联网的登录各占一个文件（`microsoft.rs`、`yggdrasil.rs`，离线那种不需要谁
-//! 来实现），令牌的保管处是 `credentials.rs`——只有它碰系统钥匙串。
+//! 来实现），令牌的保管处是 `credentials.rs`——只有它碰系统钥匙串。皮肤在
+//! `skin.rs`，它走的是公开档案，和这里的登录态没有关系。
 
 pub(crate) mod credentials;
 pub(crate) mod microsoft;
 pub(crate) mod roster;
+pub(crate) mod skin;
 pub(crate) mod yggdrasil;
 
 use std::path::PathBuf;

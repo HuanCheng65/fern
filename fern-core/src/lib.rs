@@ -44,6 +44,7 @@ pub use account::roster::{
     for_instance as account_for_instance, list as list_accounts, remove as remove_account,
     rename_offline as rename_offline_account, set_active as set_active_account,
 };
+pub use account::skin::{AccountSkin, of_record as account_skin};
 pub use account::yggdrasil::{
     YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
     prefetched as prefetched_metadata,

@@ -1151,6 +1151,27 @@ async fn active_account() -> Result<Option<fern_core::AccountRecord>, String> {
     off_thread(|| Ok(fern_core::active_account(&paths()?))).await?
 }
 
+/// 一个账户的皮肤，`data:` 地址，头部由界面去裁。
+///
+/// 拿不到就是 `None`，不是错误：离线号本来就没有皮肤，而皮肤站抽风不该让一份
+/// 账户名单打不开。界面那边退回生成式色块。
+#[tauri::command]
+async fn account_skin(id: String) -> Result<Option<fern_core::AccountSkin>, String> {
+    // 读名册要碰磁盘，取皮肤要联网：前者进阻塞线程池，后者留在这里 await。
+    let found = off_thread(move || {
+        let paths = paths()?;
+        let record = fern_core::list_accounts(&paths)
+            .into_iter()
+            .find(|item| item.id == id);
+        Ok::<_, String>(record.map(|record| (paths, record)))
+    })
+    .await??;
+    let Some((paths, record)) = found else {
+        return Ok(None);
+    };
+    Ok(fern_core::account_skin(&paths, &record).await)
+}
+
 #[tauri::command]
 async fn set_active_account(id: String) -> Result<(), String> {
     off_thread(move || {
@@ -1376,6 +1397,7 @@ pub fn run() {
             detect_java,
             list_accounts,
             active_account,
+            account_skin,
             set_active_account,
             add_offline_account,
             rename_offline_account,
