@@ -44,10 +44,17 @@ def notes_for(changelog: pathlib.Path, version: str) -> str | None:
     """
     if not changelog.exists():
         return None
-    wanted = f"## {version}"
+
+    def is_wanted(line: str) -> bool:
+        # 标题是「## <版本号> - <日期>」，日期由 release.py 补上；早期几节只有版本号。
+        # 精确匹配整行会漏掉带日期的那种——症状是发布出去的清单没有 notes。
+        if not line.startswith("## "):
+            return False
+        return line[3:].strip().split(" ", 1)[0] == version
+
     lines = changelog.read_text().splitlines()
     try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == wanted)
+        start = next(i for i, line in enumerate(lines) if is_wanted(line))
     except StopIteration:
         return None
     body = []
@@ -69,27 +76,28 @@ def main() -> int:
         "--changelog",
         type=pathlib.Path,
         default=pathlib.Path("CHANGELOG.md"),
-        help="从这里取本版本那一节当更新日志。",
+        help="从该文件中取本版本小节作为更新日志。",
     )
-    parser.add_argument("--notes", default=None, help="直接给一段文字，覆盖 --changelog。")
+    parser.add_argument(
+        "--notes", default=None, help="直接指定更新日志文本，覆盖 --changelog。"
+    )
     parser.add_argument(
         "--require-notes",
         action="store_true",
-        help="没有更新日志就失败。正式版发布时应当打开——一个没有更新日志的"
-        "正式版是发错了，而不是一次可以接受的疏漏。",
+        help="缺少更新日志时失败。正式版发布应当启用。",
     )
     parser.add_argument(
         "--rollout",
         type=int,
         default=100,
-        help="放量百分比。默认全量，见文件头。",
+        help="放量百分比，默认 100，即全量。",
     )
     parser.add_argument("--critical", action="store_true")
     parser.add_argument("--min-version", default=None)
     args = parser.parse_args()
 
     if not 0 <= args.rollout <= 100:
-        print(f"rollout 要在 0 到 100 之间，给的是 {args.rollout}", file=sys.stderr)
+        print(f"--rollout 应在 0 到 100 之间，当前为 {args.rollout}。", file=sys.stderr)
         return 1
 
     base = args.base_url.rstrip("/")
@@ -101,10 +109,10 @@ def main() -> int:
         # 那样缺的那个平台上的用户会看到「这个平台还没有构建」，
         # 而真相是这一次发布出了错。
         if not binary.exists():
-            print(f"缺少产物：{binary}", file=sys.stderr)
+            print(f"缺少产物文件：{binary}", file=sys.stderr)
             return 1
         if not signature.exists():
-            print(f"缺少签名：{signature}", file=sys.stderr)
+            print(f"缺少签名文件：{signature}", file=sys.stderr)
             return 1
         platforms[key] = {
             "url": f"{base}/release/{args.version}/{name}",
@@ -120,9 +128,9 @@ def main() -> int:
     notes = args.notes or notes_for(args.changelog, args.version)
     if not notes and args.require_notes:
         print(
-            f"{args.changelog} 里没有 ## {args.version} 这一节。\n"
-            "正式版必须有更新日志：用户会在设置的「关于」里读到它。\n"
-            "先跑 .github/draft-changelog.py 汇总提交里的 Release-Note。",
+            f"{args.changelog} 中没有 ## {args.version} 小节。\n"
+            "正式版必须提供更新日志，其内容会显示在设置的「关于」页面。\n"
+            "先运行 .github/draft-changelog.py 汇总提交中的 Release-Note。",
             file=sys.stderr,
         )
         return 1
