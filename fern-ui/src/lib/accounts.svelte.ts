@@ -12,9 +12,9 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { inTauri } from './instances.svelte'
+import { inTauri, instances } from './instances.svelte'
 import { nav } from './nav.svelte'
-import { commands, provides } from 'fern-kit/palette'
+import { commands, provides, type Action } from 'fern-kit/palette'
 
 export type AccountKind = 'offline' | 'microsoft' | 'authlib'
 
@@ -73,6 +73,19 @@ class AccountStore {
   )
   /** 启动、联机昵称、顶栏头像都读它。没有账户时是空串，调用方自己兜底。 */
   readonly playerName = $derived(this.active?.playerName ?? '')
+  /**
+   * 名册里出现不止一次的名字。
+   *
+   * 启动屏的题头默认只写名字，只有这个名字确实有第二个人在用时才把出处补上
+   * 去——例外才发声。名单和切换器不看这个：那两处的职责就是分辨，永远写全。
+   */
+  readonly duplicated = $derived(
+    new Set(
+      this.list
+        .map((account) => account.playerName)
+        .filter((name, index, all) => all.indexOf(name) !== index),
+    ),
+  )
 
   async load() {
     if (!inTauri()) return
@@ -183,36 +196,75 @@ class AccountStore {
 export const accounts = new AccountStore()
 
 /**
+ * 这个实例按下启动会用谁。
+ *
+ * 实例只有两档：不钉住就跟着当前账户走，钉住了就用钉住的那一个。规则和后端
+ * 的 `roster::for_instance` 是同一条，两边算出来的必须是同一个人——否则界面上
+ * 写着一个名字，进游戏的是另一个。
+ */
+export const launchIdentity = (instanceId: string) => {
+  const instance = instances.list.find((item) => item.id === instanceId)
+  return accounts.list.find((item) => item.id === instance?.accountId) ?? accounts.active
+}
+
+/**
+ * 在启动屏上换一个身份。
+ *
+ * 没钉住的实例换的是**当前账户**——「跟随」的意思就是它跟着这个值走，而题头
+ * 上问候的正是这个人。钉住了的实例换的是那根钉子：一个已经声明「我单独用某个
+ * 号」的实例，不该因为你在它的屏幕上换了个人就把别处也一起改掉。
+ */
+export async function useForLaunch(instanceId: string, accountId: string) {
+  const instance = instances.list.find((item) => item.id === instanceId)
+  if (instance?.accountId) await instances.setAccount(instanceId, accountId)
+  else await accounts.use(accountId)
+}
+
+/** 切换器和名单里永远写全出处：那两处的职责就是把同名的人分开。 */
+const asSubject = (item: Account) => ({
+  type: 'account' as const,
+  scoped: true,
+  id: item.id,
+  title: item.playerName,
+  hint: originOf(item),
+  seed: item.uuid,
+  run: () => void switchTo(item.id),
+})
+
+/** 从哪儿选中的都一样：换的是「这次启动用谁」。 */
+const switchTo = (id: string) => {
+  const instance = instances.current
+  return instance ? useForLaunch(instance.id, id) : accounts.use(id)
+}
+
+/**
  * 账户不平铺在顶层：它们不是这个面板的主角，一份有五个账户的名单会把实例和
  * 动作挤下去。所以走「动词需要宾语」那条路——搜「切换账户」，回车之后才列出
  * 名单，输入框左边挂上一枚 chip。
  */
-provides(() =>
-  accounts.list.map((item) => ({
-    type: 'account' as const,
-    scoped: true,
-    id: item.id,
-    title: item.playerName,
-    hint: `${KIND_LABEL[item.kind]}${item.apiRoot ? ` · ${siteName(item.apiRoot)}` : ''}`,
-    seed: item.uuid,
-    run: () => void accounts.use(item.id),
-  })),
-)
+provides(() => accounts.list.map(asSubject))
 
 /** 档案是设置里的二级页，所以它的地址就是 `nav.focus` 的第三段。 */
 const profileAt = (id: string) => `account/list/${id}`
 
-commands(() => [
-  {
-    id: 'account.switch',
-    title: '切换账户',
-    hint: accounts.playerName,
-    accepts: 'account',
-    // 故意不给默认宾语：这个动词的全部意义就是换一个，一步到位没有意义。
-    run: (subject) => {
-      if (subject) void accounts.use(subject.id)
-    },
+/**
+ * 换身份这个动作只有一份定义，两处使用：命令面板里搜得到，启动屏点题头也走
+ * 它。启动屏那边把它当作下钻的动作传进面板，所以「点名字换一个」和「⌘K 换一
+ * 个」不会各自长出一套规则。
+ */
+export const switchAction = (): Action => ({
+  id: 'account.switch',
+  title: '切换账户',
+  hint: accounts.playerName,
+  accepts: 'account',
+  // 故意不给默认宾语：这个动词的全部意义就是换一个，一步到位没有意义。
+  run: (subject) => {
+    if (subject) void switchTo(subject.id)
   },
+})
+
+commands(() => [
+  switchAction(),
   {
     id: 'account.profile',
     title: '账户档案',

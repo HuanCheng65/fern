@@ -10,10 +10,23 @@
    * 那边的详情页里。打开启动器十秒就走的那九成会话，不该看见它们。
    *
    * 内容压在左下角，右边和上边整片留给背景。这不是没排满，是画框的意思。
+   *
+   * **题头那句问候不是装饰。** 封面的环境种子本来就在按真实时间调色温（文档
+   * 二），问候语是同一个信号的文字面——一屏之内画面和语言说同一件事。而它招呼
+   * 的是**你即将扮演的那个身份**，不是键盘前的人：所以固定用小号的实例上写着
+   * 「晚上好，小号」并不别扭，反而正好省掉一行解释。
+   *
+   * 身份原来是启动键旁边一枚和它等高的玻璃胶囊。那个形状有两处错：它把「确认
+   * 我是谁」这件每次都发生的**被动**事情，做成了一个和启动并列的**控件**；而且
+   * 它只写名字——而一个人名下同时挂着正版的 Steve、离线的 Steve 和某个皮肤站上
+   * 的 Steve 是完全合法的状态（`roster.rs` 的去重键是 kind + uuid + 皮肤站），
+   * 光有名字根本分不开。
    */
-  import { ChevronDown, Play, X } from 'lucide-svelte'
-  import AccountChip from '../components/AccountChip.svelte'
+  import { ChevronDown, Play, Plus, X } from 'lucide-svelte'
+  import { palette } from 'fern-kit/palette'
+  import AccountFace from '../components/AccountFace.svelte'
   import Stage from '../layouts/Stage.svelte'
+  import { accounts, launchIdentity, originOf, switchAction } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
   import { fraction, jobs, measure } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
@@ -48,16 +61,74 @@
   $effect(() => {
     if (current) void preflight.check(current.id)
   })
+
+  /** 按下启动会用谁的身份。和后端的 `roster::for_instance` 是同一条规则。 */
+  const identity = $derived(current ? launchIdentity(current.id) : undefined)
+  /**
+   * 出处只在这个名字确实有第二个人在用时才写出来。
+   *
+   * 例外才发声：只有一个 Steve 的时候补一句「正版」，说的是一件没人问的事。
+   */
+  const ambiguous = $derived(identity ? accounts.duplicated.has(identity.playerName) : false)
+
+  /**
+   * 问候语跟着真实时间走，和封面的环境种子同一个信号。
+   *
+   * 每分钟对一次表：启动器可以整夜开着，跨过午夜还说「下午好」比不打招呼更糟。
+   * 不写「夜深了」那种——那是在劝人做什么，文案规范里明确不做这件事。
+   */
+  let hour = $state(new Date().getHours())
+  $effect(() => {
+    const timer = setInterval(() => (hour = new Date().getHours()), 60_000)
+    return () => clearInterval(timer)
+  })
+  const salutation = $derived(hour >= 18 || hour < 5 ? '晚上好' : hour >= 12 ? '下午好' : '早上好')
+
+  /**
+   * 换一个身份走命令面板，和上面点实例名呼出切换器是同一个东西。
+   *
+   * 于是这一屏只有一条规则：点一个名词，面板预过滤到那个名词的类型。两个 `⌄`
+   * 说的是同一句话，学一次通两处。「添加账户」由面板自己接住——那个动作声明了
+   * `creates: 'account'`，所以它永远是这份名单的最后一行。
+   */
+  function switchIdentity() {
+    palette.open({ kind: 'subjects', type: 'account', label: '身份', action: switchAction() })
+    nav.show('palette')
+  }
 </script>
 
 <Stage>
   {#if current}
+      <!--
+        题头。它在实例名之上，读下来是「以这个身份 · 玩这个世界 · 启动」。
+      -->
+      {#if identity}
+        <button class="hail" onclick={switchIdentity} title="切换账户">
+          <span class="salute">{salutation}，</span>
+          <AccountFace account={identity} size={26} round />
+          <span class="who">{identity.playerName}</span>
+          {#if ambiguous}<span class="origin">· {originOf(identity)}</span>{/if}
+          <ChevronDown size={15} strokeWidth={1.8} />
+        </button>
+      {:else if !accounts.loading}
+        <!-- 一个账户都没有时，这一行就是这一屏此刻唯一该做的事。 -->
+        <button class="hail none" onclick={() => nav.show('settings', 'account/list/new')}>
+          <Plus size={15} strokeWidth={2} />尚未添加账户
+        </button>
+      {/if}
+
       <button class="name" onclick={onswitch} title="切换实例">
         <span>{current.name}</span>
         <ChevronDown size={26} strokeWidth={1.6} />
       </button>
 
-      <p class="meta t-mono">Minecraft {current.gameVersion} · {current.loader}</p>
+      <p class="meta t-mono">
+        Minecraft {current.gameVersion} · {current.loader}
+        <!-- 这一屏把管理欲望引去实例详情，却一直没给出那扇门。就在这里。 -->
+        <button class="btn btn--link manage" onclick={() => nav.enter('instances', current.id)}>
+          管理
+        </button>
+      </p>
 
       <div class="go-row">
         <!-- 游戏已经开着的时候不再提供「启动」：再点一下会起第二个进程，
@@ -98,9 +169,6 @@
           </button>
         {/if}
 
-        <!-- 用谁的身份，就站在启动键旁边——那是它唯一真正重要的时刻。 -->
-        <AccountChip instanceId={current.id} />
-
         {#if job && measure(job)}
           <span class="detail t-mono">{measure(job)}</span>
         {/if}
@@ -140,6 +208,74 @@
 </Stage>
 
 <style>
+  /*
+   * 题头。19px 而不是 12px——弄错身份的代价是进错服、白名单不认、存档里那不是
+   * 你的背包，重量该跟代价走，不跟操作频次走。实例名仍然是它的两三倍，主角没变。
+   */
+  .hail {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    max-width: 100%;
+    margin-bottom: var(--s3);
+    padding: 0;
+    color: var(--ink-2);
+    font-size: var(--t-h2);
+    font-weight: 480;
+    letter-spacing: -0.01em;
+    transition: color var(--t-fast) var(--ease);
+  }
+
+  .hail:hover {
+    color: var(--ink);
+  }
+
+  .salute {
+    /* 逗号自己撑开了间距，再给一格就散了。 */
+    margin-right: calc(var(--s1) * -1);
+  }
+
+  .who {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 出处比名字轻一档：它是用来分辨的，不是名字的一部分。 */
+  .origin {
+    color: var(--ink-3);
+    font-size: var(--t-body);
+  }
+
+  .hail :global(svg) {
+    flex: none;
+    margin-left: var(--s1);
+    color: var(--ink-4);
+    transition:
+      color var(--t-fast) var(--ease),
+      transform var(--t-base) var(--spring);
+  }
+
+  .hail:hover :global(svg) {
+    color: var(--accent);
+    transform: translateY(2px);
+  }
+
+  /* 没有账户是这一屏的空态，不是一句提示：它比问候语更该被看见。 */
+  .hail.none {
+    color: var(--ink);
+    font-size: var(--t-body);
+  }
+
+  .hail.none :global(svg) {
+    margin-left: 0;
+    color: var(--accent);
+  }
+
+  .hail.none:hover :global(svg) {
+    transform: none;
+  }
+
   /* 实例名同时是切换器的入口——文档里说点实例名呼出切换器。 */
   .name {
     display: flex;
@@ -176,8 +312,16 @@
   }
 
   .meta {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s3);
     margin: var(--s3) 0 0;
     color: var(--ink-3);
+  }
+
+  /* 等宽只留给机器数据，「管理」两个字不是。 */
+  .manage {
+    font-family: var(--sans);
   }
 
   .go-row {
@@ -187,23 +331,12 @@
     margin-top: var(--s5);
   }
 
-  /*
-   * 这一行上的每一个动作都和启动键一样高。
-   *
-   * 它们本来各按各的默认值：主按钮 44、次按钮 38、身份芯片跟着头像走。三个
-   * 高度并排，读出来是三条底边，而这一行是整屏唯一的操作区——没有比这里更该
-   * 对齐的地方。次要的东西靠颜色和分量退后，不靠矮一截。
-   */
-  .go-row .btn,
-  .go-row :global(.chip) {
-    min-height: var(--control-lg);
-  }
-
   /* 启动是英雄交互，进度就长在按钮上，不另起一个进度条区域。 */
   .go {
     position: relative;
     isolation: isolate;
     min-width: 190px;
+    min-height: var(--control-lg);
     overflow: hidden;
   }
 
