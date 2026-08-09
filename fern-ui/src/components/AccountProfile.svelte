@@ -20,6 +20,7 @@
   import { instances } from '../lib/instances.svelte'
   import { notices } from '../lib/notices.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
 
   interface Props {
     accountId: string
@@ -81,7 +82,7 @@
               void submitRename()
             }}
           >
-            <input class="input" bind:value={renameTo} maxlength="16" spellcheck="false" />
+            <Input aria-label="新的玩家名称" bind:value={renameTo} maxlength={16} spellcheck="false" />
             <Button variant="primary" type="submit" disabled={!OFFLINE_NAME.test(renameTo.trim())}>
               保存
             </Button>

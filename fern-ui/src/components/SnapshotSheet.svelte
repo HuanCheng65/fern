@@ -32,6 +32,7 @@
     type Snapshot,
   } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
   import Select from 'fern-kit/ui/Select.svelte'
 
   interface Props {
@@ -176,11 +177,11 @@
         }}
       >
         <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="input"
+        <Input
+          aria-label="快照名称"
           bind:value={draft}
           placeholder="例如：装 Create 之前"
-          maxlength="60"
+          maxlength={60}
           autofocus
         />
         <Button variant="icon" type="submit" aria-label="保存名称">
@@ -240,10 +241,7 @@
       />
 
       {#if copy}
-        <div class="field">
-          <label for="snapshot-name">新世界的名称</label>
-          <input id="snapshot-name" class="input" bind:value={name} maxlength="60" />
-        </div>
+        <Input label="新世界的名称" bind:value={name} maxlength={60} />
       {/if}
     {/if}
 

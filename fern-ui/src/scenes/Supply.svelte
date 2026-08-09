@@ -13,6 +13,7 @@
    * 再返回，接着看，不用重新往下滑一遍。
    */
   import { Check, Search } from 'lucide-svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
   import Select from 'fern-kit/ui/Select.svelte'
   import SupplyCard from 'fern-kit/parts/SupplyCard.svelte'
   import FilterGroup from '../components/FilterGroup.svelte'
@@ -116,8 +117,8 @@
     {#snippet search()}
       <div class="field">
         <Search class="glass" size={16} strokeWidth={1.9} />
-        <input
-          class="input"
+        <Input
+          aria-label="搜索 Modrinth"
           bind:value={supply.query}
           spellcheck="false"
           placeholder="搜索 Modrinth"
@@ -170,8 +171,7 @@
         {#snippet control()}
           <div class="version-search">
             <Search size={13} strokeWidth={1.8} />
-            <input
-              class="input"
+            <Input
               bind:value={versionQuery}
               spellcheck="false"
               aria-label="搜索游戏版本"
@@ -268,7 +268,9 @@
     pointer-events: none;
   }
 
-  .field .input {
+  /* 搜索框要给左边那枚图标让出位置。这是外观不是布局，包一层解决不了，
+     所以罩着自有祖先伸进去。 */
+  .field :global(.input) {
     min-height: 44px;
     padding-left: calc(var(--s3) * 2 + 16px);
   }
@@ -330,7 +332,7 @@
     pointer-events: none;
   }
 
-  .version-search .input {
+  .version-search :global(.input) {
     min-height: 30px;
     padding: 0 var(--s2) 0 28px;
     font-size: var(--t-small);

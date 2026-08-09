@@ -20,7 +20,7 @@
     error?: string
     /** 机器数据：版本号、路径、内存大小。等宽 + 表格数字，别拿它当装饰。 */
     mono?: boolean
-    value?: string
+    value?: string | number
     /** 布局用。和 Button 一样，调用方要配 `:global`，见那边的说明。 */
     class?: string
   }
@@ -30,7 +30,7 @@
     hint,
     error,
     mono = false,
-    value = $bindable(''),
+    value = $bindable('' as string | number),
     // 单独接出来，不然 `{...rest}` 里的 class 会把 .input 顶掉。
     class: extra = '',
     ...rest

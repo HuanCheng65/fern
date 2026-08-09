@@ -47,6 +47,7 @@
   import { updates } from '../lib/update.svelte'
   import { inTauri } from '../lib/instances.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
 
   type SectionId =
     | 'appearance'
@@ -491,7 +492,7 @@
 
           <SettingRow id="appearance/code" found={focused === 'appearance/code'}>
             <div class="code-row">
-              <input class="input selectable t-mono" bind:value={themeCode} spellcheck="false" />
+              <Input mono class="selectable" aria-label="主题码" bind:value={themeCode} spellcheck="false" />
               <Button variant="icon" aria-label="复制" title="复制" onclick={() => void copyCode()}>
                 {#if copied}<Check size={15} />{:else}<Copy size={14} />{/if}
               </Button>
@@ -586,17 +587,19 @@
                 ]}
               />
               {#if resolution}
-                <input
-                  class="input size"
+                <Input
+                  class="size"
                   type="number"
+                  aria-label="窗口宽度"
                   value={resolution.width}
                   oninput={(event) =>
                     setResolution(Number(event.currentTarget.value), resolution.height)}
                 />
                 <span class="t-quiet">×</span>
-                <input
-                  class="input size"
+                <Input
+                  class="size"
                   type="number"
+                  aria-label="窗口高度"
                   value={resolution.height}
                   oninput={(event) =>
                     setResolution(resolution.width, Number(event.currentTarget.value))}
@@ -606,8 +609,9 @@
           </SettingRow>
 
           <SettingRow id="game/jvm" found={focused === 'game/jvm'}>
-            <input
-              class="input t-mono"
+            <Input
+              mono
+              aria-label="JVM 参数"
               value={prefs.game.jvmArguments}
               spellcheck="false"
               placeholder="-XX:+UseStringDeduplication"
@@ -691,8 +695,9 @@
 
           <SettingRow id="java/add" found={focused === 'java/add'}>
             <div class="code-row">
-              <input
-                class="input t-mono"
+              <Input
+                mono
+                aria-label="Java 路径"
                 bind:value={manualPath}
                 spellcheck="false"
                 placeholder="/usr/lib/jvm/java-21-openjdk"
@@ -1102,7 +1107,8 @@
     letter-spacing: -0.02em;
   }
 
-  .size {
+  /* 布局归调用方，作用域样式进不了组件，罩一层自己的祖先。 */
+  .slider-row :global(.size) {
     width: 88px;
   }
 
@@ -1111,7 +1117,7 @@
     gap: var(--s2);
   }
 
-  .code-row .input {
+  .code-row :global(.input) {
     font-size: var(--t-small);
   }
 

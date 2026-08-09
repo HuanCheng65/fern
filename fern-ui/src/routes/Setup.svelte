@@ -22,6 +22,7 @@
   import { inTauri } from '../lib/instances.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
   import RadioGroup from 'fern-kit/ui/RadioGroup.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
 
   interface Props {
     /** 走完向导。create 为真时直接进到新建实例。 */
@@ -196,20 +197,18 @@
         {/if}
 
         {#if accountKind === 'offline'}
-          <div class="field inline">
-            <label for="setup-name">玩家名称</label>
-            <input
-              id="setup-name"
-              class="input"
+          <div class="inline">
+            <Input
+              label="玩家名称"
+              error={nameError}
               bind:value={playerName}
-              maxlength="16"
+              maxlength={16}
               spellcheck="false"
               autocomplete="nickname"
               placeholder="Steve"
               oninput={() => (nameError = '')}
               onkeydown={(event) => event.key === 'Enter' && void submitAccount()}
             />
-            {#if nameError}<p class="err">{nameError}</p>{/if}
           </div>
         {/if}
 
@@ -387,16 +386,10 @@
     margin-top: var(--s6);
   }
 
-  .field.inline {
-    display: grid;
-    gap: var(--s2);
+  /* 布局归调用方：这个字段在向导里多宽、离上面多远，是这一屏的事。 */
+  .inline {
     width: min(320px, 100%);
     margin-top: var(--s4);
-  }
-
-  .field label {
-    color: var(--ink-3);
-    font-size: var(--t-small);
   }
 
   /* 选了外置登录之后的一句交代，和 .lede 同级但更轻。 */
@@ -404,12 +397,6 @@
     margin: var(--s4) 0 0;
     color: var(--ink-3);
     font-size: var(--t-body);
-  }
-
-  .err {
-    margin: 0;
-    color: var(--danger);
-    font-size: var(--t-small);
   }
 
   .foot-note {

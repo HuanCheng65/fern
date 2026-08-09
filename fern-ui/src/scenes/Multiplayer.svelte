@@ -23,6 +23,7 @@
   import { DEFAULT_NAME, isConnected, session } from '../lib/pearl-session.svelte'
   import { PATH_LABEL, PUNCH_STAGE_LABEL, type PathState } from '../lib/pearl-types'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
 
   let inviteInput = $state('')
   let copied = $state<string | null>(null)
@@ -285,8 +286,8 @@
             </Button>
           {:else}
             <form class="sharer" onsubmit={submitShare}>
-              <input
-                class="input"
+              <Input
+                aria-label="共享端口"
                 bind:value={portInput}
                 placeholder="端口，如 25565"
                 inputmode="numeric"

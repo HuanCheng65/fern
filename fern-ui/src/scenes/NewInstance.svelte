@@ -25,6 +25,7 @@
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
 
   interface LoaderVersion {
     version: string
@@ -232,24 +233,19 @@
       <Button variant="link" onclick={() => (pack = null)}>换一个</Button>
     </div>
 
-    <div class="field pack-name">
-      <label for="pack-name">名称</label>
-      <input id="pack-name" class="input" bind:value={name} maxlength="64" oninput={() => (named = true)} />
+    <div class="pack-name">
+      <Input label="名称" bind:value={name} maxlength={64} oninput={() => (named = true)} />
     </div>
   {:else}
   <div class="columns">
     <div class="side">
-      <div class="field">
-        <label for="new-instance-name">名称</label>
-        <input
-          id="new-instance-name"
-          class="input"
-          bind:value={name}
-          maxlength="64"
-          oninput={() => (named = true)}
-          onkeydown={(event) => event.key === 'Enter' && void submit()}
-        />
-      </div>
+      <Input
+        label="名称"
+        bind:value={name}
+        maxlength={64}
+        oninput={() => (named = true)}
+        onkeydown={(event) => event.key === 'Enter' && void submit()}
+      />
 
       {#if loaders.length > 1}
         <div class="field">
@@ -320,9 +316,8 @@
             ]}
           />
         </div>
-        <input
+        <Input
           id="version-filter"
-          class="input"
           bind:value={query}
           spellcheck="false"
           placeholder="筛选版本号"

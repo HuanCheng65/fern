@@ -14,6 +14,7 @@
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { notices } from '../lib/notices.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
 
   interface Props {
     /** 加成了就带着新账户的 id 回去，取消则不带。 */
@@ -103,19 +104,14 @@
           void submitOffline()
         }}
       >
-        <label class="field">
-          <span>
-            玩家名称
-            <small>3–16 位字母、数字或下划线。UUID 由名称推导，修改名称即更换身份。</small>
-          </span>
-          <input
-            class="input"
-            bind:value={offlineName}
-            maxlength="16"
-            spellcheck="false"
-            placeholder="Steve"
-          />
-        </label>
+        <Input
+          label="玩家名称"
+          hint="3–16 位字母、数字或下划线。UUID 由名称推导，修改名称即更换身份。"
+          bind:value={offlineName}
+          maxlength={16}
+          spellcheck="false"
+          placeholder="Steve"
+        />
         <div class="submit">
           <Button variant="primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>
             添加
@@ -152,24 +148,20 @@
           void submitYggdrasil()
         }}
       >
-        <label class="field">
-          <span>
-            皮肤站地址
-            <small>Yggdrasil API 根地址，可在皮肤站的「在启动器中使用」页面获取。</small>
-          </span>
-          <input class="input" bind:value={apiRoot} spellcheck="false" />
-        </label>
-        <label class="field">
-          <span>邮箱</span>
-          <input class="input" bind:value={username} spellcheck="false" autocomplete="username" />
-        </label>
-        <label class="field">
-          <span>
-            密码
-            <small>仅用于换取令牌，不会保存。令牌存入系统钥匙串。</small>
-          </span>
-          <input class="input" type="password" bind:value={password} autocomplete="current-password" />
-        </label>
+        <Input
+          label="皮肤站地址"
+          hint="Yggdrasil API 根地址，可在皮肤站的「在启动器中使用」页面获取。"
+          bind:value={apiRoot}
+          spellcheck="false"
+        />
+        <Input label="邮箱" bind:value={username} spellcheck="false" autocomplete="username" />
+        <Input
+          label="密码"
+          hint="仅用于换取令牌，不会保存。令牌存入系统钥匙串。"
+          type="password"
+          bind:value={password}
+          autocomplete="current-password"
+        />
         <div class="submit">
           <Button variant="primary" type="submit" disabled={accounts.busy}>
             {accounts.busy ? '登录中' : '登录'}
@@ -237,12 +229,6 @@
     justify-items: stretch;
   }
 
-  .field {
-    display: grid;
-    gap: var(--s2);
-  }
-
-  .field > span,
   .field-label {
     display: grid;
     gap: 3px;
@@ -250,7 +236,6 @@
     font-size: var(--t-body);
   }
 
-  .field small,
   .field-label small {
     max-width: 46ch;
     color: var(--ink-3);

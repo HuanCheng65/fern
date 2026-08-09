@@ -25,6 +25,7 @@
   import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Input from 'fern-kit/ui/Input.svelte'
 
   /** 一次分配的理由。`topic` 决定它是依据、实测还是约束。 */
   interface ExplanationItem {
@@ -545,7 +546,7 @@
             <span class="label">名称</span>
           </div>
           <div class="rename">
-            <input class="input" bind:value={renamed} maxlength="64" />
+            <Input class="grow" aria-label="实例名称" bind:value={renamed} maxlength={64} />
             <Button
               variant="ghost"
               disabled={!renamed.trim() || renamed.trim() === instanceName}
@@ -691,7 +692,8 @@
     margin-top: var(--s2);
   }
 
-  .rename .input {
+  /* 布局归调用方，作用域样式进不了组件，罩一层自己的祖先。 */
+  .rename :global(.grow) {
     flex: 1;
     min-width: 0;
   }
