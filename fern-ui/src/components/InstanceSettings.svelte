@@ -16,7 +16,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { ChevronRight } from 'lucide-svelte'
   import AccountFace from './AccountFace.svelte'
-  import Choice from './Choice.svelte'
+  import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import Loading from './Loading.svelte'
   import MemoryMeter from './MemoryMeter.svelte'
   import { accounts, originOf } from '../lib/accounts.svelte'
@@ -501,8 +501,8 @@
               自动会按 Java 版本挑：21 以上给分代 ZGC，更老的给 G1。
             </span>
           </div>
-          <Choice
-            label="垃圾回收器"
+          <SegmentedControl
+            aria-label="垃圾回收器"
             value={settings.garbageCollector ?? 'inherit'}
             onchange={(next) => {
               settings.garbageCollector = next === 'inherit' ? null : (next as GcChoice)
@@ -520,8 +520,8 @@
             <span class="label">进程优先级</span>
             <span class="t-quiet">降低优先级可减少对其他程序的影响。</span>
           </div>
-          <Choice
-            label="进程优先级"
+          <SegmentedControl
+            aria-label="进程优先级"
             value={settings.processPriority ?? 'normal'}
             onchange={(next) => {
               settings.processPriority = next === 'normal' ? null : next

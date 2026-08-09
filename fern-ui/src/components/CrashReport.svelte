@@ -11,7 +11,7 @@
    * 的代码里」往往是唯一的线索，所以嫌疑模组独立于诊断显示。
    */
   import { FolderOpen } from 'lucide-svelte'
-  import Overlay from 'fern-kit/ui/Overlay.svelte'
+  import Dialog from 'fern-kit/ui/Dialog.svelte'
   import CrashPanel from 'fern-kit/parts/CrashPanel.svelte'
   import { perform } from '../lib/advice'
   import { describe } from '../lib/i18n'
@@ -37,7 +37,7 @@
   )
 </script>
 
-<Overlay label="游戏异常退出" width="600px" {onclose}>
+<Dialog label="游戏异常退出" width="600px" {onclose}>
   <CrashPanel
     {found}
     {exit}
@@ -54,7 +54,7 @@
     </Button>
     <Button variant="primary" onclick={onclose}>关闭</Button>
   </footer>
-</Overlay>
+</Dialog>
 
 <style>
   footer {

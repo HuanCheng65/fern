@@ -9,7 +9,7 @@
    * 免得过滤和配色在两个地方各长各的。
    */
   import { X } from 'lucide-svelte'
-  import Overlay from 'fern-kit/ui/Overlay.svelte'
+  import Dialog from 'fern-kit/ui/Dialog.svelte'
   import LogLines from './LogLines.svelte'
   import { launch } from '../lib/launch.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -26,7 +26,7 @@
   })
 </script>
 
-<Overlay label="游戏日志" width="820px" {onclose}>
+<Dialog label="游戏日志" width="820px" {onclose}>
   <header>
     <div>
       <h2 class="t-h2">游戏日志</h2>
@@ -42,7 +42,7 @@
   <div class="body">
     <LogLines lines={launch.log} />
   </div>
-</Overlay>
+</Dialog>
 
 <style>
   header {

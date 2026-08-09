@@ -13,8 +13,8 @@
    */
   import { untrack } from 'svelte'
   import { Check, Pencil, X } from 'lucide-svelte'
-  import Choice from './Choice.svelte'
-  import Overlay from 'fern-kit/ui/Overlay.svelte'
+  import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
+  import Dialog from 'fern-kit/ui/Dialog.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { notices } from '../lib/notices.svelte'
@@ -164,7 +164,7 @@
   }
 </script>
 
-<Overlay label="快照" width="520px" {onclose}>
+<Dialog label="快照" width="520px" {onclose}>
   <header>
     {#if naming}
       <!-- 起了名字的快照永久保留，所以命名不只是个备注。 -->
@@ -212,12 +212,12 @@
       <p class="warn">拍摄时文件仍在变动，这张快照的内容可能不一致。</p>
     {/if}
 
-    <div class="field">
-      <label for="snapshot-part">恢复哪一部分</label>
-      <div id="snapshot-part">
-        <Choice options={parts} value={part} onchange={(value) => (part = value)} label="恢复范围" />
-      </div>
-    </div>
+    <SegmentedControl
+      label="恢复哪一部分"
+      options={parts}
+      value={part}
+      onchange={(value) => (part = value)}
+    />
 
     {#if part === 'save'}
       {#if snapshot.saves.length > 1}
@@ -229,20 +229,15 @@
         />
       {/if}
 
-      <div class="field">
-        <label for="snapshot-mode">写回方式</label>
-        <div id="snapshot-mode">
-          <Choice
-            options={[
-              { value: 'replace' as const, label: '覆盖原世界' },
-              { value: 'copy' as const, label: '另存为新世界' },
-            ]}
-            value={copy ? 'copy' : 'replace'}
-            onchange={(value) => (copy = value === 'copy')}
-            label="写回方式"
-          />
-        </div>
-      </div>
+      <SegmentedControl
+        label="写回方式"
+        options={[
+          { value: 'replace' as const, label: '覆盖原世界' },
+          { value: 'copy' as const, label: '另存为新世界' },
+        ]}
+        value={copy ? 'copy' : 'replace'}
+        onchange={(value) => (copy = value === 'copy')}
+      />
 
       {#if copy}
         <div class="field">
@@ -307,7 +302,7 @@
       </Button>
     {/if}
   </footer>
-</Overlay>
+</Dialog>
 
 <style>
   header {

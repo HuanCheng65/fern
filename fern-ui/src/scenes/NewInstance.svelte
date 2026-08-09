@@ -18,7 +18,7 @@
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import { onMount } from 'svelte'
   import { Check, Package, Plus } from 'lucide-svelte'
-  import Choice from '../components/Choice.svelte'
+  import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import Loading from '../components/Loading.svelte'
   import { instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
@@ -307,8 +307,8 @@
       <div class="field">
         <div class="version-head">
           <label for="version-filter">Minecraft 版本</label>
-          <Choice
-            label="版本类型"
+          <SegmentedControl
+            aria-label="版本类型"
             value={kind}
             onchange={(next) => {
               kind = next as Kind

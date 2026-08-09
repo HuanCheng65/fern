@@ -10,7 +10,7 @@
    * store、收键盘。搜什么、怎么排、执行之后关不关，全在 ./palette.svelte 里
    * ——那是语法所在的地方。
    */
-  import Overlay from '../ui/Overlay.svelte'
+  import Dialog from '../ui/Dialog.svelte'
   import Cover from '../ui/Cover.svelte'
   import PalettePanel from './PalettePanel.svelte'
   import { palette, type Row } from './palette.svelte'
@@ -92,7 +92,7 @@
 <!-- 有种子的行画封面。行自己不认识封面，也不该认识：它只知道有个种子。 -->
 {#snippet cover(seed: string)}<Cover {seed} quality={0.4} />{/snippet}
 
-<Overlay label="命令面板" width="600px" align="top" {onclose}>
+<Dialog label="命令面板" width="600px" align="top" {onclose}>
   <PalettePanel
     query={palette.query}
     {rows}
@@ -107,4 +107,4 @@
     onback={() => palette.back()}
     list={(node) => (listEl = node)}
   />
-</Overlay>
+</Dialog>

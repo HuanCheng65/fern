@@ -33,7 +33,7 @@
   import JavaRuntimeProfile from '../components/JavaRuntimeProfile.svelte'
   import MemoryMeter from '../components/MemoryMeter.svelte'
   import SettingRow from '../components/SettingRow.svelte'
-  import Choice from '../components/Choice.svelte'
+  import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import { javaLabel, megabytes, type JavaGroup } from '../lib/java'
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
@@ -410,8 +410,8 @@
 
     {#if section === 'appearance'}
           <SettingRow id="appearance/accent" found={focused === 'appearance/accent'}>
-            <Choice
-              label="强调色来源"
+            <SegmentedControl
+              aria-label="强调色来源"
               value={theme.accentMode}
               onchange={change((value) => theme.set('accentMode', value))}
               options={[
@@ -451,8 +451,8 @@
           {/if}
 
           <SettingRow id="appearance/density" found={focused === 'appearance/density'}>
-            <Choice
-              label="界面密度"
+            <SegmentedControl
+              aria-label="界面密度"
               value={theme.density}
               onchange={change((value) => theme.set('density', value))}
               options={[
@@ -464,8 +464,8 @@
           </SettingRow>
 
           <SettingRow id="appearance/radius" found={focused === 'appearance/radius'}>
-            <Choice
-              label="圆角"
+            <SegmentedControl
+              aria-label="圆角"
               value={theme.radius}
               onchange={change((value) => theme.set('radius', value))}
               options={[
@@ -477,8 +477,8 @@
           </SettingRow>
 
           <SettingRow id="appearance/motion" found={focused === 'appearance/motion'}>
-            <Choice
-              label="动效"
+            <SegmentedControl
+              aria-label="动效"
               value={theme.motion}
               onchange={change((value) => theme.set('motion', value))}
               options={[
@@ -561,8 +561,8 @@
           </SettingRow>
 
           <SettingRow id="game/gc" found={focused === 'game/gc'}>
-            <Choice
-              label="垃圾回收器"
+            <SegmentedControl
+              aria-label="垃圾回收器"
               value={prefs.game.garbageCollector ?? 'auto'}
               onchange={(value) => prefs.setGame({ garbageCollector: value as 'auto' | 'g1' | 'z' })}
               options={[
@@ -575,8 +575,8 @@
 
           <SettingRow id="game/window" found={focused === 'game/window'}>
             <div class="slider-row">
-              <Choice
-                label="游戏窗口"
+              <SegmentedControl
+                aria-label="游戏窗口"
                 value={resolution ? 'custom' : 'default'}
                 onchange={(value) =>
                   prefs.setGame({ resolution: value === 'custom' ? { width: 1280, height: 720 } : null })}
@@ -616,8 +616,8 @@
           </SettingRow>
 
           <SettingRow id="game/minimize" found={focused === 'game/minimize'}>
-            <Choice
-              label="启动后最小化"
+            <SegmentedControl
+              aria-label="启动后最小化"
               value={prefs.minimizeOnLaunch ? 'on' : 'off'}
               onchange={(next) => prefs.setMinimizeOnLaunch(next === 'on')}
               options={[
@@ -710,8 +710,8 @@
         {:else if section === 'download'}
           <SettingRow id="download/source" found={focused === 'download/source'}>
             {#snippet note()}根据系统区域建议使用 {sourceName[suggestedSource()]}。当前源失败时将自动切换到另一个源。{/snippet}
-            <Choice
-              label="下载源"
+            <SegmentedControl
+              aria-label="下载源"
               value={prefs.downloadSource}
               onchange={(value) => prefs.setDownloadSource(value)}
               options={[
@@ -848,8 +848,8 @@
                 {/if}
               {/if}
             </div>
-            <Choice
-              label={ui.about.update.automatic}
+            <SegmentedControl
+              aria-label={ui.about.update.automatic}
               value={updates.automatic ? 'on' : 'off'}
               onchange={(next) => updates.setAutomatic(next === 'on')}
               options={[
@@ -860,8 +860,8 @@
           </SettingRow>
 
           <SettingRow id="about/channel" found={focused === 'about/channel'}>
-            <Choice
-              label={ui.about.update.channel}
+            <SegmentedControl
+              aria-label={ui.about.update.channel}
               value={updates.channel}
               onchange={(next) => updates.setChannel(next === 'beta' ? 'beta' : 'stable')}
               options={[

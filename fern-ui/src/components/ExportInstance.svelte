@@ -13,8 +13,8 @@
    * 东西」，而那句话本该在按下去之前就说。
    */
   import { save } from '@tauri-apps/plugin-dialog'
-  import Overlay from 'fern-kit/ui/Overlay.svelte'
-  import Choice from './Choice.svelte'
+  import Dialog from 'fern-kit/ui/Dialog.svelte'
+  import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import { notices } from '../lib/notices.svelte'
   import { exportFernpack, exportMrpack, fileStem, type Exported } from '../lib/backup'
@@ -67,20 +67,20 @@
   }
 </script>
 
-<Overlay label="导出实例" width="500px" {onclose}>
+<Dialog label="导出实例" width="500px" {onclose}>
   <header>
     <h2>导出「{instanceName}」</h2>
   </header>
 
   <div class="body">
-    <Choice
+    <SegmentedControl
       options={[
         { value: 'mrpack' as const, label: '整合包' },
         { value: 'fernpack' as const, label: '搬迁包' },
       ]}
       value={format}
       onchange={(value) => (format = value)}
-      label="导出格式"
+      aria-label="导出格式"
     />
 
     {#if format === 'mrpack'}
@@ -123,7 +123,7 @@
       {busy ? '正在导出' : '选择位置并导出'}
     </Button>
   </footer>
-</Overlay>
+</Dialog>
 
 <style>
   header {
