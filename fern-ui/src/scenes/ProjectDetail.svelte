@@ -314,13 +314,18 @@
                   二十行都做一遍。
                 -->
                 {#if !isPack && required(version) > 0}
-                  <Button variant="link" class="deps" aria-expanded={opened === version.id}
+                  <Button
+                    variant="link"
+                    class="deps"
+                    aria-expanded={opened === version.id}
                     onclick={() => void inspect(version)}>
                     {required(version)} 个前置
                   </Button>
                 {/if}
 
-                <Button variant="ghost" disabled={(!isPack && !target) || !fit.ok || job !== undefined}
+                <Button
+                  variant="ghost"
+                  disabled={(!isPack && !target) || !fit.ok || job !== undefined}
                   title={fit.ok ? (isPack ? '建成新实例' : '安装') : fit.note}
                   onclick={() => void install(version)}>
                   {#if job && clicked === version.id}
@@ -582,10 +587,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--s4);
-  }
-
-  .links :global(.btn) {
-    gap: 4px;
   }
 
   .list {

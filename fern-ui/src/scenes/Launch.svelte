@@ -126,7 +126,7 @@
       <p class="meta t-mono">
         Minecraft {current.gameVersion} · {current.loader}
         <!-- 这一屏把管理欲望引去实例详情，却一直没给出那扇门。就在这里。 -->
-        <Button variant="link" class="manage" onclick={() => nav.enter('instances', current.id)}>
+        <Button variant="link" onclick={() => nav.enter('instances', current.id)}>
           管理
         </Button>
       </p>
@@ -321,11 +321,6 @@
   }
 
   /* 等宽只留给机器数据，「管理」两个字不是。 */
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .meta :global(.manage) {
-    font-family: var(--sans);
-  }
-
   .go-row {
     display: flex;
     align-items: center;

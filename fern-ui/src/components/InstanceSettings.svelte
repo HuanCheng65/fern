@@ -449,9 +449,11 @@
             {/each}
 
             {#if fitting.length === 0}
-              <Button variant="ghost" class="install" disabled={installing} onclick={() => void installJava()}>
-                {installing ? '正在下载…' : `下载 Java ${requirement.minimum}`}
-              </Button>
+              <div class="install">
+                <Button variant="ghost" disabled={installing} onclick={() => void installJava()}>
+                  {installing ? '正在下载…' : `下载 Java ${requirement.minimum}`}
+                </Button>
+              </div>
             {/if}
 
             <!--
@@ -459,9 +461,11 @@
               请人踩一个我们已经知道的坑。
             -->
             {#if unfit.length > 0}
-              <Button variant="link" class="fold" onclick={() => (showUnfit = !showUnfit)}>
-                {showUnfit ? '收起不兼容的版本' : `显示不兼容的版本（${unfit.length}）`}
-              </Button>
+              <div class="fold">
+                <Button variant="link" onclick={() => (showUnfit = !showUnfit)}>
+                  {showUnfit ? '收起不兼容的版本' : `显示不兼容的版本（${unfit.length}）`}
+                </Button>
+              </div>
               {#if showUnfit}
                 {#each unfit as item (item.path)}
                   <button
@@ -480,9 +484,11 @@
       </section>
 
       <section>
-        <Button variant="link" tone="quiet" class="advanced" onclick={() => (advanced = !advanced)}>
-          <ChevronRight size={13} strokeWidth={2} class={advanced ? 'turned' : ''} />高级
-        </Button>
+        <div class="advanced">
+          <Button variant="link" tone="quiet" onclick={() => (advanced = !advanced)}>
+            <ChevronRight size={13} strokeWidth={2} class={advanced ? 'turned' : ''} />高级
+          </Button>
+        </div>
         {#if advanced}
           <!--
             三档而不是两档：「跟随全局」和「G1」不是一回事——前者是「我不管」，
@@ -540,7 +546,9 @@
           </div>
           <div class="rename">
             <input class="input" bind:value={renamed} maxlength="64" />
-            <Button variant="ghost" disabled={!renamed.trim() || renamed.trim() === instanceName}
+            <Button
+              variant="ghost"
+              disabled={!renamed.trim() || renamed.trim() === instanceName}
               onclick={() => void rename()}>
               重命名
             </Button>
@@ -654,19 +662,18 @@
     color: var(--danger);
   }
 
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .choices :global(.install),
-  .choices :global(.fold) {
+  .install,
+  .fold {
     justify-self: start;
     margin-top: var(--s2);
   }
 
   /* 箭头转 90 度表示展开，和崩溃报告里那处是同一套。 */
-  section :global(.advanced svg) {
+  .advanced :global(svg) {
     transition: transform var(--t-base) var(--ease);
   }
 
-  section :global(.advanced svg.turned) {
+  .advanced :global(svg.turned) {
     transform: rotate(90deg);
   }
 

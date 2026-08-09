@@ -109,7 +109,10 @@
           <span class="name">{item.name}</span>
           <span class="t-mono when">{day(item.modified)}</span>
           <span class="t-mono size">{formatBytes(item.bytes)}</span>
-          <Button variant="link" class="share" disabled={exporting !== ''}
+          <Button
+            variant="link"
+            class="share"
+            disabled={exporting !== ''}
             onclick={() => void shareWorld(item.name)}>
             {exporting === item.name ? '导出中' : '导出'}
           </Button>

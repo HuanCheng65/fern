@@ -43,7 +43,10 @@
         </div>
 
         {#if notice.action}
-          <Button variant="link" class="act" onclick={() => {
+          <Button
+            variant="link"
+            class="act"
+            onclick={() => {
               notice.action?.run()
               notices.dismiss(notice.id)
             }}>

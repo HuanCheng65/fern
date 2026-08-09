@@ -254,7 +254,9 @@
       </label>
 
       <div class="commit">
-        <Button variant="primary" disabled={chosen.length === 0 || busy !== ''}
+        <Button
+          variant="primary"
+          disabled={chosen.length === 0 || busy !== ''}
           onclick={() => void add()}>
           {busy === 'add' ? `正在添加 ${done}/${chosen.length}` : `添加 ${chosen.length} 个版本`}
         </Button>

@@ -25,7 +25,9 @@
 <section class="placeholder">
   <h1 class="t-h1">{title}</h1>
   <p class="note">{note}</p>
-  <Button variant="link" onclick={onback}>返回启动<ArrowRight size={14} /></Button>
+  <div class="back">
+    <Button variant="link" onclick={onback}>返回启动<ArrowRight size={14} /></Button>
+  </div>
 </section>
 
 <style>
@@ -45,8 +47,7 @@
     line-height: 1.65;
   }
 
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .placeholder :global(.btn--link) {
+  .back {
     margin-top: var(--s3);
   }
 </style>

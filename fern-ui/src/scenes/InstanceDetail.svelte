@@ -106,7 +106,9 @@
       </div>
 
       <div class="acts">
-        <Button variant="primary" disabled={phase !== undefined || job !== undefined}
+        <Button
+          variant="primary"
+          disabled={phase !== undefined || job !== undefined}
           onclick={() => void launch.launch(instance.id)}>
           {#if phase === 'running'}
             运行中

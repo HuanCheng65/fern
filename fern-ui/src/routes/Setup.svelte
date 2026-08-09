@@ -219,7 +219,9 @@
         {/if}
 
         <div class="actions">
-          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <div class="back">
+            <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          </div>
           <Button variant="primary" onclick={() => void submitAccount()}>继续<ArrowRight size={15} /></Button>
         </div>
       {:else if step === 'source'}
@@ -248,7 +250,9 @@
         <p class="foot-note">当前源失败时将自动切换到另一个源，选择错误不会导致无法下载。</p>
 
         <div class="actions">
-          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <div class="back">
+            <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          </div>
           <Button variant="primary" disabled={javaChecking} onclick={submitSource}>
             {javaChecking ? '检查环境' : '继续'}<ArrowRight size={15} />
           </Button>
@@ -257,7 +261,9 @@
         <h1 class="title">还差一样东西。</h1>
         <p class="lede">未找到可用的 Java。Minecraft 1.17 之前需要 Java 8，之后需要 Java 17 或 21。</p>
         <div class="actions">
-          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <div class="back">
+            <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          </div>
           <Button variant="ghost" disabled={javaChecking} onclick={() => void checkJava()}>
             {javaChecking ? '检测中' : '重新检测'}
           </Button>
@@ -272,7 +278,9 @@
           <AdoptDirectory initial={nearby} />
         </div>
         <div class="actions">
-          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <div class="back">
+            <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          </div>
           <Button variant="primary" onclick={() => go(1)}>继续<ArrowRight size={15} /></Button>
         </div>
       {:else}
@@ -495,9 +503,7 @@
     margin-top: var(--s6);
   }
 
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .actions :global(.back) {
-    gap: 6px;
+  .back {
     order: -1;
   }
 

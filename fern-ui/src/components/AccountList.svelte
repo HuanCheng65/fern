@@ -55,9 +55,11 @@
     {/each}
   </ul>
 
-  <Button variant="ghost" class="add" onclick={() => open('new')}>
-    <Plus size={14} strokeWidth={2} />添加账户
-  </Button>
+  <div class="add">
+    <Button variant="ghost" onclick={() => open('new')}>
+      <Plus size={14} strokeWidth={2} />添加账户
+    </Button>
+  </div>
 
   {#if accounts.error}<div class="alert">{accounts.error}</div>{/if}
 </div>
@@ -147,8 +149,7 @@
     color: var(--ink);
   }
 
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .accounts :global(.add) {
+  .add {
     justify-self: start;
   }
 </style>

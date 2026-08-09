@@ -355,14 +355,18 @@
         <div class="crumbs">
           <!-- 返回到它所属的那一节，名字从目录里取——这一级是通用机制，不是
                账户专用的。 -->
-          <Button variant="link" tone="quiet" onclick={() => nav.show('settings', location.slice(0, 2).join('/'))}>
-            <ChevronLeft size={14} strokeWidth={2} />{sectionLabel}
-          </Button>
+          <div class="crumb-back">
+            <Button variant="link" tone="quiet" onclick={() => nav.show('settings', location.slice(0, 2).join('/'))}>
+              <ChevronLeft size={14} strokeWidth={2} />{sectionLabel}
+            </Button>
+          </div>
           <h1 class="t-h1">{subtitle}</h1>
         </div>
-        <Button variant="icon" tone="quiet" class="close" aria-label="关闭设置" onclick={onback}>
-          <X size={16} />
-        </Button>
+        <div class="close">
+          <Button variant="icon" tone="quiet" aria-label="关闭设置" onclick={onback}>
+            <X size={16} />
+          </Button>
+        </div>
       </header>
 
       <div class="sub-body">
@@ -396,9 +400,11 @@
     {#snippet head()}
       <header>
         <h1 class="t-h1">设置</h1>
-        <Button variant="icon" tone="quiet" class="close" aria-label="关闭设置" onclick={onback}>
-          <X size={16} />
-        </Button>
+        <div class="close">
+          <Button variant="icon" tone="quiet" aria-label="关闭设置" onclick={onback}>
+            <X size={16} />
+          </Button>
+        </div>
       </header>
     {/snippet}
 
@@ -495,7 +501,9 @@
           </SettingRow>
 
           <SettingRow id="appearance/reset" found={focused === 'appearance/reset'}>
-            <Button variant="ghost" onclick={() => {
+            <Button
+              variant="ghost"
+              onclick={() => {
                 theme.reset()
                 themeCode = theme.export()
               }}>
@@ -526,7 +534,9 @@
             -->
             <div class="ceiling-row">
               <span class="t-mono amount">{ceilingGb} GB</span>
-              <Button variant="link" disabled={!custom}
+              <Button
+                variant="link"
+                disabled={!custom}
                 onclick={() => {
                   prefs.setGame({ memoryCeilingMb: null })
                   void refreshBudget()
@@ -729,9 +739,11 @@
           </SettingRow>
           <SettingRow id="data/logs" found={focused === 'data/logs'}>
             <p class="path t-mono selectable">{paths.logs || '—'}</p>
-            <Button variant="ghost" class="open" onclick={() => void openLogs()}>
-              <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
-            </Button>
+            <div class="open">
+              <Button variant="ghost" onclick={() => void openLogs()}>
+                <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
+              </Button>
+            </div>
           </SettingRow>
           {#if pathError}<div class="alert">{pathError}</div>{/if}
         {:else}
@@ -805,14 +817,18 @@
                   </Button>
                 {/if}
               {:else}
-                <Button variant="ghost" disabled={updates.checking || updates.applying}
+                <Button
+                  variant="ghost"
+                  disabled={updates.checking || updates.applying}
                   onclick={() => void updates.check()}>
                   {ui.about.update.check}
                 </Button>
                 {#if updates.decision?.kind === 'available'}
                   {@const url = updates.decision.url}
                   {#if updates.selfUpdate}
-                    <Button variant="link" disabled={updates.applying}
+                    <Button
+                      variant="link"
+                      disabled={updates.applying}
                       onclick={() => void updates.apply()}>
                       {ui.about.update.apply}
                     </Button>
@@ -893,10 +909,8 @@
     gap: 2px;
   }
 
-  .crumbs :global(.btn--link) {
-    gap: 2px;
+  .crumbs .crumb-back {
     justify-self: start;
-    padding-left: 0;
   }
 
   .runtimes {
@@ -1013,8 +1027,7 @@
     padding: var(--s5) 0 var(--s6);
   }
 
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .settings :global(.close) {
+  .close {
     flex: none;
     margin-top: 2px;
   }
@@ -1176,7 +1189,7 @@
     overflow-wrap: anywhere;
   }
 
-  .settings :global(.open) {
+  .open {
     justify-self: start;
   }
 

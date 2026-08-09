@@ -57,9 +57,11 @@
     {#if error}<p class="failed">{error}</p>{/if}
   </div>
   {#if actionLabel}
-    <Button variant="ghost" class="fix" disabled={busy} onclick={() => void run()}>
-      {busy ? '处理中' : actionLabel}
-    </Button>
+    <div class="fix">
+      <Button variant="ghost" disabled={busy} onclick={() => void run()}>
+        {busy ? '处理中' : actionLabel}
+      </Button>
+    </div>
   {/if}
 </div>
 
@@ -111,8 +113,7 @@
     color: var(--danger, var(--ink-2));
   }
 
-  /* 按钮站哪归这块布局管，但作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .advice :global(.fix) {
+  .fix {
     flex: none;
   }
 </style>

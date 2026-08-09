@@ -86,6 +86,12 @@
     min-height: var(--control);
     padding: 0 var(--s4);
     border-radius: var(--r1);
+    /*
+     * 按钮永远不跟着周围变等宽。它可能落在一段 .t-mono 的说明里（启动屏那句
+     * 「Minecraft 1.21.4 · NeoForge · 管理」就是），继承过去就成了机器数据的
+     * 长相——而它是个动作。这一行之前是在调用方一处一处补的。
+     */
+    font-family: var(--sans);
     font-size: var(--t-body);
     font-weight: 500;
     color: var(--ink-2);
@@ -153,6 +159,9 @@
   .btn--link {
     min-height: 0;
     padding: 0;
+    /* 前导箭头和字要贴得比实体按钮紧。四个调用方各自调过这个数（2/4/6px），
+       说明它是系统该回答的，不是每处自己拿捏的。 */
+    gap: var(--s1);
     font-size: var(--t-small);
     color: var(--accent);
   }

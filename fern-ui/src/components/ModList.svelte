@@ -183,7 +183,9 @@
           <span class="name">{item.name}</span>
           {#if item.version}<span class="t-mono version">{item.version}</span>{/if}
           <span class="t-mono size">{formatBytes(item.bytes)}</span>
-          <Button variant="icon" aria-label={`删除 ${item.name}`}
+          <Button
+            variant="icon"
+            aria-label={`删除 ${item.name}`}
             title="删除"
             disabled={busy !== ''}
             onclick={() => void remove(item)}>

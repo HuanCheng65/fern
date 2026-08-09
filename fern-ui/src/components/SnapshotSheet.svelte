@@ -185,18 +185,18 @@
         <Button variant="icon" type="submit" aria-label="保存名称">
           <Check size={16} strokeWidth={2} />
         </Button>
-        <Button variant="icon" type="button"
-          aria-label="取消"
-          onclick={() => (naming = false)}>
+        <Button variant="icon" type="button" aria-label="取消" onclick={() => (naming = false)}>
           <X size={16} strokeWidth={2} />
         </Button>
       </form>
     {:else}
       <div class="titles">
         <h2>{title}</h2>
-        <Button variant="icon" aria-label="命名" onclick={() => (naming = true)}>
-          <Pencil size={14} strokeWidth={1.9} />
-        </Button>
+        <div class="rename-btn">
+          <Button variant="icon" aria-label="命名" onclick={() => (naming = true)}>
+            <Pencil size={14} strokeWidth={1.9} />
+          </Button>
+        </div>
       </div>
     {/if}
 
@@ -340,14 +340,13 @@
   }
 
   /* 命名不是常用动作，所以它平时几乎看不见，指过去才出现。 */
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .titles :global(.btn--icon) {
+  .titles .rename-btn {
     opacity: 0;
     transition: opacity var(--t-fast) var(--ease);
   }
 
-  .titles:hover :global(.btn--icon),
-  .titles :global(.btn--icon:focus-visible) {
+  .titles:hover .rename-btn,
+  .titles .rename-btn:focus-within {
     opacity: 1;
   }
 

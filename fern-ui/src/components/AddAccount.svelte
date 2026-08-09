@@ -89,9 +89,11 @@
       {/each}
     </div>
   {:else}
-    <Button variant="link" tone="quiet" class="step-back" onclick={back}>
-      <ArrowLeft size={14} strokeWidth={2} />换一种方式
-    </Button>
+    <div class="step-back">
+      <Button variant="link" tone="quiet" onclick={back}>
+        <ArrowLeft size={14} strokeWidth={2} />换一种方式
+      </Button>
+    </div>
 
     {#if kind === 'offline'}
       <form
@@ -114,9 +116,11 @@
             placeholder="Steve"
           />
         </label>
-        <Button variant="primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>
-          添加
-        </Button>
+        <div class="submit">
+          <Button variant="primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>
+            添加
+          </Button>
+        </div>
       </form>
     {:else if kind === 'microsoft'}
       {#if accounts.deviceCode}
@@ -166,9 +170,11 @@
           </span>
           <input class="input" type="password" bind:value={password} autocomplete="current-password" />
         </label>
-        <Button variant="primary" type="submit" disabled={accounts.busy}>
-          {accounts.busy ? '登录中' : '登录'}
-        </Button>
+        <div class="submit">
+          <Button variant="primary" type="submit" disabled={accounts.busy}>
+            {accounts.busy ? '登录中' : '登录'}
+          </Button>
+        </div>
       </form>
     {/if}
   {/if}
@@ -221,11 +227,8 @@
     font-size: var(--t-small);
   }
 
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .adder :global(.step-back) {
+  .step-back {
     justify-self: start;
-    gap: 4px;
-    padding-left: 0;
   }
 
   .fields {
@@ -255,7 +258,7 @@
     line-height: 1.55;
   }
 
-  .fields :global(.btn--primary) {
+  .fields .submit {
     justify-self: start;
   }
 
