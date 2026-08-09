@@ -35,6 +35,21 @@
   box-sizing: border-box;
 }
 
+/*
+ * 图片默认是 inline，于是底下会跟着一条文字基线的空隙——那 4px 会在卡片里
+ * 变成一道说不清哪来的缝。顺带压住不许超出容器。
+ *
+ * 这是 normalize.css 那类东西**不会**帮你做的：它保留浏览器默认值，而这里
+ * 要的正是改掉默认值。所以我们没引它，只挑真正需要的几条自己写。
+ */
+:where(.fern) img,
+:where(.fern) svg,
+:where(.fern) video,
+:where(.fern) canvas {
+  display: block;
+  max-width: 100%;
+}
+
 :where(.fern) button,
 :where(.fern) input,
 :where(.fern) select,
