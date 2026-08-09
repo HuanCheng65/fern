@@ -295,6 +295,7 @@ commands(() => [
     id: 'instance.create',
     title: '新建实例',
     accepts: 'none',
+    creates: 'instance',
     run: () => nav.enter('instances', 'new'),
   },
 ])

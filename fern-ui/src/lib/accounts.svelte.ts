@@ -226,6 +226,8 @@ commands(() => [
     id: 'account.add',
     title: '添加账户',
     accepts: 'none',
+    // 名单里没有你要的那个人时，出口就在名单的最后一行。
+    creates: 'account',
     run: () => nav.show('settings', profileAt('new')),
   },
 ])

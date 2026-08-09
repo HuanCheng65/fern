@@ -81,6 +81,16 @@ export interface Action {
   accepts: SubjectType | 'none'
   /** 此刻的默认宾语。返回 undefined 表示要问。 */
   subject?: () => Subject | undefined
+  /**
+   * 这个动作会造出一个这种类型的东西。
+   *
+   * 声明了它，下钻到那个类型的名单时最后一行就是它——名单里没有你要的那一个，
+   * 出口该在你找完的地方，而不是退出去重新想它叫什么。这是「搜不到就把打过的
+   * 字交接出去」的同一条：面板不把人留在死路上。
+   *
+   * 不参与匹配也不参与排序：它永远是最后一行，位置稳定比名次正确重要。
+   */
+  creates?: SubjectType
   run: (subject?: Subject) => void
 }
 
@@ -583,11 +593,18 @@ class PaletteStore {
     }
 
     if (scope) {
-      return this.subjects
+      const rows = this.subjects
         .filter((subject) => subject.type === scope.type)
         .map((subject) => this.asRow(subject, query, memory))
         .filter((row) => row.points >= 0)
         .sort((left, right) => right.points - left.points)
+      // 「造一个新的」钉在最后一行，不参与匹配：找不到想要的那一个，正是最需要
+      // 它的时候，而那时查询恰好一个都命中不了。
+      for (const action of this.actions) {
+        if (action.creates !== scope.type) continue
+        rows.push({ kind: 'action', key: `action:${action.id}`, action, points: -1, at: [] })
+      }
+      return rows
     }
 
     // 空态不是搜索，是「面板打开了，我还没想好」。这时候该给的是预测而不是
