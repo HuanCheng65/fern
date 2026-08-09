@@ -252,18 +252,15 @@ pub async fn launch_instance(
         return Err(anyhow!("client jar is missing: {}", client_jar.display()));
     }
 
-    // 这个实例记着的那一个，没记过就跟当前的走（见 accounts.rs）。
+    // 这个实例钉住的那一个，没钉就跟当前账户走（见 account/roster.rs）。
+    //
+    // 启动**不写回**这个字段。曾经写过：第一次启动之后实例就被永久钉在了当时
+    // 的账户上，此后在设置里换当前账户对它再无作用，而界面上没有任何地方说过
+    // 这件事。钉住是一次表态，该由人自己做，不该是启动的副产品。
     let record = crate::account_for_instance(paths, &profile)
         .ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
     let mut account = Account::load(&record)?;
     account.ensure_fresh(paths, &job.downloads()).await?;
-    // 刷新过了才记：这一刻「这个实例用这个账户」才算真的成立。之后游戏因为
-    // 别的原因起不来也无所谓，身份这件事已经定了。
-    if profile.account_id.as_deref() != Some(record.id.as_str()) {
-        let mut updated = profile.clone();
-        updated.account_id = Some(record.id.clone());
-        crate::write_instance_profile(paths, &updated)?;
-    }
     let credentials = account.launch_credentials()?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
     let legacy_assets = metadata

@@ -254,8 +254,10 @@ pub fn active(paths: &DataPaths) -> Option<AccountRecord> {
 
 /// 这个实例该用谁。
 ///
-/// 实例记着的那一个优先，没记过才跟当前的走。记着的那一个已经被移除了就当没
-/// 记过——账户没了不该让实例启动不起来，何况屏幕上会显示换成了谁。
+/// 实例钉住的那一个优先，没钉才跟当前的走。钉住的那一个已经被移除了就当没
+/// 钉过——账户没了不该让实例启动不起来，何况屏幕上会显示换成了谁。
+///
+/// 只有人明确要求时才会有这个字段：启动不写它（见 `launch::prepare`）。
 pub fn for_instance(paths: &DataPaths, profile: &crate::InstanceProfile) -> Option<AccountRecord> {
     let roster = load(paths);
     profile
