@@ -24,14 +24,16 @@
    */
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
-  import { Check, ChevronLeft, Copy, FolderOpen, X } from 'lucide-svelte'
+  import { Check, ChevronLeft, ChevronRight, Copy, FolderOpen, X } from 'lucide-svelte'
   import AccountList from '../components/AccountList.svelte'
   import AccountProfile from '../components/AccountProfile.svelte'
   import AddAccount from '../components/AddAccount.svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import AboutHero from '../components/AboutHero.svelte'
+  import JavaRuntimeProfile from '../components/JavaRuntimeProfile.svelte'
   import SettingRow from '../components/SettingRow.svelte'
   import Choice from '../components/Choice.svelte'
+  import { javaLabel, megabytes, type JavaGroup } from '../lib/java'
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { accounts } from '../lib/accounts.svelte'
@@ -127,24 +129,15 @@
   /** 二级页的标题。 */
   const subtitle = $derived.by(() => {
     if (page === 'data/existing') return '现有游戏目录'
+    if (page === 'java/runtimes') {
+      const home = decodeURIComponent(target)
+      return installed.find((item) => item.home === home)?.version ?? 'Java 运行时'
+    }
     if (target === 'new') return '添加账户'
     return accounts.list.find((item) => item.id === target)?.playerName ?? '账户'
   })
   let paths = $state({ root: '', game: '', logs: '', portable: false })
   let pathError = $state('')
-  interface JavaRuntime {
-    path: string
-    home: string
-    major: number
-    version: string
-    vendor: string
-    arch: string
-    managed: boolean
-    added: boolean
-    image: 'jdk' | 'jre'
-    native: boolean
-    sizeBytes: number
-  }
 
   /**
    * 按大版本分组，而不是平铺一串安装路径。
@@ -152,21 +145,17 @@
    * 用户的问题是「我缺什么」，平铺的列表只回答得了「我装了什么」。缺的那些
    * 也占一组，组里没有运行时——那一行正是要让人看见的。
    */
-  let groups = $state<{ major: number; requiredBy: string[]; runtimes: JavaRuntime[] }[]>([])
+  let groups = $state<JavaGroup[]>([])
   let runtimeError = $state('')
 
-  const megabytes = (bytes: number) =>
-    bytes > 0 ? `${Math.round(bytes / (1024 * 1024))} MB` : ''
+  const installed = $derived(groups.flatMap((group) => group.runtimes))
+  /** 「能回收多少」是来这一页的理由之一，所以它写在段头上。 */
+  const managedBytes = $derived(
+    installed.reduce((total, item) => total + (item.managed ? item.sizeBytes : 0), 0),
+  )
 
-  const describe = (item: JavaRuntime) =>
-    [
-      item.vendor || '未知发行版',
-      item.image === 'jdk' ? 'JDK' : 'JRE',
-      item.managed ? '由 Fern 下载' : item.added ? '手动添加' : '系统自带',
-      megabytes(item.sizeBytes),
-    ]
-      .filter(Boolean)
-      .join(' · ')
+  /** 档案是设置里的二级页。home 是一条路径，要转义才塞得进 `分区/行/目标`。 */
+  const profileAt = (home: string) => `java/runtimes/${encodeURIComponent(home)}`
 
   async function installJava(major: number) {
     runtimeError = ''
@@ -373,6 +362,15 @@
       <div class="sub-body">
         {#if page === 'data/existing'}
           <AdoptDirectory />
+        {:else if page === 'java/runtimes'}
+          <JavaRuntimeProfile
+            home={decodeURIComponent(target)}
+            {groups}
+            onchanged={() => void loadRuntimes()}
+            ongone={() => nav.show('settings', 'java/runtimes')}
+            remove={removeRuntime}
+            forget={forgetJavaPath}
+          />
         {:else if target === 'new'}
           <AddAccount ondone={(id) => nav.show('settings', `account/list${id ? `/${id}` : ''}`)} />
         {:else}
@@ -604,25 +602,33 @@
             />
           </SettingRow>
         {:else if section === 'java'}
+          <!--
+            这一节回答的是「我缺什么、我能删什么」，不是「我装了什么」——所以
+            组头写状态，段头写总占用，具体那几行安静下来，细节进档案页。
+          -->
           <SettingRow id="java/runtimes" found={focused === 'java/runtimes'}>
-
             {#if groups.length === 0}
               <p class="t-quiet">尚未扫描到任何 Java，也没有实例需要它。</p>
+            {:else}
+              <p class="tally t-quiet">
+                共 {installed.length} 份{#if managedBytes > 0}
+                  ，其中 {megabytes(managedBytes)} 由 Fern 下载、可回收{/if}
+              </p>
             {/if}
 
             <ul class="runtimes">
               {#each groups as group (group.major)}
                 <li class="group">
                   <div class="group-head">
-                    <span class="rt-name">
-                      Java {group.major}
-                      <small class="t-quiet">
-                        {#if group.requiredBy.length > 0}
-                          {group.requiredBy.length} 个实例需要：{group.requiredBy.join('、')}
-                        {:else}
-                          当前没有实例需要
-                        {/if}
-                      </small>
+                    <span class="major">Java {group.major}</span>
+                    <span class="state" class:missing={group.runtimes.length === 0}>
+                      {#if group.runtimes.length === 0}
+                        缺
+                      {:else if group.requiredBy.length === 0}
+                        无实例需要
+                      {:else}
+                        {group.requiredBy.length} 个实例需要
+                      {/if}
                     </span>
                     {#if group.runtimes.length === 0}
                       <button class="btn btn--ghost" onclick={() => void installJava(group.major)}>
@@ -630,29 +636,28 @@
                       </button>
                     {/if}
                   </div>
+                  {#if group.requiredBy.length > 0}
+                    <p class="who t-quiet">{group.requiredBy.join('、')}</p>
+                  {/if}
 
                   {#each group.runtimes as item (item.path)}
-                    <div class="rt">
+                    <button class="rt" onclick={() => nav.show('settings', profileAt(item.home))}>
                       <span class="rt-name">
                         {item.version || `Java ${item.major}`}
-                        <small class="t-quiet">{describe(item)}</small>
-                        <!-- 非原生架构必须说明：能跑，但明显更慢，而这一点
-                             在任何别的地方都看不出来。 -->
-                        {#if !item.native}
-                          <small class="warn">{item.arch} 版本，与本机架构不一致，性能会下降</small>
-                        {/if}
-                        <small class="t-mono path">{item.home}</small>
+                        <small class="t-quiet">{javaLabel(item)}</small>
                       </span>
-                      {#if item.managed}
-                        <button class="btn btn--link" onclick={() => void removeRuntime(item.home)}>
-                          删除
-                        </button>
-                      {:else if item.added}
-                        <button class="btn btn--link" onclick={() => void forgetJavaPath(item.home)}>
-                          移除登记
-                        </button>
+                      <!--
+                        实例那一屏只说得出「会用 Java 21」。装了不止一份的时候，
+                        不指出是哪一份，两屏就对不上号。
+
+                        只有一份时不说：那时「哪一份」根本不是个问题，标出来只是
+                        给每一行都挂上一句废话。
+                      -->
+                      {#if group.runtimes.length > 1 && group.preferred === item.home}
+                        <span class="badge">默认选用</span>
                       {/if}
-                    </div>
+                      <ChevronRight size={15} strokeWidth={2} />
+                    </button>
                   {/each}
                 </li>
               {/each}
@@ -909,35 +914,77 @@
     box-shadow: none;
   }
 
+  .tally {
+    margin: 0 0 var(--s3);
+    font-size: var(--t-small);
+  }
+
   .group-head,
   .rt {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: var(--s3);
   }
 
-  /* 具体的安装缩进一级：它们从属于上面那个大版本。 */
-  .rt {
-    padding-left: var(--s4);
+  .major {
+    color: var(--ink);
+    font-size: var(--t-body);
+    font-weight: 500;
   }
 
-  .warn {
+  /* 组头承担状态：来这一页的问题是「我缺什么」，不是「我装了什么」。 */
+  .state {
+    margin-right: auto;
+    color: var(--ink-3);
+    font-size: var(--t-small);
+  }
+
+  .state.missing {
     color: var(--danger);
+  }
+
+  .who {
+    margin: 0;
+    padding-left: var(--s4);
     font-size: var(--t-micro);
   }
 
-  .rt .path {
+  /* 具体的安装缩进一级：它们从属于上面那个大版本。整行是进档案的入口。 */
+  .rt {
+    width: 100%;
+    padding: var(--s1) var(--s2) var(--s1) var(--s4);
+    border-radius: var(--r1);
+    text-align: left;
+    transition: background var(--t-fast) var(--ease);
+  }
+
+  .rt:hover {
+    background: var(--tint-1);
+  }
+
+  .rt :global(svg) {
+    flex: none;
     color: var(--ink-4);
-    font-size: var(--t-micro);
-    overflow-wrap: anywhere;
   }
 
   .rt-name {
     display: grid;
     gap: 1px;
+    flex: 1;
+    min-width: 0;
     color: var(--ink-2);
     font-size: var(--t-body);
+  }
+
+  .rt-name small {
+    color: var(--ink-4);
+    font-size: var(--t-micro);
+  }
+
+  .badge {
+    flex: none;
+    color: var(--accent);
+    font-size: var(--t-micro);
   }
 
   /*

@@ -115,8 +115,8 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   {
     id: 'java/runtimes',
     label: '运行时',
-    note: '按大版本列出。缺失的版本会在首次启动相应实例时自动下载，也可在此处提前安装。',
-    keywords: 'java jdk jre runtime 运行时',
+    note: '缺失的版本会在首次启动相应实例时自动下载，也可在此提前安装。',
+    keywords: 'java jdk jre runtime 运行时 删除 占用',
     stack: true,
   },
   {

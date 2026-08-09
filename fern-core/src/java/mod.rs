@@ -675,6 +675,12 @@ pub struct JavaGroup {
     pub required_by: Vec<String>,
     /// 装在这台机器上的那些。空表示这一组还缺。
     pub runtimes: Vec<JavaRuntime>,
+    /// 这一组里「自动」会挑中的那一份的 home。
+    ///
+    /// 同一个大版本装着两三份并不罕见（系统一份、Fern 下一份、手动登记一份），
+    /// 而实例那一屏只说得出「会用 Java 21」。不指出是哪一个，两屏就对不上号。
+    /// 判断用的是和启动同一个 [`select`]，不是另写一条规则。
+    pub preferred: Option<PathBuf>,
 }
 
 /// 一个实例需要哪个大版本，以及这台机器上有没有。
@@ -693,6 +699,7 @@ pub fn overview(paths: &DataPaths, instances: &[crate::InstanceProfile]) -> Vec<
                     major,
                     required_by: Vec::new(),
                     runtimes: Vec::new(),
+                    preferred: None,
                 });
                 groups.len() - 1
             }
@@ -714,6 +721,17 @@ pub fn overview(paths: &DataPaths, instances: &[crate::InstanceProfile]) -> Vec<
             .unwrap_or(requirement.minimum);
         let index = group_for(&mut groups, major);
         groups[index].required_by.push(profile.name.clone());
+    }
+
+    for group in &mut groups {
+        // 「要是某个实例就要这个大版本，会用哪一份」——把区间夹死到这一档，
+        // 剩下的交给启动时用的同一个选择函数。
+        let requirement = JavaRequirement {
+            minimum: group.major,
+            maximum: Some(group.major),
+            preferred: Some(group.major),
+        };
+        group.preferred = select(&group.runtimes, &requirement).map(|runtime| runtime.home);
     }
 
     groups.sort_by_key(|group| group.major);
@@ -768,6 +786,34 @@ mod tests {
         assert!(majors.windows(2).all(|pair| pair[0] < pair[1]));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 同一个大版本装着好几份是常事。实例那一屏只说得出「会用 Java 21」，
+    /// 设置页要指得出是哪一份——两处对不上号，用户就没法判断该删哪一个。
+    #[test]
+    fn a_group_points_at_the_one_that_would_actually_be_used() {
+        let mut group = JavaGroup {
+            major: 21,
+            required_by: Vec::new(),
+            runtimes: vec![
+                runtime(21, env::consts::ARCH, false),
+                runtime(21, env::consts::ARCH, true),
+            ],
+            preferred: None,
+        };
+        // 两份都能用时，挑我们管得住的那一份——和启动时用的是同一个 select。
+        group.runtimes[1].home = PathBuf::from("/fern/runtimes/21");
+        let requirement = JavaRequirement {
+            minimum: 21,
+            maximum: Some(21),
+            preferred: Some(21),
+        };
+        assert_eq!(
+            select(&group.runtimes, &requirement).map(|runtime| runtime.home),
+            Some(PathBuf::from("/fern/runtimes/21"))
+        );
+        // 一份都没装的那一组不该指向任何东西——「缺」正是要让人看见的状态。
+        assert_eq!(select(&[], &requirement), None);
     }
 
     #[test]
