@@ -13,7 +13,7 @@
    */
   import { invoke } from '@tauri-apps/api/core'
   import { fly } from 'svelte/transition'
-  import { ArrowLeft, ArrowRight, Check, Plus } from 'lucide-svelte'
+  import { ArrowLeft, ArrowRight, Plus } from 'lucide-svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import Mark from 'fern-kit/ui/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
@@ -21,6 +21,7 @@
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { inTauri } from '../lib/instances.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
+  import RadioGroup from 'fern-kit/ui/RadioGroup.svelte'
 
   interface Props {
     /** 走完向导。create 为真时直接进到新建实例。 */
@@ -169,27 +170,21 @@
         <p class="lede">选择一种登录方式。之后随时可以更换或添加。</p>
 
         <div class="options">
-          {#each ACCOUNTS as item (item.kind)}
-            <button
-              class="option"
-              class:on={accountKind === item.kind}
-              disabled={!item.ready}
-              onclick={() => {
-                accountKind = item.kind
-                nameError = ''
-              }}
-            >
-              <span class="option-text">
-                <strong>{item.title}</strong>
-                <small>{item.note}</small>
-              </span>
-              {#if !item.ready}
-                <span class="tag">尚未接入</span>
-              {:else if accountKind === item.kind}
-                <Check size={16} strokeWidth={2.4} />
-              {/if}
-            </button>
-          {/each}
+        <RadioGroup
+          aria-label="登录方式"
+          value={accountKind}
+          onchange={(next) => {
+            accountKind = next
+            nameError = ''
+          }}
+          options={ACCOUNTS.map((item) => ({
+            value: item.kind,
+            label: item.title,
+            note: item.note,
+            disabled: !item.ready,
+            badge: item.ready ? undefined : '尚未接入',
+          }))}
+        />
         </div>
 
         <!-- 向导只问「用哪种」，登录本身留到设置页：一屏一件事，而登录要填
@@ -231,20 +226,27 @@
         </p>
 
         <div class="options">
-          <button class="option" class:on={source === 'bmclapi'} onclick={() => (source = 'bmclapi')}>
-            <span class="option-text">
-              <strong>BMCLAPI<span class="hint-tag" class:show={recommended === 'bmclapi'}>推荐</span></strong>
-              <small>国内镜像，中国大陆网络下更快</small>
-            </span>
-            {#if source === 'bmclapi'}<Check size={16} strokeWidth={2.4} />{/if}
-          </button>
-          <button class="option" class:on={source === 'official'} onclick={() => (source = 'official')}>
-            <span class="option-text">
-              <strong>官方源<span class="hint-tag" class:show={recommended === 'official'}>推荐</span></strong>
-              <small>Mojang 官方服务器，海外网络下更快</small>
-            </span>
-            {#if source === 'official'}<Check size={16} strokeWidth={2.4} />{/if}
-          </button>
+        <RadioGroup
+          aria-label="下载源"
+          value={source}
+          onchange={(next) => (source = next)}
+          options={[
+            {
+              value: 'bmclapi' as const,
+              label: 'BMCLAPI',
+              note: '国内镜像，中国大陆网络下更快',
+              badge: recommended === 'bmclapi' ? '推荐' : undefined,
+              badgeTone: 'accent' as const,
+            },
+            {
+              value: 'official' as const,
+              label: '官方源',
+              note: 'Mojang 官方服务器，海外网络下更快',
+              badge: recommended === 'official' ? '推荐' : undefined,
+              badgeTone: 'accent' as const,
+            },
+          ]}
+        />
         </div>
 
         <p class="foot-note">当前源失败时将自动切换到另一个源，选择错误不会导致无法下载。</p>
@@ -379,85 +381,10 @@
     font-weight: 600;
   }
 
+  /* 布局归调用方：这一组在向导里离上面那段话多远，是这一屏的事。 */
   .options {
-    display: grid;
-    gap: var(--s2);
     width: 100%;
     margin-top: var(--s6);
-  }
-
-  /* 三种登录方式平等地放着：离线模式不藏、不加警告色，只是其中一个选项。 */
-  .option {
-    display: flex;
-    align-items: center;
-    gap: var(--s4);
-    padding: var(--s3) var(--s4);
-    border-radius: var(--r2);
-    background: var(--tint-1);
-    box-shadow: inset 0 0 0 1px transparent;
-    text-align: left;
-    transition:
-      background var(--t-fast) var(--ease),
-      box-shadow var(--t-fast) var(--ease);
-  }
-
-  .option:hover:not(:disabled) {
-    background: var(--tint-2);
-  }
-
-  .option.on {
-    background: var(--tint-2);
-    box-shadow: inset 0 0 0 1.5px var(--accent);
-  }
-
-  .option:disabled {
-    opacity: 0.42;
-    cursor: default;
-  }
-
-  .option :global(svg) {
-    flex: none;
-    color: var(--accent);
-  }
-
-  .option-text {
-    display: grid;
-    gap: 2px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .option-text strong {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    font-size: var(--t-body);
-    font-weight: 550;
-  }
-
-  .option-text small {
-    color: var(--ink-3);
-    font-size: var(--t-small);
-  }
-
-  .hint-tag {
-    display: none;
-    padding: 1px 6px;
-    border-radius: 999px;
-    background: var(--accent);
-    color: var(--accent-ink);
-    font-size: 10px;
-    font-weight: 600;
-  }
-
-  .hint-tag.show {
-    display: inline-block;
-  }
-
-  .tag {
-    flex: none;
-    color: var(--ink-3);
-    font-size: var(--t-micro);
   }
 
   .field.inline {

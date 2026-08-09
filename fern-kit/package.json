@@ -12,6 +12,7 @@
     "./ui/mark": "./src/ui/mark.ts",
     "./ui/biome": "./src/ui/biome.ts",
     "./ui/Button.svelte": "./src/ui/Button.svelte",
+    "./ui/RadioGroup.svelte": "./src/ui/RadioGroup.svelte",
     "./ui/SegmentedControl.svelte": "./src/ui/SegmentedControl.svelte",
     "./ui/field": "./src/ui/field.ts",
     "./ui/Field.svelte": "./src/ui/Field.svelte",
