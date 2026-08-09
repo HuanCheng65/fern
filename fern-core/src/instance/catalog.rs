@@ -141,6 +141,8 @@ pub struct InstanceRuntime {
     /// 和真正启动时算的是同一个函数——界面显示一份、启动用另一份，就会出现
     /// 「设置里写着 8 G，实际跑的是 4 G」这种没人查得动的问题。
     pub allocation: crate::AllocationDecision,
+    /// 真跑出来的那几个数。历史不够就是 `None`，界面那时不画实测刻度。
+    pub measured: Option<crate::MemoryHistory>,
     pub physical_memory_mb: u32,
     /// 这个版本能接受的 Java 区间。
     pub requirement: crate::JavaRequirement,
@@ -204,9 +206,19 @@ pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<Instance
         None,
     );
 
+    // 界面要在尺上画刻度，那要的是数不是句子。用和这次分配同一条 GC 路径去
+    // 读——显示的必须是算法真正用的那份，不能两边各算各的。
+    let measured = crate::memory_history(
+        paths,
+        &profile,
+        &game_directory,
+        allocation.gc.behaves_like_zgc(),
+    );
+
     Ok(InstanceRuntime {
         automatic_memory_mb: automatic.xmx_mb,
         allocation,
+        measured,
         physical_memory_mb: physical.map_or(0, |bytes| (bytes / (1024 * 1024)) as u32),
         requirement,
         java,

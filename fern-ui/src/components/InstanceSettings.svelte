@@ -8,28 +8,22 @@
    * 这一屏只放「这个实例和别的实例不一样」的东西。全局的偏好在设置页，向导
    * 里问过的更不该在这儿再问一遍。
    *
-   * 两项都默认「自动」，而且自动这一档要把算出来的结果写出来——「自动」两个
+   * 每一项都默认「跟随」或「自动」，而且那一档要把结果写出来——「自动」两个
    * 字本身不解释任何事情，用户看到「自动 · 4096 MB」才知道要不要动它。
    * 这是文档 §4.3 和 §6.1 的同一条要求：这一层平时该是隐形的，只有想接管的
    * 人才需要看见它。
    */
   import { invoke } from '@tauri-apps/api/core'
   import { ChevronRight } from 'lucide-svelte'
+  import AccountFace from './AccountFace.svelte'
   import Choice from './Choice.svelte'
   import Loading from './Loading.svelte'
+  import MemoryMeter from './MemoryMeter.svelte'
+  import { accounts, originOf } from '../lib/accounts.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
+  import { javaLabel, javaMismatch, type JavaRuntime } from '../lib/java'
+  import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
-
-  interface JavaRuntime {
-    path: string
-    major: number
-    version: string
-    vendor: string
-    arch: string
-    managed: boolean
-    image: 'jdk' | 'jre'
-    native: boolean
-  }
 
   /** 一次分配的理由。`topic` 决定它是依据、实测还是约束。 */
   interface ExplanationItem {
@@ -46,9 +40,20 @@
     tight: boolean
   }
 
+  /** 真跑出来的那几个数。尺上的刻度要的是数，不是句子。 */
+  interface MemoryHistory {
+    sessions: number
+    lastPeakMb: number
+    liveSetMb: number
+    /** 只有算法说得出的那句结论（「水位健康，维持 8 GB」）。 */
+    note: string
+  }
+
   interface InstanceRuntime {
     automaticMemoryMb: number
     allocation: AllocationDecision
+    /** 历史不够就是 null，那时不画实测刻度。 */
+    measured: MemoryHistory | null
     physicalMemoryMb: number
     requirement: { minimum: number; maximum: number | null }
     java: JavaRuntime | null
@@ -119,23 +124,13 @@
   const memoryValue = $derived(settings.maxMemoryMb ?? runtime?.automaticMemoryMb ?? 2048)
 
   /**
-   * 分配结论摊开成一句话。
+   * 身份只有两档：不钉住就跟着当前账户走，钉住了就永远是那一个。
    *
-   * 依据、实测、约束三类各自成句，中间用句号断开——「基于 186 个 Mod、光影。
-   * 上次运行峰值 6.3 GB。」比把它们全用顿号串成一长条读得快。
+   * 中间不再有「记住上次」——它和「固定」只在一条路径上不同（从别处直接启动
+   * 这个实例时），而两档在界面上分不出来的东西不值得占一档。
    */
-  const reasons = $derived.by(() => {
-    const items = runtime?.allocation.explanation ?? []
-    return (['basis', 'history', 'limit'] as const)
-      .map((topic) =>
-        items
-          .filter((item) => item.topic === topic)
-          .map((item) => item.text)
-          .join('、'),
-      )
-      .filter(Boolean)
-      .join('。')
-  })
+  const pinned = $derived(instances.list.find((item) => item.id === instanceId)?.accountId ?? null)
+
 
   /** MB 变成一句话。整数不带小数点——`8 GB` 比 `8.0 GB` 更像一个决定。 */
   const gigabytes = (mb: number) => {
@@ -146,20 +141,81 @@
   }
 
   /**
-   * 同一个大版本可能同时装着 JDK 和 JRE，两行不能长得一模一样。
+   * 解释按 topic 各自落位，不再串成一长条。
    *
-   * 跑游戏两者没有区别，所以它只出现在标签里，不参与选择。
+   * 「依据」是算法看了什么，「约束」是什么东西挡住了它——两类的语气和去处都
+   * 不同。而 `history` 那一类不在这里出：实测的数字变成了尺上的刻度，那句结论
+   * 由 `measured.note` 给，一件事只说一遍。
    */
-  const javaLabel = (item: JavaRuntime) =>
+  const explanation = (topic: 'basis' | 'limit') =>
+    (runtime?.allocation.explanation ?? [])
+      .filter((item) => item.topic === topic)
+      .map((item) => item.text)
+      .join('、')
+  const basis = $derived(explanation('basis'))
+  const limits = $derived(explanation('limit'))
+
+  /** 参数里已经写死了 -Xmx：这时候后端报的分配是 0，不能拿它当一个值显示。 */
+  const byArguments = $derived(runtime?.allocation.source === 'userJvmArgs')
+  const automaticMb = $derived(runtime?.automaticMemoryMb ?? 2048)
+  /** 尺上那条线现在在哪。自动时是算出来的那份，手动时是填的那个。 */
+  const shownMb = $derived(
+    memoryAuto ? (runtime?.allocation.xmxMb ?? automaticMb) : memoryValue,
+  )
+
+  /**
+   * 尺上的幽灵刻度。
+   *
+   * 「上次峰值」是一个事实，什么时候都成立；「自动会给多少」只在你已经接管了
+   * 的时候才有意义——自动那一档里，填充的边缘本身就是它。
+   *
+   * 没有历史就没有那道刻度。读不到就不画。
+   */
+  const memoryMarks = $derived(
     [
-      `Java ${item.major}`,
-      item.vendor,
-      item.image === 'jdk' ? 'JDK' : 'JRE',
-      item.managed ? '由 Fern 下载' : '',
-      item.native ? '' : `${item.arch}，非原生架构`,
-    ]
-      .filter(Boolean)
-      .join(' · ')
+      runtime?.measured && {
+        at: runtime.measured.lastPeakMb,
+        label: `上次峰值 ${gigabytes(runtime.measured.lastPeakMb)}`,
+      },
+      !memoryAuto && { at: automaticMb, label: `自动 ${gigabytes(automaticMb)}` },
+    ].filter((mark): mark is { at: number; label: string } => Boolean(mark)),
+  )
+
+  /**
+   * Java 这一节和内存对称：默认只有一行结论，想接管的人才展开那张单子。
+   *
+   * 上一版把这台机器上**所有** Java 平铺成一列单选，于是一个要 21+ 的实例上，
+   * Java 8 和 Java 21 是并排的两个选项——选了前者必定起不来，然后预检查再来
+   * 骂一次。已知会失败的选项不该和好选项长得一样。
+   */
+  let picking = $state(false)
+  let showUnfit = $state(false)
+  let installing = $state(false)
+
+  const requirement = $derived(runtime?.requirement ?? { minimum: 8, maximum: null })
+  const javaAuto = $derived(settings.javaPath === null)
+  /** 现在真正会被用上的那一份。自动时由后端选，手动时是钉住的那条路径。 */
+  const chosen = $derived(
+    javaAuto ? runtime?.java : runtimes.find((item) => item.path === settings.javaPath),
+  )
+  const fitting = $derived(runtimes.filter((item) => !javaMismatch(item, requirement)))
+  const unfit = $derived(runtimes.filter((item) => javaMismatch(item, requirement)))
+
+  async function installJava() {
+    installing = true
+    try {
+      await invoke('install_java', {
+        major: requirement.minimum,
+        title: `安装 Java ${requirement.minimum}`,
+        subjects: [`java-${requirement.minimum}`],
+      })
+      await setJava(null)
+    } catch (cause) {
+      error = String(cause)
+    } finally {
+      installing = false
+    }
+  }
 
   async function load() {
     if (!inTauri()) {
@@ -194,9 +250,17 @@
     }
   }
 
+  /**
+   * 拖尺的时候这里每一帧都会来一次，不能每一帧都写一次盘。
+   *
+   * 界面立刻跟手（改的是本地那份状态），落盘等手停下来。松手之前就算窗口被关掉，
+   * 丢的也只是最后二百毫秒里的一次微调。
+   */
+  let settling: ReturnType<typeof setTimeout> | undefined
   function setMemory(value: number | null) {
     settings.maxMemoryMb = value
-    void persist()
+    clearTimeout(settling)
+    settling = setTimeout(() => void persist(), 200)
   }
 
   /**
@@ -250,77 +314,168 @@
 {:else}
   <div class="body">
       <!--
-        内存这一节不以滑杆开场（设计文档 §8）。默认只有一行结论加它的理由：
-        判断依据摊开、控件退后。滑杆是想接管的人才需要的东西，让它一直摆在
-        那里，等于每次打开这一屏都问一遍「你要不要动内存」。
+        身份放在第一节：这一屏其余几项都是机器的事，只有这一项是人的事。
+
+        默认「跟随当前账户」，钉住是一次明确的表态——启动本身不再悄悄写它。
+        真正要钉的场景很具体：某个私服要用那个站的号，而别处照常用正版。
+      -->
+      <section>
+        <!-- 右边原本有一句「跟着设置里的当前账户变」：下面那一档自己写着
+             「跟随当前账户 · 当前是 Steve」，同一件事说两遍。 -->
+        <div class="row-head">
+          <span class="label">启动身份</span>
+        </div>
+        <div class="choices">
+          <button class="pick" class:on={pinned === null} onclick={() => void instances.setAccount(instanceId, null)}>
+            <strong>跟随当前账户</strong>
+            <small class="t-mono">
+              {accounts.active ? `当前是 ${accounts.active.playerName}` : '尚未添加账户'}
+            </small>
+          </button>
+          {#each accounts.list as account (account.id)}
+            <button
+              class="pick face-row"
+              class:on={pinned === account.id}
+              onclick={() => void instances.setAccount(instanceId, account.id)}
+            >
+              <AccountFace {account} size={26} />
+              <span>
+                <strong>{account.playerName}</strong>
+                <!-- 名单里永远写全出处：同名的正版号和离线号只差这一截。 -->
+                <small class="t-mono">{originOf(account)}</small>
+              </span>
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <!--
+        内存是一根尺，不是三行字（设计文档 §8）。分配、上限、物理内存本来就是
+        三个嵌套的区间，画出来一眼就完；判断依据仍然摊开，只是退到尺下面一行。
       -->
       <section>
         <div class="row-head">
           <span class="label">内存</span>
-          <span class="t-mono value">
-            {#if memoryAuto}
-              自动 · {gigabytes(runtime?.allocation.xmxMb ?? runtime?.automaticMemoryMb ?? 2048)}
-            {:else}
-              {gigabytes(memoryValue)}
-            {/if}
+          <span class="t-mono amount">
+            {gigabytes(shownMb)}{#if memoryAuto}<small>自动</small>{/if}
           </span>
         </div>
-        {#if memoryAuto}
-          <p class="reason t-quiet">{reasons}</p>
+
+        {#if byArguments}
+          <!--
+            用户自己在参数里写了 -Xmx。那时候我们一个字都不该插嘴，更不该画一根
+            推不动的尺——上一版这里会显示「自动 · 0 GB」，因为后端在这种情况下
+            报的分配就是 0。
+          -->
+          <p class="reason">
+            堆大小由额外 JVM 参数中的 <code class="t-mono">-Xmx</code> 决定。
+            <button class="btn btn--link" onclick={() => nav.show('settings', 'game/jvm')}>
+              前往设置
+            </button>
+          </p>
         {:else}
-          <input
-            class="slider"
-            type="range"
-            min="1024"
-            max={ceiling}
-            step="512"
-            value={memoryValue}
-            oninput={(event) => setMemory(Number(event.currentTarget.value))}
+          <MemoryMeter
+            label="内存"
+            physicalMb={runtime?.physicalMemoryMb ?? 0}
+            ceilingMb={ceiling}
+            valueMb={shownMb}
+            marks={memoryMarks}
+            onchange={memoryAuto ? undefined : setMemory}
+            onceiling={() => nav.show('settings', 'game/memory')}
           />
+
+          {#if memoryAuto && basis}<p class="reason t-quiet">{basis}</p>{/if}
+          {#if memoryAuto && runtime?.measured}
+            <p class="reason t-quiet">{runtime.measured.note}</p>
+          {/if}
+          {#if limits}<p class="reason t-quiet">{limits}</p>{/if}
+
+          <!-- 左边原本有一句「按这个实例的内容与实测用量决定」：数字旁边的
+               「自动」和这颗按钮已经把状态说完了。 -->
+          <div class="row-foot end">
+            <button class="btn btn--link" onclick={() => setMemory(memoryAuto ? shownMb : null)}>
+              {memoryAuto ? '手动指定' : `恢复自动（${gigabytes(automaticMb)}）`}
+            </button>
+          </div>
         {/if}
-        <div class="row-foot">
-          <span class="t-quiet">
-            物理内存 {gigabytes(runtime?.physicalMemoryMb ?? 0)}，游戏上限 {gigabytes(ceiling)}
-          </span>
-          <button
-            class="btn btn--link"
-            onclick={() =>
-              setMemory(
-                memoryAuto ? (runtime?.allocation.xmxMb ?? runtime?.automaticMemoryMb ?? 2048) : null,
-              )}
-          >
-            {memoryAuto ? '手动指定' : `改回自动（${gigabytes(runtime?.automaticMemoryMb ?? 2048)}）`}
-          </button>
-        </div>
       </section>
 
       <section>
         <div class="row-head">
           <span class="label">Java</span>
-          <span class="t-mono value">
-            需要 Java {runtime?.requirement.minimum ?? 8}{runtime?.requirement.maximum
-              ? ` – ${runtime.requirement.maximum}`
-              : ' 或更高'}
+          <span class="t-mono amount">
+            {chosen ? `Java ${chosen.major}` : '将自动下载'}{#if javaAuto}<small>自动</small>{/if}
           </span>
         </div>
-        <div class="choices">
-          <button class="pick" class:on={settings.javaPath === null} onclick={() => void setJava(null)}>
-            <strong>自动</strong>
-            <small class="t-mono">
-              {runtime?.java ? `当前将使用 Java ${runtime.java.major}` : '无匹配版本，启动时自动下载'}
-            </small>
+        <p class="reason t-quiet">
+          {#if chosen}
+            {chosen.version} · {javaLabel(chosen)}
+          {:else}
+            这台机器上没有满足要求的版本，启动时会自动下载 Java {requirement.minimum}。
+          {/if}
+        </p>
+        {#if chosen && !chosen.native}
+          <!-- 能跑，但明显更慢，而这一点在别的任何地方都看不出来。 -->
+          <p class="reason warn">{chosen.arch} 版本，与本机架构不一致，性能会下降</p>
+        {/if}
+
+        <div class="row-foot">
+          <span class="t-quiet">
+            这个版本要求 Java {requirement.minimum}{requirement.maximum
+              ? `–${requirement.maximum}`
+              : ' 或更高'}
+          </span>
+          <button class="btn btn--link" onclick={() => (picking = !picking)}>
+            {picking ? '收起' : '改用其他版本'}
           </button>
-          {#each runtimes as item (item.path)}
-            <button
-              class="pick"
-              class:on={settings.javaPath === item.path}
-              onclick={() => void setJava(item.path)}
-            >
-              <strong>{javaLabel(item)}</strong>
-              <small class="t-mono">{item.path}</small>
-            </button>
-          {/each}
         </div>
+
+        {#if picking}
+          <div class="choices">
+            <button class="pick" class:on={javaAuto} onclick={() => void setJava(null)}>
+              <strong>自动</strong>
+              <small class="t-mono">按版本要求选择，缺失时在启动前下载</small>
+            </button>
+            {#each fitting as item (item.path)}
+              <button
+                class="pick"
+                class:on={settings.javaPath === item.path}
+                onclick={() => void setJava(item.path)}
+              >
+                <strong>Java {item.major} · {item.version}</strong>
+                <small class="t-mono">{javaLabel(item)}</small>
+              </button>
+            {/each}
+
+            {#if fitting.length === 0}
+              <button class="btn btn--ghost install" disabled={installing} onclick={() => void installJava()}>
+                {installing ? '正在下载…' : `下载 Java ${requirement.minimum}`}
+              </button>
+            {/if}
+
+            <!--
+              不兼容的收在后面，而且要说出为什么。摆在前面和好选项并排，等于
+              请人踩一个我们已经知道的坑。
+            -->
+            {#if unfit.length > 0}
+              <button class="btn btn--link fold" onclick={() => (showUnfit = !showUnfit)}>
+                {showUnfit ? '收起不兼容的版本' : `显示不兼容的版本（${unfit.length}）`}
+              </button>
+              {#if showUnfit}
+                {#each unfit as item (item.path)}
+                  <button
+                    class="pick"
+                    class:on={settings.javaPath === item.path}
+                    onclick={() => void setJava(item.path)}
+                  >
+                    <strong>Java {item.major} · {item.version}</strong>
+                    <small class="warn">{javaMismatch(item, requirement)}</small>
+                  </button>
+                {/each}
+              {/if}
+            {/if}
+          </div>
+        {/if}
       </section>
 
       <section>
@@ -451,9 +606,24 @@
     font-weight: 500;
   }
 
-  .value {
-    color: var(--ink-3);
+  /*
+   * 结论就是那个数，所以它按数来排——文档三说的「数字直接当视觉元素用」。
+   * 「自动」退成一枚跟在后面的小字：它是这个数的来历，不是和它并列的信息。
+   */
+  .amount {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--s2);
+    color: var(--ink);
+    font-size: var(--t-h2);
     font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .amount small {
+    color: var(--ink-4);
+    font-size: var(--t-micro);
+    letter-spacing: 0;
   }
 
   .row-foot {
@@ -464,14 +634,12 @@
     margin-top: var(--s2);
   }
 
-  .slider {
-    display: block;
-    width: 100%;
-    margin-top: var(--s3);
-    accent-color: var(--accent);
+  /* 左边那句话删掉之后，只剩一个动作，让它靠右。 */
+  .row-foot.end {
+    justify-content: flex-end;
   }
 
-  /* 结论下面那行理由。占滑杆原来的位置，所以两种状态的高度不会跳。 */
+  /* 尺下面那几行理由。一类一行，不串成一长条。 */
   .reason {
     margin: var(--s2) 0 0;
     max-width: 64ch;
@@ -479,8 +647,19 @@
     line-height: 1.6;
   }
 
-  .slider:disabled {
-    opacity: 0.4;
+  .reason code {
+    font-size: var(--t-micro);
+  }
+
+  .reason.warn,
+  .pick small.warn {
+    color: var(--danger);
+  }
+
+  .install,
+  .fold {
+    justify-self: start;
+    margin-top: var(--s2);
   }
 
   .advanced {
@@ -575,6 +754,19 @@
     color: var(--ink-4);
     font-size: var(--t-micro);
     overflow-wrap: anywhere;
+  }
+
+  /* 带脸的那几行：脸在左，两行字在右，和别的选项共用同一个盒子。 */
+  .pick.face-row {
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .pick.face-row span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
   }
 
 </style>

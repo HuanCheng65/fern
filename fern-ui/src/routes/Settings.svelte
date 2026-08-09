@@ -31,6 +31,7 @@
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import AboutHero from '../components/AboutHero.svelte'
   import JavaRuntimeProfile from '../components/JavaRuntimeProfile.svelte'
+  import MemoryMeter from '../components/MemoryMeter.svelte'
   import SettingRow from '../components/SettingRow.svelte'
   import Choice from '../components/Choice.svelte'
   import { javaLabel, megabytes, type JavaGroup } from '../lib/java'
@@ -201,7 +202,11 @@
   }
 
   /** 这台机器有多少内存，以及现在那条线在哪。 */
-  let budget = $state({ physicalMb: 0, ceilingMb: 0 })
+  let budget = $state<{ physicalMb: number; ceilingMb: number; usedMb: number | null }>({
+    physicalMb: 0,
+    ceilingMb: 0,
+    usedMb: null,
+  })
   const GIGABYTE = 1024
   /** 滑杆读的是 GB：内存这件事上没人以 MB 为单位思考。 */
   const gigabytes = (mb: number) => Math.round((mb / GIGABYTE) * 10) / 10
@@ -510,17 +515,18 @@
             实例设置。
           -->
           <SettingRow id="game/memory" found={focused === 'game/memory'}>
-            {#snippet note()}自动分配的堆与实例中手动指定的值均以此为上限。 {#if budget.physicalMb} 本机内存共 {gigabytes(budget.physicalMb)} GB，默认上限为其一半。 {/if}{/snippet}
-            <div class="slider-row">
-              <input
-                class="slider"
-                type="range"
-                min="2"
-                max={Math.max(4, gigabytes(budget.physicalMb || 8192))}
-                step="0.5"
-                value={ceilingGb}
-                oninput={(event) => setCeiling(Number(event.currentTarget.value))}
-              />
+            <!--
+              「这台机器上还跑着别的什么」这句话删掉了：尺上那道暗色就是它，
+              而一段几何比一句话快。说明只留控件本身说不出来的那一件事。
+            -->
+            {#snippet note()}自动分配的堆与实例中手动指定的值均以此为上限。{/snippet}
+            <!--
+              和实例设置里那一节共用同一根尺。两屏说同一种视觉语言，这条线在
+              哪、离满还有多远，两处读起来是一回事。
+
+              这里拖的**就是**上限本身，右端只是物理内存，所以不画那堵墙。
+            -->
+            <div class="ceiling-row">
               <span class="t-mono amount">{ceilingGb} GB</span>
               <button
                 class="btn btn--link"
@@ -533,6 +539,20 @@
                 恢复默认
               </button>
             </div>
+            <MemoryMeter
+              label="游戏内存上限"
+              physicalMb={budget.physicalMb}
+              usedMb={budget.usedMb ?? undefined}
+              ceilingMb={budget.physicalMb || 8192}
+              valueMb={Math.round(ceilingGb * GIGABYTE)}
+              minMb={2 * GIGABYTE}
+              stepMb={512}
+              showCeiling={false}
+              marks={budget.physicalMb
+                ? [{ at: Math.round(budget.physicalMb / 2), label: '默认：本机的一半' }]
+                : []}
+              onchange={(mb) => setCeiling(mb / GIGABYTE)}
+            />
           </SettingRow>
 
           <SettingRow id="game/gc" found={focused === 'game/gc'}>
@@ -1068,18 +1088,20 @@
     gap: var(--s3);
   }
 
-  .slider {
-    flex: 1;
-    min-width: 0;
-    accent-color: var(--accent);
+  /* 结论在上、尺在下：读到的第一件事是那个数，不是一根线。 */
+  .ceiling-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
   }
 
   .amount {
     flex: none;
-    min-width: 5ch;
-    color: var(--ink-2);
+    color: var(--ink);
+    font-size: var(--t-h2);
     font-variant-numeric: tabular-nums;
-    text-align: right;
+    letter-spacing: -0.02em;
   }
 
   .size {

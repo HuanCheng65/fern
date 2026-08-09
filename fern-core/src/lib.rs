@@ -181,9 +181,9 @@ pub use launch::loader::{
     list_versions as list_loader_versions,
 };
 pub use launch::memory::{
-    AllocationDecision, AllocationSource, ExplanationItem, GcPath, MemoryBudget, ModsProfile,
-    Topic as ExplanationTopic, heap_ceiling, memory_budget, mods_profile, physical_memory_bytes,
-    plan as plan_allocation,
+    AllocationDecision, AllocationSource, ExplanationItem, GcPath, MemoryBudget, MemoryHistory,
+    ModsProfile, Topic as ExplanationTopic, heap_ceiling, measured as memory_history,
+    memory_budget, mods_profile, physical_memory_bytes, plan as plan_allocation,
 };
 pub use launch::prepare::{PrepareResult, prepare_instance};
 pub use launch::rules::QuickPlay;

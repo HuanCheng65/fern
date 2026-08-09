@@ -286,22 +286,32 @@ pub fn gigabytes(megabytes: u32) -> String {
     }
 }
 
-/// 设置页要回答的那两个数。
+/// 设置页要回答的那几个数。
 ///
-/// 「上限」两个字本身不解释任何事——只有把这台机器有多少、现在这条线在哪
-/// 一起摆出来，用户才知道要不要动它。
+/// 「上限」两个字本身不解释任何事——把这台机器有多少、此刻已经用掉多少、现在
+/// 这条线在哪一起摆出来，用户才判断得了要不要动它。而这三个数摆成一根尺，比
+/// 写三句话快。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryBudget {
     pub physical_mb: u32,
     pub ceiling_mb: u32,
+    /// 此刻已被别的东西占住的物理内存。
+    ///
+    /// 这条线要回答的问题是「这台机器上还跑着什么」，而那正是这个数。读不到
+    /// 时是 `None`——那时界面不画这一段，不拿总量的一半冒充一个实测值。
+    pub used_mb: Option<u32>,
 }
 
 pub fn memory_budget(preference: Option<u32>) -> MemoryBudget {
     let physical = physical_memory_bytes();
+    let megabytes = |bytes: u64| (bytes / signals::MEGABYTE) as u32;
     MemoryBudget {
-        physical_mb: physical.map_or(8192, |bytes| (bytes / signals::MEGABYTE) as u32),
+        physical_mb: physical.map_or(8192, megabytes),
         ceiling_mb: heap_ceiling(physical, preference),
+        used_mb: physical
+            .zip(signals::available_memory_bytes())
+            .map(|(total, available)| megabytes(total.saturating_sub(available))),
     }
 }
 
@@ -351,6 +361,69 @@ pub fn plan(
         history: window.as_ref(),
         gc_log,
     })
+}
+
+/// 这个实例在这台机器上真的跑成什么样。
+///
+/// `explanation` 里已经有一句「上次峰值 6.3 GB」，但那是**一句话**：界面要在尺
+/// 上画一个刻度，需要的是数。从中文句子里正则抠一个数字等于把文案的措辞变成一个
+/// 接口，改一个字就断——所以数就该以数的形式出来。
+///
+/// `note` 是那句只有算法说得出的话（「水位健康，维持 8 GB」）。刻度负责位置，
+/// 它负责结论，两者不重复。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryHistory {
+    /// 窗口里有效的会话数。
+    pub sessions: usize,
+    pub last_peak_mb: u32,
+    /// 回收后水位的 p90。真正被占住的那部分。
+    pub live_set_mb: u32,
+    pub note: String,
+}
+
+/// 有足够历史才有这份。没有就是 `None`——读不到就不画，不编一个刻度出来。
+pub fn measured(
+    paths: &crate::DataPaths,
+    profile: &crate::InstanceProfile,
+    game_directory: &Path,
+    zgc: bool,
+) -> Option<MemoryHistory> {
+    let hash = history::modlist_hash(game_directory);
+    let window = history::read(paths, profile.id.as_str(), &hash)?;
+    let learned = adaptive::learn(&window, zgc)?;
+    Some(MemoryHistory {
+        sessions: learned.sessions,
+        last_peak_mb: learned.last_peak_mb,
+        live_set_mb: learned.live_set_mb,
+        note: adjustment_text(&learned),
+    })
+}
+
+#[cfg(test)]
+mod shape {
+    use super::*;
+
+    /// 这几个数直接过给 TypeScript，改字段名不会有任何编译错误——只会在界面上
+    /// 变成 `undefined`，而一根少了刻度的尺看起来完全正常。
+    #[test]
+    fn the_interface_sees_the_field_names_it_expects() {
+        let history = MemoryHistory {
+            sessions: 4,
+            last_peak_mb: 6451,
+            live_set_mb: 3300,
+            note: "水位健康，维持 8 GB".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_value(&history).unwrap(),
+            serde_json::json!({
+                "sessions": 4,
+                "lastPeakMb": 6451,
+                "liveSetMb": 3300,
+                "note": "水位健康，维持 8 GB",
+            })
+        );
+    }
 }
 
 #[cfg(test)]
