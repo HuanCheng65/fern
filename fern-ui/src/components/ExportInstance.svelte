@@ -18,6 +18,7 @@
   import { formatBytes } from '../lib/jobs.svelte'
   import { notices } from '../lib/notices.svelte'
   import { exportFernpack, exportMrpack, fileStem, type Exported } from '../lib/backup'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     instanceId: string
@@ -117,10 +118,10 @@
   </div>
 
   <footer>
-    <button class="btn btn--ghost" onclick={onclose}>取消</button>
-    <button class="btn btn--primary" disabled={busy} onclick={() => void run()}>
+    <Button variant="ghost" onclick={onclose}>取消</Button>
+    <Button variant="primary" disabled={busy} onclick={() => void run()}>
       {busy ? '正在导出' : '选择位置并导出'}
-    </button>
+    </Button>
   </footer>
 </Overlay>
 

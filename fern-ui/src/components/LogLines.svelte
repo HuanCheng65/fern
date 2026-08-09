@@ -11,6 +11,7 @@
    */
   import { Copy } from 'lucide-svelte'
   import type { GameLogLine, LogLevel } from '../lib/launch.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     lines: GameLogLine[]
@@ -57,12 +58,12 @@
   </div>
 
   <div class="bar">
-    <button class="btn btn--link" onclick={() => (onlyProblems = !onlyProblems)}>
+    <Button variant="link" onclick={() => (onlyProblems = !onlyProblems)}>
       {onlyProblems ? '显示全部' : '仅显示警告与错误'}
-    </button>
-    <button class="btn btn--ghost" disabled={shown.length === 0} onclick={() => void copyAll()}>
+    </Button>
+    <Button variant="ghost" disabled={shown.length === 0} onclick={() => void copyAll()}>
       <Copy size={14} strokeWidth={1.9} />{copied ? '已复制' : '复制'}
-    </button>
+    </Button>
   </div>
 {/if}
 

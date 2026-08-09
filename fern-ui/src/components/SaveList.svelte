@@ -16,6 +16,7 @@
   import { formatBytes } from '../lib/jobs.svelte'
   import { notices } from '../lib/notices.svelte'
   import { exportWorld, fileStem } from '../lib/backup'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface SaveEntry {
     name: string
@@ -92,12 +93,9 @@
       存档
       {#if saves.length > 0}<small class="t-quiet">{saves.length} 个世界</small>{/if}
     </span>
-    <button
-      class="btn btn--link"
-      onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'saves' })}
-    >
+    <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'saves' })}>
       <FolderOpen size={13} strokeWidth={1.9} />存档目录
-    </button>
+    </Button>
   </div>
 
   {#if loading}
@@ -111,13 +109,10 @@
           <span class="name">{item.name}</span>
           <span class="t-mono when">{day(item.modified)}</span>
           <span class="t-mono size">{formatBytes(item.bytes)}</span>
-          <button
-            class="btn btn--link share"
-            disabled={exporting !== ''}
-            onclick={() => void shareWorld(item.name)}
-          >
+          <Button variant="link" class="share" disabled={exporting !== ''}
+            onclick={() => void shareWorld(item.name)}>
             {exporting === item.name ? '导出中' : '导出'}
-          </button>
+          </Button>
         </li>
       {/each}
     </ul>
@@ -193,16 +188,17 @@
   }
 
   /* 一行一个动作，平时收着——列表是用来认出那个世界的，不是一排按钮。 */
-  .share {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .row :global(.share) {
     flex: none;
     width: 4ch;
     opacity: 0;
     transition: opacity var(--t-fast) var(--ease);
   }
 
-  .row:hover .share,
-  .share:focus-visible,
-  .share:disabled {
+  .row:hover :global(.share),
+  .row :global(.share:focus-visible),
+  .row :global(.share:disabled) {
     opacity: 1;
   }
 

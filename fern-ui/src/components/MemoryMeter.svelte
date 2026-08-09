@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from 'fern-kit/ui/Button.svelte'
   /**
    * 一条尺。
    *
@@ -191,7 +192,7 @@
     <span class="ceiling">
       {#if showCeiling}
         {#if onceiling}
-          <button class="btn btn--link" onclick={onceiling}>上限 {gigabytes(ceilingMb)}</button>
+          <Button variant="link" onclick={onceiling}>上限 {gigabytes(ceilingMb)}</Button>
         {:else}
           上限 {gigabytes(ceilingMb)}
         {/if}

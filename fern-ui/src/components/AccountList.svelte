@@ -18,6 +18,7 @@
   import AccountFace from './AccountFace.svelte'
   import { accounts, originOf } from '../lib/accounts.svelte'
   import { nav } from '../lib/nav.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   /** 二级页的地址。这一行本身的 id 是 `account/list`。 */
   const open = (target: string) => nav.show('settings', `account/list/${target}`)
@@ -54,9 +55,9 @@
     {/each}
   </ul>
 
-  <button class="btn btn--ghost add" onclick={() => open('new')}>
+  <Button variant="ghost" class="add" onclick={() => open('new')}>
     <Plus size={14} strokeWidth={2} />添加账户
-  </button>
+  </Button>
 
   {#if accounts.error}<div class="alert">{accounts.error}</div>{/if}
 </div>
@@ -146,7 +147,8 @@
     color: var(--ink);
   }
 
-  .add {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .accounts :global(.add) {
     justify-self: start;
   }
 </style>

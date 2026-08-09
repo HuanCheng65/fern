@@ -14,6 +14,7 @@
   import { notices } from '../lib/notices.svelte'
   import { fly } from 'svelte/transition'
   import { flip } from 'svelte/animate'
+  import Button from 'fern-kit/ui/Button.svelte'
 </script>
 
 {#if notices.list.length > 0}
@@ -42,15 +43,12 @@
         </div>
 
         {#if notice.action}
-          <button
-            class="btn btn--link act"
-            onclick={() => {
+          <Button variant="link" class="act" onclick={() => {
               notice.action?.run()
               notices.dismiss(notice.id)
-            }}
-          >
+            }}>
             {notice.action.label}
-          </button>
+          </Button>
         {/if}
         <button class="close" aria-label="关闭" onclick={() => notices.dismiss(notice.id)}>
           <X size={12} strokeWidth={2.2} />

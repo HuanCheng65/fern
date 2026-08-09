@@ -13,6 +13,7 @@
   import { ArrowLeft } from 'lucide-svelte'
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { notices } from '../lib/notices.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     /** 加成了就带着新账户的 id 回去，取消则不带。 */
@@ -88,9 +89,9 @@
       {/each}
     </div>
   {:else}
-    <button class="btn btn--link step-back" onclick={back}>
+    <Button variant="link" tone="quiet" class="step-back" onclick={back}>
       <ArrowLeft size={14} strokeWidth={2} />换一种方式
-    </button>
+    </Button>
 
     {#if kind === 'offline'}
       <form
@@ -113,9 +114,9 @@
             placeholder="Steve"
           />
         </label>
-        <button class="btn btn--primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>
+        <Button variant="primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>
           添加
-        </button>
+        </Button>
       </form>
     {:else if kind === 'microsoft'}
       {#if accounts.deviceCode}
@@ -134,9 +135,9 @@
             微软账户
             <small>获取登录码后在浏览器中完成验证，无需在此输入密码。</small>
           </span>
-          <button class="btn btn--primary" disabled={accounts.busy} onclick={() => void submitMicrosoft()}>
+          <Button variant="primary" disabled={accounts.busy} onclick={() => void submitMicrosoft()}>
             {accounts.busy ? '等待中' : '获取登录码'}
-          </button>
+          </Button>
         </div>
       {/if}
     {:else}
@@ -165,9 +166,9 @@
           </span>
           <input class="input" type="password" bind:value={password} autocomplete="current-password" />
         </label>
-        <button class="btn btn--primary" type="submit" disabled={accounts.busy}>
+        <Button variant="primary" type="submit" disabled={accounts.busy}>
           {accounts.busy ? '登录中' : '登录'}
-        </button>
+        </Button>
       </form>
     {/if}
   {/if}
@@ -220,15 +221,11 @@
     font-size: var(--t-small);
   }
 
-  .step-back {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .adder :global(.step-back) {
     justify-self: start;
     gap: 4px;
     padding-left: 0;
-    color: var(--ink-3);
-  }
-
-  .step-back:hover {
-    color: var(--ink);
   }
 
   .fields {
@@ -258,7 +255,7 @@
     line-height: 1.55;
   }
 
-  .fields .btn--primary {
+  .fields :global(.btn--primary) {
     justify-self: start;
   }
 

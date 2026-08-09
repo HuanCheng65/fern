@@ -11,6 +11,7 @@
    * 有内容了。空状态该靠排版和留白撑住，那也是文档里写的做法。
    */
   import { ArrowRight } from 'lucide-svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     title: string
@@ -24,7 +25,7 @@
 <section class="placeholder">
   <h1 class="t-h1">{title}</h1>
   <p class="note">{note}</p>
-  <button class="btn btn--link" onclick={onback}>返回启动<ArrowRight size={14} /></button>
+  <Button variant="link" onclick={onback}>返回启动<ArrowRight size={14} /></Button>
 </section>
 
 <style>
@@ -44,7 +45,8 @@
     line-height: 1.65;
   }
 
-  .btn--link {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .placeholder :global(.btn--link) {
     margin-top: var(--s3);
   }
 </style>

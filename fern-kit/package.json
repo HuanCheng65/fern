@@ -15,6 +15,7 @@
     "./crash": "./src/crash.ts",
     "./scope": "./src/scope.ts",
     "./styles": "./src/styles/index.css",
+    "./ui/Button.svelte": "./src/ui/Button.svelte",
     "./Mark.svelte": "./src/Mark.svelte",
     "./Cover.svelte": "./src/Cover.svelte",
     "./Overlay.svelte": "./src/Overlay.svelte",

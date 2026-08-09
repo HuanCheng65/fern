@@ -31,6 +31,7 @@
     type ProjectVersion,
     type ResourceKind,
   } from '../lib/supply.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     slug: string
@@ -313,21 +314,15 @@
                   二十行都做一遍。
                 -->
                 {#if !isPack && required(version) > 0}
-                  <button
-                    class="btn btn--link deps"
-                    aria-expanded={opened === version.id}
-                    onclick={() => void inspect(version)}
-                  >
+                  <Button variant="link" class="deps" aria-expanded={opened === version.id}
+                    onclick={() => void inspect(version)}>
                     {required(version)} 个前置
-                  </button>
+                  </Button>
                 {/if}
 
-                <button
-                  class="btn btn--ghost"
-                  disabled={(!isPack && !target) || !fit.ok || job !== undefined}
+                <Button variant="ghost" disabled={(!isPack && !target) || !fit.ok || job !== undefined}
                   title={fit.ok ? (isPack ? '建成新实例' : '安装') : fit.note}
-                  onclick={() => void install(version)}
-                >
+                  onclick={() => void install(version)}>
                   {#if job && clicked === version.id}
                     {job.stage || (isPack ? '创建中' : '安装中')}
                   {:else if job}
@@ -337,7 +332,7 @@
                   {:else}
                     <Download size={14} strokeWidth={1.9} />安装
                   {/if}
-                </button>
+                </Button>
               </div>
 
               {#if opened === version.id}
@@ -386,9 +381,9 @@
           <p class="t-quiet">没有适用于这个实例的版本。</p>
         {/if}
         {#if judged.length > shown.length || showAll}
-          <button class="btn btn--link" onclick={() => (showAll = !showAll)}>
+          <Button variant="link" onclick={() => (showAll = !showAll)}>
             {showAll ? '只看装得上的' : `显示全部 ${judged.length} 个版本`}
-          </button>
+          </Button>
         {/if}
       {/if}
     {:else}
@@ -420,12 +415,9 @@
 
       <div class="links">
         {#each detail?.links ?? [] as link (link.url)}
-          <button
-            class="btn btn--link"
-            onclick={() => void invoke('open_external', { url: link.url })}
-          >
+          <Button variant="link" tone="quiet" onclick={() => void invoke('open_external', { url: link.url })}>
             {link.label}<ArrowUpRight size={13} strokeWidth={1.9} />
-          </button>
+          </Button>
         {/each}
       </div>
     {/if}
@@ -592,13 +584,8 @@
     gap: var(--s4);
   }
 
-  .links .btn {
+  .links :global(.btn) {
     gap: 4px;
-    color: var(--ink-3);
-  }
-
-  .links .btn:hover {
-    color: var(--ink);
   }
 
   .list {

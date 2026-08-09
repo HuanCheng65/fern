@@ -31,6 +31,7 @@
     type RestoreScope,
     type Snapshot,
   } from '../lib/backup'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     instanceId: string
@@ -181,24 +182,21 @@
           maxlength="60"
           autofocus
         />
-        <button class="btn btn--icon" type="submit" aria-label="保存名称">
+        <Button variant="icon" type="submit" aria-label="保存名称">
           <Check size={16} strokeWidth={2} />
-        </button>
-        <button
-          class="btn btn--icon"
-          type="button"
+        </Button>
+        <Button variant="icon" type="button"
           aria-label="取消"
-          onclick={() => (naming = false)}
-        >
+          onclick={() => (naming = false)}>
           <X size={16} strokeWidth={2} />
-        </button>
+        </Button>
       </form>
     {:else}
       <div class="titles">
         <h2>{title}</h2>
-        <button class="btn btn--icon" aria-label="命名" onclick={() => (naming = true)}>
+        <Button variant="icon" aria-label="命名" onclick={() => (naming = true)}>
           <Pencil size={14} strokeWidth={1.9} />
-        </button>
+        </Button>
       </div>
     {/if}
 
@@ -301,18 +299,18 @@
     {#if confirming}
       <span class="confirm">
         <span class="t-quiet">删除后这张快照无法找回。</span>
-        <button class="btn btn--ghost" onclick={() => (confirming = false)}>取消</button>
-        <button class="btn danger" disabled={busy !== ''} onclick={() => void remove()}>
+        <Button variant="ghost" onclick={() => (confirming = false)}>取消</Button>
+        <Button tone="danger" disabled={busy !== ''} onclick={() => void remove()}>
           确认删除
-        </button>
+        </Button>
       </span>
     {:else}
-      <button class="btn btn--link danger-link" onclick={() => (confirming = true)}>删除</button>
+      <Button variant="link" tone="danger" onclick={() => (confirming = true)}>删除</Button>
       <span class="spacer"></span>
-      <button class="btn btn--ghost" onclick={onclose}>取消</button>
-      <button class="btn btn--primary" disabled={!ready} onclick={() => void restore()}>
+      <Button variant="ghost" onclick={onclose}>取消</Button>
+      <Button variant="primary" disabled={!ready} onclick={() => void restore()}>
         {busy === 'restore' ? '正在恢复' : '恢复'}
-      </button>
+      </Button>
     {/if}
   </footer>
 </Overlay>
@@ -342,13 +340,14 @@
   }
 
   /* 命名不是常用动作，所以它平时几乎看不见，指过去才出现。 */
-  .titles .btn--icon {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .titles :global(.btn--icon) {
     opacity: 0;
     transition: opacity var(--t-fast) var(--ease);
   }
 
-  .titles:hover .btn--icon,
-  .titles .btn--icon:focus-visible {
+  .titles:hover :global(.btn--icon),
+  .titles :global(.btn--icon:focus-visible) {
     opacity: 1;
   }
 
@@ -439,23 +438,4 @@
     flex: 1;
   }
 
-  .danger-link {
-    color: var(--ink-3);
-  }
-
-  .danger-link:hover {
-    color: var(--danger);
-  }
-
-  .danger {
-    color: #2a1310;
-    background: var(--danger);
-    font-weight: 560;
-  }
-
-  .danger:hover {
-    color: #2a1310;
-    background: var(--danger);
-    filter: brightness(1.06);
-  }
 </style>

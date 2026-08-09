@@ -32,6 +32,7 @@
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     onswitch: () => void
@@ -125,17 +126,17 @@
       <p class="meta t-mono">
         Minecraft {current.gameVersion} · {current.loader}
         <!-- 这一屏把管理欲望引去实例详情，却一直没给出那扇门。就在这里。 -->
-        <button class="btn btn--link manage" onclick={() => nav.enter('instances', current.id)}>
+        <Button variant="link" class="manage" onclick={() => nav.enter('instances', current.id)}>
           管理
-        </button>
+        </Button>
       </p>
 
       <div class="go-row">
         <!-- 游戏已经开着的时候不再提供「启动」：再点一下会起第二个进程，
              两份游戏抢同一个存档目录。 -->
-        <button
-          class="btn btn--primary go"
-          class:busy={working}
+        <Button
+          variant="primary"
+          class="go {working ? 'busy' : ''}"
           onclick={() => void launch.launch(current.id)}
           disabled={phase !== undefined || job !== undefined}
         >
@@ -157,16 +158,16 @@
               <Play size={16} fill="currentColor" strokeWidth={0} />启动游戏
             {/if}
           </span>
-        </button>
+        </Button>
 
         <!--
           结束只在游戏真的起来之后出现，而且说的是「强制」：这是 kill，没存
           的进度会丢。它存在的理由是游戏已经不响应了。
         -->
         {#if phase === 'running' || phase === 'starting'}
-          <button class="btn btn--ghost" onclick={() => void launch.stop(current.id)}>
+          <Button variant="ghost" onclick={() => void launch.stop(current.id)}>
             强制结束
-          </button>
+          </Button>
         {/if}
 
         {#if job && measure(job)}
@@ -189,17 +190,17 @@
       {#if launch.error}
         <div class="alert error">
           <span>{launch.error}</span>
-          <button class="btn btn--icon" aria-label="关闭" onclick={() => launch.dismissError()}>
+          <Button variant="icon" aria-label="关闭" onclick={() => launch.dismissError()}>
             <X size={14} />
-          </button>
+          </Button>
         </div>
       {/if}
   {:else}
       <h1 class="t-display">创建第一个实例</h1>
       <div class="go-row">
-        <button class="btn btn--primary" onclick={oncreate} disabled={instances.loading}>
+        <Button variant="primary" onclick={oncreate} disabled={instances.loading}>
           选择版本
-        </button>
+        </Button>
       </div>
       {#if instances.error}
         <div class="alert error"><span>{instances.error}</span></div>
@@ -320,7 +321,8 @@
   }
 
   /* 等宽只留给机器数据，「管理」两个字不是。 */
-  .manage {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .meta :global(.manage) {
     font-family: var(--sans);
   }
 
@@ -332,7 +334,8 @@
   }
 
   /* 启动是英雄交互，进度就长在按钮上，不另起一个进度条区域。 */
-  .go {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .go-row :global(.go) {
     position: relative;
     isolation: isolate;
     min-width: 190px;
@@ -340,7 +343,7 @@
     overflow: hidden;
   }
 
-  .go.busy {
+  .go-row :global(.go.busy) {
     cursor: progress;
   }
 

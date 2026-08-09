@@ -9,6 +9,7 @@
    * 做的事由调用方给（`onfix`），做的过程中的忙碌态和失败话术归这里。
    */
   import { AlertTriangle, CircleAlert } from 'lucide-svelte'
+  import Button from './ui/Button.svelte'
   import { label, type FixAction } from './advice'
 
   interface Props {
@@ -56,9 +57,9 @@
     {#if error}<p class="failed">{error}</p>{/if}
   </div>
   {#if actionLabel}
-    <button class="fix" disabled={busy} onclick={() => void run()}>
+    <Button variant="ghost" class="fix" disabled={busy} onclick={() => void run()}>
       {busy ? '处理中' : actionLabel}
-    </button>
+    </Button>
   {/if}
 </div>
 
@@ -110,41 +111,8 @@
     color: var(--danger, var(--ink-2));
   }
 
-  /*
-   * 描边按钮的样子自己带着，不借基础样式表里的 .btn——这个组件要能落在一张
-   * 没加载过那份样式表的页面上。
-   */
-  .fix {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+  /* 按钮站哪归这块布局管，但作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .advice :global(.fix) {
     flex: none;
-    min-height: var(--control);
-    padding: 0 var(--s4);
-    border: none;
-    border-radius: var(--r1);
-    background: none;
-    box-shadow: inset 0 0 0 1px var(--hairline);
-    color: var(--ink-2);
-    font: inherit;
-    font-size: var(--t-body);
-    font-weight: 500;
-    white-space: nowrap;
-    cursor: pointer;
-    transition:
-      background var(--t-fast) var(--ease),
-      color var(--t-fast) var(--ease),
-      box-shadow var(--t-fast) var(--ease);
-  }
-
-  .fix:hover {
-    background: var(--tint-1);
-    box-shadow: inset 0 0 0 1px var(--tint-3);
-    color: var(--ink);
-  }
-
-  .fix:disabled {
-    opacity: 0.4;
-    pointer-events: none;
   }
 </style>

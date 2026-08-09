@@ -22,6 +22,7 @@
   import PeerCard from '../components/PeerCard.svelte'
   import { DEFAULT_NAME, isConnected, session } from '../lib/pearl-session.svelte'
   import { PATH_LABEL, PUNCH_STAGE_LABEL, type PathState } from '../lib/pearl-types'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   let inviteInput = $state('')
   let copied = $state<string | null>(null)
@@ -112,9 +113,9 @@
 
     <!-- 两扇门竖着排：创建在上、加入在下。不写口号，问候之外这一屏只有控件。 -->
     <div class="doors">
-      <button class="btn btn--primary door" onclick={() => session.host(session.name)}>
+      <Button variant="primary" class="door" onclick={() => session.host(session.name)}>
         创建房间
-      </button>
+      </Button>
 
       <form
         class="joiner"
@@ -150,7 +151,7 @@
       {session.error ?? (hosting ? '会话已经结束。' : '与房主的连接已经关闭。')}
     </p>
     <div class="actions">
-      <button class="btn btn--ghost" onclick={() => session.leave()}>返回</button>
+      <Button variant="ghost" onclick={() => session.leave()}>返回</Button>
     </div>
   </Stage>
 {:else}
@@ -182,28 +183,25 @@
 
       <div class="actions">
         {#if hosting}
-          <button class="btn btn--ghost" onclick={() => copy(session.invite ?? '', 'invite')}>
+          <Button variant="ghost" onclick={() => copy(session.invite ?? '', 'invite')}>
             {#if copied === 'invite'}<Check size={14} />{:else}<Copy size={14} />{/if}
             {copied === 'invite' ? '已复制' : '复制邀请链接'}
-          </button>
-          <button class="btn btn--ghost" onclick={() => copy(session.spoken ?? '', 'code')}>
+          </Button>
+          <Button variant="ghost" onclick={() => copy(session.spoken ?? '', 'code')}>
             {copied === 'code' ? '已复制' : '复制邀请码'}
-          </button>
-          <button class="btn btn--link" onclick={() => session.leave()}>
+          </Button>
+          <Button variant="link" onclick={() => session.leave()}>
             <LogOut size={13} strokeWidth={1.8} />关闭房间
-          </button>
+          </Button>
         {:else}
           {#if session.localPort}
-            <button
-              class="btn btn--ghost"
-              onclick={() => copy(`127.0.0.1:${session.localPort}`, 'addr')}
-            >
+            <Button variant="ghost" onclick={() => copy(`127.0.0.1:${session.localPort}`, 'addr')}>
               {copied === 'addr' ? '已复制' : `复制地址 127.0.0.1:${session.localPort}`}
-            </button>
+            </Button>
           {/if}
-          <button class="btn btn--link" onclick={() => session.leave()}>
+          <Button variant="link" onclick={() => session.leave()}>
             <LogOut size={13} strokeWidth={1.8} />离开房间
-          </button>
+          </Button>
         {/if}
       </div>
 
@@ -282,9 +280,9 @@
             不再跟随游戏的局域网宣告。
           </p>
           {#if session.sharedPort}
-            <button class="btn btn--ghost" onclick={() => session.sharePort(null)}>
+            <Button variant="ghost" onclick={() => session.sharePort(null)}>
               改回跟随游戏
-            </button>
+            </Button>
           {:else}
             <form class="sharer" onsubmit={submitShare}>
               <input
@@ -295,7 +293,7 @@
                 spellcheck="false"
                 autocomplete="off"
               />
-              <button class="btn btn--ghost" type="submit" disabled={!portValid}>共享</button>
+              <Button variant="ghost" type="submit" disabled={!portValid}>共享</Button>
             </form>
           {/if}
         </section>
@@ -384,7 +382,8 @@
     max-width: 460px;
   }
 
-  .door {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .doors :global(.door) {
     justify-content: center;
     padding: var(--s4) var(--s6);
     font-size: var(--t-h3);

@@ -20,6 +20,7 @@
   import { prefs, suggestedSource, type DownloadSource } from '../lib/prefs.svelte'
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { inTauri } from '../lib/instances.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     /** 走完向导。create 为真时直接进到新建实例。 */
@@ -161,7 +162,7 @@
         <h1 class="t-display hero">万千世界，<br /><em>一个入口。</em></h1>
         <p class="lede">欢迎使用 Fern。几步设置之后，就可以出发了。</p>
         <div class="actions">
-          <button class="btn btn--primary" onclick={() => go(1)}>开始<ArrowRight size={15} /></button>
+          <Button variant="primary" onclick={() => go(1)}>开始<ArrowRight size={15} /></Button>
         </div>
       {:else if step === 'account'}
         <h1 class="title">你是谁？</h1>
@@ -218,8 +219,8 @@
         {/if}
 
         <div class="actions">
-          <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
-          <button class="btn btn--primary" onclick={() => void submitAccount()}>继续<ArrowRight size={15} /></button>
+          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <Button variant="primary" onclick={() => void submitAccount()}>继续<ArrowRight size={15} /></Button>
         </div>
       {:else if step === 'source'}
         <h1 class="title">让下载快一点。</h1>
@@ -247,20 +248,20 @@
         <p class="foot-note">当前源失败时将自动切换到另一个源，选择错误不会导致无法下载。</p>
 
         <div class="actions">
-          <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
-          <button class="btn btn--primary" disabled={javaChecking} onclick={submitSource}>
+          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <Button variant="primary" disabled={javaChecking} onclick={submitSource}>
             {javaChecking ? '检查环境' : '继续'}<ArrowRight size={15} />
-          </button>
+          </Button>
         </div>
       {:else if step === 'java'}
         <h1 class="title">还差一样东西。</h1>
         <p class="lede">未找到可用的 Java。Minecraft 1.17 之前需要 Java 8，之后需要 Java 17 或 21。</p>
         <div class="actions">
-          <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
-          <button class="btn btn--ghost" disabled={javaChecking} onclick={() => void checkJava()}>
+          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <Button variant="ghost" disabled={javaChecking} onclick={() => void checkJava()}>
             {javaChecking ? '检测中' : '重新检测'}
-          </button>
-          <button class="btn btn--primary" onclick={() => go(1)}>稍后处理<ArrowRight size={15} /></button>
+          </Button>
+          <Button variant="primary" onclick={() => go(1)}>稍后处理<ArrowRight size={15} /></Button>
         </div>
       {:else if step === 'existing'}
         <h1 class="title">发现了一个游戏目录。</h1>
@@ -271,18 +272,18 @@
           <AdoptDirectory initial={nearby} />
         </div>
         <div class="actions">
-          <button class="btn btn--link back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</button>
-          <button class="btn btn--primary" onclick={() => go(1)}>继续<ArrowRight size={15} /></button>
+          <Button variant="link" tone="quiet" class="back" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <Button variant="primary" onclick={() => go(1)}>继续<ArrowRight size={15} /></Button>
         </div>
       {:else}
         <h1 class="title">准备好了。</h1>
         <p class="lede">去创建你的第一个实例吧。</p>
         {#if javaDetail}<p class="detected t-mono">{javaDetail}</p>{/if}
         <div class="actions">
-          <button class="btn btn--primary" onclick={() => finish(true)}>
+          <Button variant="primary" onclick={() => finish(true)}>
             <Plus size={15} />创建实例
-          </button>
-          <button class="btn btn--link" onclick={() => finish(false)}>稍后创建</button>
+          </Button>
+          <Button variant="link" onclick={() => finish(false)}>稍后创建</Button>
         </div>
       {/if}
     </div>
@@ -494,14 +495,10 @@
     margin-top: var(--s6);
   }
 
-  .back {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .actions :global(.back) {
     gap: 6px;
-    color: var(--ink-3);
     order: -1;
-  }
-
-  .back:hover {
-    color: var(--ink);
   }
 
   /* 进度：四五道短线，不是百分比。 */

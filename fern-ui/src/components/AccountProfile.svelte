@@ -19,6 +19,7 @@
   import { accounts, KIND_LABEL } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
   import { notices } from '../lib/notices.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     accountId: string
@@ -81,10 +82,10 @@
             }}
           >
             <input class="input" bind:value={renameTo} maxlength="16" spellcheck="false" />
-            <button class="btn btn--primary" type="submit" disabled={!OFFLINE_NAME.test(renameTo.trim())}>
+            <Button variant="primary" type="submit" disabled={!OFFLINE_NAME.test(renameTo.trim())}>
               保存
-            </button>
-            <button class="btn btn--link" type="button" onclick={() => (renaming = false)}>取消</button>
+            </Button>
+            <Button variant="link" type="button" onclick={() => (renaming = false)}>取消</Button>
           </form>
         {:else}
           <h2>{account.playerName}</h2>
@@ -96,7 +97,7 @@
       {#if isActive}
         <span class="badge"><Check size={12} strokeWidth={2.6} />当前使用</span>
       {:else}
-        <button class="btn btn--ghost" onclick={() => void accounts.use(account.id)}>设为当前</button>
+        <Button variant="ghost" onclick={() => void accounts.use(account.id)}>设为当前</Button>
       {/if}
     </header>
 
@@ -136,9 +137,9 @@
           {#each bound as item (item.id)}
             <li>
               <span>{item.name}</span>
-              <button class="btn btn--link" onclick={() => void instances.setAccount(item.id, null)}>
+              <Button variant="link" onclick={() => void instances.setAccount(item.id, null)}>
                 解除
-              </button>
+              </Button>
             </li>
           {/each}
         </ul>
@@ -147,20 +148,20 @@
 
     <div class="acts">
       {#if account.kind === 'offline' && !renaming}
-        <button class="btn btn--ghost" onclick={startRename}>改名</button>
+        <Button variant="ghost" onclick={startRename}>改名</Button>
       {/if}
       {#if confirmingRemove}
         <span class="confirm">
           <span class="t-quiet">
             移除后需要重新登录{bound.length > 0 ? `，${bound.length} 个实例会退回当前账户` : ''}。
           </span>
-          <button class="btn btn--ghost danger" onclick={() => void remove()}>确认移除</button>
-          <button class="btn btn--link" onclick={() => (confirmingRemove = false)}>取消</button>
+          <Button variant="ghost" tone="danger" onclick={() => void remove()}>确认移除</Button>
+          <Button variant="link" onclick={() => (confirmingRemove = false)}>取消</Button>
         </span>
       {:else}
-        <button class="btn btn--link danger" onclick={() => (confirmingRemove = true)}>
+        <Button variant="link" tone="danger" onclick={() => (confirmingRemove = true)}>
           <Trash2 size={13} strokeWidth={1.9} />移除账户
-        </button>
+        </Button>
       {/if}
     </div>
 
@@ -282,7 +283,4 @@
     font-size: var(--t-small);
   }
 
-  .danger:hover {
-    color: var(--danger);
-  }
 </style>

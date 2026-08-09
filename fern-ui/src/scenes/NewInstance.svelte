@@ -24,6 +24,7 @@
   import { launch } from '../lib/launch.svelte'
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface LoaderVersion {
     version: string
@@ -228,7 +229,7 @@
           · {pack.summary.files} 个文件
         </p>
       </div>
-      <button class="btn btn--link" onclick={() => (pack = null)}>换一个</button>
+      <Button variant="link" onclick={() => (pack = null)}>换一个</Button>
     </div>
 
     <div class="field pack-name">
@@ -269,9 +270,9 @@
             {#if !choosingLoaderVersion}
               <div class="row">
                 <span class="t-quiet">将安装最新稳定版</span>
-                <button class="btn btn--link" onclick={() => void loadLoaderVersions()}>
+                <Button variant="link" onclick={() => void loadLoaderVersions()}>
                   指定版本
-                </button>
+                </Button>
               </div>
             {:else if stableLoaderVersions.length === 0}
               <Loading note="读取 {loaderLabel} 的版本" size={18} />
@@ -292,9 +293,9 @@
                 <span class="t-quiet">
                   {loaderVersion ? `已选 ${loaderVersion}` : '未选则使用最新稳定版'}
                 </span>
-                <button class="btn btn--link" onclick={() => (choosingLoaderVersion = false)}>
+                <Button variant="link" onclick={() => (choosingLoaderVersion = false)}>
                   收起
-                </button>
+                </Button>
               </div>
             {/if}
           {/if}
@@ -353,15 +354,15 @@
   {#if error}<div class="alert">{error}</div>{/if}
 
   <footer>
-    <button class="btn" onclick={() => nav.back()}>取消</button>
+    <Button onclick={() => nav.back()}>取消</Button>
     {#if pack}
-      <button class="btn btn--primary" disabled={busy} onclick={() => void importPack()}>
+      <Button variant="primary" disabled={busy} onclick={() => void importPack()}>
         <Plus size={15} />{busy ? '导入中' : '导入整合包'}
-      </button>
+      </Button>
     {:else}
-      <button class="btn btn--primary" disabled={busy} onclick={() => void submit()}>
+      <Button variant="primary" disabled={busy} onclick={() => void submit()}>
         <Plus size={15} />{busy ? '创建中' : '创建实例'}
-      </button>
+      </Button>
     {/if}
   </footer>
 </section>

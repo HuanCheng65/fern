@@ -43,6 +43,7 @@
   import { island, type Presence } from '../lib/island.svelte'
   import { DURATION, scaled } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   /** 展开后的宽度。够放下一行「补全游戏文件 · 412 MB / 1.1 GB · 8.2 MB/s」。 */
   const PANEL = 320
@@ -206,7 +207,7 @@
                   {#if presence.actions.length > 0}
                     <div class="acts">
                       {#each presence.actions as action (action.label)}
-                        <button class="btn btn--link" onclick={action.run}>{action.label}</button>
+                        <Button variant="link" onclick={action.run}>{action.label}</Button>
                       {/each}
                     </div>
                   {/if}

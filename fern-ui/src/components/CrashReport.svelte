@@ -16,6 +16,7 @@
   import { perform } from '../lib/advice'
   import { describe } from '../lib/i18n'
   import type { CrashReport } from '../lib/launch.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     report: CrashReport
@@ -48,10 +49,10 @@
   />
 
   <footer>
-    <button class="btn btn--ghost" onclick={onopenLogs}>
+    <Button variant="ghost" onclick={onopenLogs}>
       <FolderOpen size={13} strokeWidth={1.9} />日志目录
-    </button>
-    <button class="btn btn--primary" onclick={onclose}>关闭</button>
+    </Button>
+    <Button variant="primary" onclick={onclose}>关闭</Button>
   </footer>
 </Overlay>
 

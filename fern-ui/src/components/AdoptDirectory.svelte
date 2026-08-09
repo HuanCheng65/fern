@@ -23,6 +23,7 @@
   import { instances, inTauri } from '../lib/instances.svelte'
   import { nav } from '../lib/nav.svelte'
   import { notices } from '../lib/notices.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface ExternalVersion {
     id: string
@@ -185,9 +186,9 @@
   </p>
 
   <div class="picker">
-    <button class="btn btn--ghost" disabled={busy !== ''} onclick={() => void choose()}>
+    <Button variant="ghost" disabled={busy !== ''} onclick={() => void choose()}>
       <FolderOpen size={14} strokeWidth={1.8} />{directory ? '更换目录' : '选择目录'}
-    </button>
+    </Button>
     {#if directory}
       <span class="chosen t-mono selectable">{directory}</span>
     {/if}
@@ -253,13 +254,10 @@
       </label>
 
       <div class="commit">
-        <button
-          class="btn btn--primary"
-          disabled={chosen.length === 0 || busy !== ''}
-          onclick={() => void add()}
-        >
+        <Button variant="primary" disabled={chosen.length === 0 || busy !== ''}
+          onclick={() => void add()}>
           {busy === 'add' ? `正在添加 ${done}/${chosen.length}` : `添加 ${chosen.length} 个版本`}
-        </button>
+        </Button>
       </div>
 
       {#if failures.length > 0}

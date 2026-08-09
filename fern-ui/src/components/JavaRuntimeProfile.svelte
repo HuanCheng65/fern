@@ -10,6 +10,7 @@
    * 名单因此可以安静下来：一行只说「Java 21 · Adoptium · 180 MB ›」。
    */
   import { javaLabel, megabytes, type JavaGroup, type JavaRuntime } from '../lib/java'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     home: string
@@ -100,15 +101,15 @@
           </span>
           {#if confirming}
             <span class="confirm">
-              <button class="btn btn--ghost" onclick={() => (confirming = false)}>取消</button>
-              <button class="btn danger" onclick={() => void drop()}>
+              <Button variant="ghost" onclick={() => (confirming = false)}>取消</Button>
+              <Button tone="danger" onclick={() => void drop()}>
                 {runtime.managed ? '确认删除' : '确认移除'}
-              </button>
+              </Button>
             </span>
           {:else}
-            <button class="btn btn--ghost" onclick={() => (confirming = true)}>
+            <Button variant="ghost" onclick={() => (confirming = true)}>
               {runtime.managed ? '删除' : '移除登记'}
-            </button>
+            </Button>
           {/if}
         </div>
       </section>
@@ -191,14 +192,6 @@
   }
 
   /* 删除是这一页唯一不可撤销的动作，给它唯一的红。 */
-  .btn.danger {
-    color: #fff;
-    background: #c42b1c;
-  }
-
-  .btn.danger:hover {
-    background: #d8402f;
-  }
 
   .system {
     display: flex;

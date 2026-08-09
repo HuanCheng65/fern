@@ -30,6 +30,7 @@
   import { preflight } from '../lib/preflight.svelte'
   import { perform } from '../lib/advice'
   import { integrity } from '../lib/integrity.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     instance: Instance
@@ -105,11 +106,8 @@
       </div>
 
       <div class="acts">
-        <button
-          class="btn btn--primary"
-          disabled={phase !== undefined || job !== undefined}
-          onclick={() => void launch.launch(instance.id)}
-        >
+        <Button variant="primary" disabled={phase !== undefined || job !== undefined}
+          onclick={() => void launch.launch(instance.id)}>
           {#if phase === 'running'}
             运行中
           {:else if phase === 'starting'}
@@ -121,12 +119,12 @@
           {:else}
             <Play size={15} fill="currentColor" strokeWidth={0} />启动
           {/if}
-        </button>
+        </Button>
 
         {#if phase === 'running' || phase === 'starting'}
-          <button class="btn btn--ghost" onclick={() => void launch.stop(instance.id)}>
+          <Button variant="ghost" onclick={() => void launch.stop(instance.id)}>
             强制结束
-          </button>
+          </Button>
         {/if}
 
         <!--
@@ -136,9 +134,9 @@
         {#if isCurrent}
           <span class="t-quiet now"><Check size={14} strokeWidth={2.2} />当前实例</span>
         {:else}
-          <button class="btn btn--ghost" onclick={() => instances.select(instance.id)}>
+          <Button variant="ghost" onclick={() => instances.select(instance.id)}>
             设为当前
-          </button>
+          </Button>
         {/if}
       </div>
     </div>
@@ -183,18 +181,15 @@
       <div><dt>实例 ID</dt><dd class="t-mono selectable">{instance.id}</dd></div>
     </dl>
     <div class="links">
-      <button
-        class="btn btn--link"
-        onclick={() => void invoke('open_instance_directory', { instanceId: instance.id })}
-      >
+      <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId: instance.id })}>
         <FolderOpen size={13} strokeWidth={1.9} />游戏目录
-      </button>
-      <button class="btn btn--link" onclick={() => void launch.repair(instance.id)}>
+      </Button>
+      <Button variant="link" onclick={() => void launch.repair(instance.id)}>
         <RefreshCw size={13} strokeWidth={1.9} />校验文件
-      </button>
-      <button class="btn btn--link" onclick={() => (exporting = true)}>
+      </Button>
+      <Button variant="link" onclick={() => (exporting = true)}>
         <Share size={13} strokeWidth={1.9} />导出
-      </button>
+      </Button>
     </div>
     {#if launch.error}
       <div class="alert">{launch.error}</div>
@@ -218,9 +213,12 @@
         ? '本次运行尚无输出。'
         : '这个实例本次会话还没有运行过。'}
     />
-    <button class="btn btn--link logs" onclick={() => void invoke('open_logs_directory')}>
-      <FolderOpen size={13} strokeWidth={1.9} />日志目录
-    </button>
+    <!-- 按钮站哪是这块布局的事，所以位置写在容器上，而不是塞给按钮。 -->
+    <div class="logs">
+      <Button variant="link" onclick={() => void invoke('open_logs_directory')}>
+        <FolderOpen size={13} strokeWidth={1.9} />日志目录
+      </Button>
+    </div>
   {/if}
 </Detail>
 

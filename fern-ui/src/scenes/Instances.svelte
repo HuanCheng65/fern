@@ -25,6 +25,7 @@
   import { nav } from '../lib/nav.svelte'
   import { expand, riseIn } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   /** 新建页和添加现有目录各占一个纵深位。实例 id 是随机发的，撞不上这两个词。 */
   const CREATE = 'new'
@@ -70,10 +71,10 @@
       <h1 class="t-h1">暂无实例</h1>
       <p class="note">创建一个实例之后，它的封面会出现在这里。已有 .minecraft 目录的话，也可以直接添加其中的版本。</p>
       <div class="ways">
-        <button class="btn btn--ghost" onclick={oncreate}><Plus size={15} />新建实例</button>
-        <button class="btn btn--link" onclick={onadopt}>
+        <Button variant="ghost" onclick={oncreate}><Plus size={15} />新建实例</Button>
+        <Button variant="link" onclick={onadopt}>
           <FolderOpen size={14} strokeWidth={1.8} />添加现有目录
-        </button>
+        </Button>
       </div>
     {/if}
     {#if instances.error}<div class="alert">{instances.error}</div>{/if}
@@ -82,10 +83,10 @@
   <Collection>
     {#snippet controls()}
       <span class="t-quiet">{instances.list.length} 个实例</span>
-      <button class="btn btn--link" onclick={oncreate}><Plus size={14} />新建实例</button>
-      <button class="btn btn--link" onclick={onadopt}>
+      <Button variant="link" onclick={oncreate}><Plus size={14} />新建实例</Button>
+      <Button variant="link" onclick={onadopt}>
         <FolderOpen size={14} strokeWidth={1.8} />添加现有目录
-      </button>
+      </Button>
     {/snippet}
 
     <div class="grid">

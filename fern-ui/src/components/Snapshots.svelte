@@ -30,6 +30,7 @@
     why,
     type Snapshot,
   } from '../lib/backup'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     instanceId: string
@@ -110,10 +111,10 @@
         </small>
       {/if}
     </span>
-    <button class="btn btn--ghost" disabled={taking || running} onclick={() => void take()}>
+    <Button variant="ghost" disabled={taking || running} onclick={() => void take()}>
       <Camera size={14} strokeWidth={1.9} />
       {taking ? '正在拍摄' : '拍一张'}
-    </button>
+    </Button>
   </div>
 
   <p class="t-quiet note">

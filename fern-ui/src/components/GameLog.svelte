@@ -12,6 +12,7 @@
   import Overlay from 'fern-kit/Overlay.svelte'
   import LogLines from './LogLines.svelte'
   import { launch } from '../lib/launch.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     onclose: () => void
@@ -35,7 +36,7 @@
           : ''}
       </p>
     </div>
-    <button class="btn btn--icon" aria-label="关闭" onclick={onclose}><X size={16} /></button>
+    <Button variant="icon" aria-label="关闭" onclick={onclose}><X size={16} /></Button>
   </header>
 
   <div class="body">

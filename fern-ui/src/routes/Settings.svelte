@@ -46,6 +46,7 @@
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { updates } from '../lib/update.svelte'
   import { inTauri } from '../lib/instances.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   type SectionId =
     | 'appearance'
@@ -354,14 +355,14 @@
         <div class="crumbs">
           <!-- 返回到它所属的那一节，名字从目录里取——这一级是通用机制，不是
                账户专用的。 -->
-          <button class="btn btn--link" onclick={() => nav.show('settings', location.slice(0, 2).join('/'))}>
+          <Button variant="link" tone="quiet" onclick={() => nav.show('settings', location.slice(0, 2).join('/'))}>
             <ChevronLeft size={14} strokeWidth={2} />{sectionLabel}
-          </button>
+          </Button>
           <h1 class="t-h1">{subtitle}</h1>
         </div>
-        <button class="btn btn--icon close" aria-label="关闭设置" onclick={onback}>
+        <Button variant="icon" tone="quiet" class="close" aria-label="关闭设置" onclick={onback}>
           <X size={16} />
-        </button>
+        </Button>
       </header>
 
       <div class="sub-body">
@@ -395,9 +396,9 @@
     {#snippet head()}
       <header>
         <h1 class="t-h1">设置</h1>
-        <button class="btn btn--icon close" aria-label="关闭设置" onclick={onback}>
+        <Button variant="icon" tone="quiet" class="close" aria-label="关闭设置" onclick={onback}>
           <X size={16} />
-        </button>
+        </Button>
       </header>
     {/snippet}
 
@@ -485,24 +486,21 @@
           <SettingRow id="appearance/code" found={focused === 'appearance/code'}>
             <div class="code-row">
               <input class="input selectable t-mono" bind:value={themeCode} spellcheck="false" />
-              <button class="btn btn--icon" aria-label="复制" title="复制" onclick={() => void copyCode()}>
+              <Button variant="icon" aria-label="复制" title="复制" onclick={() => void copyCode()}>
                 {#if copied}<Check size={15} />{:else}<Copy size={14} />{/if}
-              </button>
-              <button class="btn btn--ghost" onclick={applyCode}>应用</button>
+              </Button>
+              <Button variant="ghost" onclick={applyCode}>应用</Button>
             </div>
             {#if importError}<p class="err">{importError}</p>{/if}
           </SettingRow>
 
           <SettingRow id="appearance/reset" found={focused === 'appearance/reset'}>
-            <button
-              class="btn btn--ghost"
-              onclick={() => {
+            <Button variant="ghost" onclick={() => {
                 theme.reset()
                 themeCode = theme.export()
-              }}
-            >
+              }}>
               恢复
-            </button>
+            </Button>
           </SettingRow>
         {:else if section === 'account'}
           <SettingRow id="account/list" found={focused === 'account/list'}>
@@ -528,16 +526,13 @@
             -->
             <div class="ceiling-row">
               <span class="t-mono amount">{ceilingGb} GB</span>
-              <button
-                class="btn btn--link"
-                disabled={!custom}
+              <Button variant="link" disabled={!custom}
                 onclick={() => {
                   prefs.setGame({ memoryCeilingMb: null })
                   void refreshBudget()
-                }}
-              >
+                }}>
                 恢复默认
-              </button>
+              </Button>
             </div>
             <MemoryMeter
               label="游戏内存上限"
@@ -651,9 +646,9 @@
                       {/if}
                     </span>
                     {#if group.runtimes.length === 0}
-                      <button class="btn btn--ghost" onclick={() => void installJava(group.major)}>
+                      <Button variant="ghost" onclick={() => void installJava(group.major)}>
                         安装
-                      </button>
+                      </Button>
                     {/if}
                   </div>
                   {#if group.requiredBy.length > 0}
@@ -693,12 +688,12 @@
                 placeholder="/usr/lib/jvm/java-21-openjdk"
                 onkeydown={(event) => event.key === 'Enter' && void addJavaPath()}
               />
-              <button class="btn btn--ghost" onclick={() => void addJavaPath()}>添加</button>
+              <Button variant="ghost" onclick={() => void addJavaPath()}>添加</Button>
             </div>
           </SettingRow>
 
           <SettingRow id="java/rescan" found={focused === 'java/rescan'}>
-            <button class="btn btn--ghost" onclick={() => void loadRuntimes()}>扫描</button>
+            <Button variant="ghost" onclick={() => void loadRuntimes()}>扫描</Button>
           </SettingRow>
 
           {#if runtimeError}<div class="alert">{runtimeError}</div>{/if}
@@ -728,15 +723,15 @@
             <p class="path t-mono selectable">{paths.game || '—'}</p>
           </SettingRow>
           <SettingRow id="data/existing" found={focused === 'data/existing'}>
-            <button class="btn btn--ghost" onclick={() => nav.show('settings', 'data/existing/browse')}>
+            <Button variant="ghost" onclick={() => nav.show('settings', 'data/existing/browse')}>
               选择目录…
-            </button>
+            </Button>
           </SettingRow>
           <SettingRow id="data/logs" found={focused === 'data/logs'}>
             <p class="path t-mono selectable">{paths.logs || '—'}</p>
-            <button class="btn btn--ghost open" onclick={() => void openLogs()}>
+            <Button variant="ghost" class="open" onclick={() => void openLogs()}>
               <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
-            </button>
+            </Button>
           </SettingRow>
           {#if pathError}<div class="alert">{pathError}</div>{/if}
         {:else}
@@ -751,10 +746,10 @@
 
           <SettingRow id="about/diagnostics" found={focused === 'about/diagnostics'}>
             <pre class="t-mono report selectable">{report}</pre>
-            <button class="btn btn--ghost" onclick={() => void copyReport()}>
+            <Button variant="ghost" onclick={() => void copyReport()}>
               {#if copiedReport}<Check size={14} />{:else}<Copy size={13} strokeWidth={1.9} />{/if}
               {copiedReport ? ui.about.copied : ui.about.copy}
-            </button>
+            </Button>
           </SettingRow>
 
           <!--
@@ -805,41 +800,35 @@
                 {#if Object.keys(launch.games).length > 0}
                   <span class="t-quiet">{ui.about.update.restartBlocked}</span>
                 {:else}
-                  <button class="btn btn--ghost" onclick={() => updates.restart()}>
+                  <Button variant="ghost" onclick={() => updates.restart()}>
                     {ui.about.update.restart}
-                  </button>
+                  </Button>
                 {/if}
               {:else}
-                <button
-                  class="btn btn--ghost"
-                  disabled={updates.checking || updates.applying}
-                  onclick={() => void updates.check()}
-                >
+                <Button variant="ghost" disabled={updates.checking || updates.applying}
+                  onclick={() => void updates.check()}>
                   {ui.about.update.check}
-                </button>
+                </Button>
                 {#if updates.decision?.kind === 'available'}
                   {@const url = updates.decision.url}
                   {#if updates.selfUpdate}
-                    <button
-                      class="btn btn--link"
-                      disabled={updates.applying}
-                      onclick={() => void updates.apply()}
-                    >
+                    <Button variant="link" disabled={updates.applying}
+                      onclick={() => void updates.apply()}>
                       {ui.about.update.apply}
-                    </button>
+                    </Button>
                   {:else}
                     <!--
                       包管理器装的那一份不自更新。落点是清单里的那个地址——
                       本平台的那一个文件，不是一个要人自己找的页面。
                     -->
-                    <button class="btn btn--link" onclick={() => openInBrowser(url)}>
+                    <Button variant="link" onclick={() => openInBrowser(url)}>
                       {ui.about.update.download}
-                    </button>
+                    </Button>
                   {/if}
                 {:else if updates.decision?.kind === 'needs_full_download'}
-                  <button class="btn btn--link" onclick={() => openInBrowser(DOWNLOADS)}>
+                  <Button variant="link" onclick={() => openInBrowser(DOWNLOADS)}>
                     {ui.about.update.download}
-                  </button>
+                  </Button>
                 {/if}
               {/if}
             </div>
@@ -868,12 +857,12 @@
 
           <SettingRow id="about/links" found={focused === 'about/links'}>
             <div class="links">
-              <button class="btn btn--link" onclick={() => openInBrowser(REPOSITORY)}>
+              <Button variant="link" onclick={() => openInBrowser(REPOSITORY)}>
                 {ui.about.repository}
-              </button>
-              <button class="btn btn--link" onclick={() => openInBrowser(`${REPOSITORY}/issues`)}>
+              </Button>
+              <Button variant="link" onclick={() => openInBrowser(`${REPOSITORY}/issues`)}>
                 {ui.about.issues}
-              </button>
+              </Button>
             </div>
           </SettingRow>
 
@@ -904,15 +893,10 @@
     gap: 2px;
   }
 
-  .crumbs .btn--link {
+  .crumbs :global(.btn--link) {
     gap: 2px;
     justify-self: start;
     padding-left: 0;
-    color: var(--ink-3);
-  }
-
-  .crumbs .btn--link:hover {
-    color: var(--ink);
   }
 
   .runtimes {
@@ -1029,7 +1013,8 @@
     padding: var(--s5) 0 var(--s6);
   }
 
-  .close {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .settings :global(.close) {
     flex: none;
     margin-top: 2px;
   }
@@ -1191,7 +1176,7 @@
     overflow-wrap: anywhere;
   }
 
-  .open {
+  .settings :global(.open) {
     justify-self: start;
   }
 

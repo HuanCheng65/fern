@@ -2,8 +2,8 @@
  * 元件：按钮、输入框、字号类，以及所有控件都适用的那几条基础规则。
  *
  * 全部作用在 `.fern` 之下，所以官网引它也只影响嵌进去的那一块，纸白的正文
- * 不受影响。这正是把它从产品里搬出来的理由——kit 的组件从此可以用 `.btn`，
- * 不必每搬一个组件就手抄一遍描边按钮和滚动条。
+ * 不受影响。这正是把它从产品里搬出来的理由——kit 的组件从此可以用这几个类，
+ * 不必每搬一个组件就手抄一遍等宽数字和滚动条。
  *
  * 作用域写成 `:where(.fern)` 而不是 `.fern` 是**必须的**：`:where()` 不贡献
  * 特异度，于是 `:where(.fern) .btn` 仍然是 (0,1,0)，和它待在产品里、没有作用域
@@ -16,9 +16,9 @@
  * 层级只有两级：内容直接坐在背景上（靠留白和发丝线分组），只有浮层
  * （命令面板、对话框）才有玻璃、描边和影子。界面本身不画花纹。
  *
- * 待办：`.btn` / `.field` / `.input` / `.select` / `.alert` 正在变成 ui/ 下的
- * 组件——有变体、有状态、有结构的东西该由类型管，写错 `btn--ghsot` 不该是
- * 静默失效。迁完就把这几段删掉，只留下真正的修饰符（.t-* / .scroll /
+ * 待办：`.field` / `.input` / `.select` / `.alert` 还要变成 ui/ 下的组件——有
+ * 变体、有状态、有结构的东西该由类型管，写错 `btn--ghsot` 那种不该是静默失效。
+ * 按钮已经迁完（`ui/Button.svelte`）。留下的只有真正的修饰符（.t-* / .scroll /
  * .selectable）——那些是刷在别人已有元素上的一层漆，做成组件反而要多插一层。
  */
 
@@ -170,90 +170,6 @@
 }
 
 /* ─────────────────── 以下待迁成组件，见文件抬头 ─────────────────── */
-
-:where(.fern) .btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--s2);
-  min-height: var(--control);
-  padding: 0 var(--s4);
-  border-radius: var(--r1);
-  font-size: var(--t-body);
-  font-weight: 500;
-  color: var(--ink-2);
-  white-space: nowrap;
-  transition:
-    background var(--t-fast) var(--ease),
-    color var(--t-fast) var(--ease),
-    opacity var(--t-fast) var(--ease),
-    transform var(--t-fast) var(--ease);
-}
-
-:where(.fern) .btn:hover {
-  color: var(--ink);
-  background: var(--tint-1);
-}
-
-:where(.fern) .btn:active {
-  transform: scale(0.985);
-}
-
-:where(.fern) .btn:disabled {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-:where(.fern) .btn--primary {
-  min-height: var(--control-lg);
-  padding: 0 var(--s5);
-  color: var(--accent-ink);
-  background: var(--accent);
-  font-weight: 580;
-  box-shadow: 0 6px 22px -8px var(--accent-soft);
-}
-
-:where(.fern) .btn--primary:hover {
-  color: var(--accent-ink);
-  background: var(--accent);
-  filter: brightness(1.06);
-}
-
-:where(.fern) .btn--ghost {
-  box-shadow: inset 0 0 0 1px var(--hairline);
-}
-
-:where(.fern) .btn--ghost:hover {
-  box-shadow: inset 0 0 0 1px var(--tint-3);
-}
-
-/* 只有一个图标的按钮：顶栏、关闭、加号。 */
-:where(.fern) .btn--icon {
-  min-height: 0;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  color: var(--ink-3);
-  border-radius: var(--r1);
-}
-
-:where(.fern) .btn--icon:hover {
-  color: var(--ink);
-  background: var(--tint-2);
-}
-
-/* 文字动作。没有背景，只有一个词和一个箭头。 */
-:where(.fern) .btn--link {
-  min-height: 0;
-  padding: 0;
-  font-size: var(--t-small);
-  color: var(--accent);
-}
-
-:where(.fern) .btn--link:hover {
-  background: none;
-  color: var(--ink);
-}
 
 :where(.fern) .field {
   display: grid;

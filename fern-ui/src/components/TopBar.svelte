@@ -22,6 +22,7 @@
   import Mark from 'fern-kit/Mark.svelte'
   import { platform } from '../lib/frame.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
     /** 当前详情的名字。顶栏不认识实例，只认识一个要显示的词。 */
@@ -122,15 +123,15 @@
       有新版本时在这里点一个点。不弹窗、不横幅、不加一行文字——更新是启动器
       自己的事，而玩家在意的是游戏。这一点也是「有更新」在界面上唯一的痕迹。
     -->
-    <button
-      class="btn btn--icon"
-      class:marked={updates.available}
+    <Button
+      variant="icon"
+      class={updates.available ? 'marked' : ''}
       aria-label={updates.available ? '设置（有新版本）' : '设置'}
       title={updates.available ? '设置（有新版本）' : '设置'}
       onclick={() => nav.toggle('settings')}
     >
       <Settings size={16} strokeWidth={1.8} />
-    </button>
+    </Button>
   </div>
 
 </header>
@@ -309,11 +310,12 @@
   }
 
   /* 一个点，不是一个数字：数量在这里没有意义，有没有才有。 */
-  .marked {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .right :global(.marked) {
     position: relative;
   }
 
-  .marked::after {
+  .right :global(.marked)::after {
     content: '';
     position: absolute;
     top: 6px;

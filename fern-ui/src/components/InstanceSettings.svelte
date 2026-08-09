@@ -24,6 +24,7 @@
   import { javaLabel, javaMismatch, type JavaRuntime } from '../lib/java'
   import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
 
   /** 一次分配的理由。`topic` 决定它是依据、实测还是约束。 */
   interface ExplanationItem {
@@ -369,9 +370,9 @@
           -->
           <p class="reason">
             堆大小由额外 JVM 参数中的 <code class="t-mono">-Xmx</code> 决定。
-            <button class="btn btn--link" onclick={() => nav.show('settings', 'game/jvm')}>
+            <Button variant="link" onclick={() => nav.show('settings', 'game/jvm')}>
               前往设置
-            </button>
+            </Button>
           </p>
         {:else}
           <MemoryMeter
@@ -393,9 +394,9 @@
           <!-- 左边原本有一句「按这个实例的内容与实测用量决定」：数字旁边的
                「自动」和这颗按钮已经把状态说完了。 -->
           <div class="row-foot end">
-            <button class="btn btn--link" onclick={() => setMemory(memoryAuto ? shownMb : null)}>
+            <Button variant="link" onclick={() => setMemory(memoryAuto ? shownMb : null)}>
               {memoryAuto ? '手动指定' : `恢复自动（${gigabytes(automaticMb)}）`}
-            </button>
+            </Button>
           </div>
         {/if}
       </section>
@@ -425,9 +426,9 @@
               ? `–${requirement.maximum}`
               : ' 或更高'}
           </span>
-          <button class="btn btn--link" onclick={() => (picking = !picking)}>
+          <Button variant="link" onclick={() => (picking = !picking)}>
             {picking ? '收起' : '改用其他版本'}
-          </button>
+          </Button>
         </div>
 
         {#if picking}
@@ -448,9 +449,9 @@
             {/each}
 
             {#if fitting.length === 0}
-              <button class="btn btn--ghost install" disabled={installing} onclick={() => void installJava()}>
+              <Button variant="ghost" class="install" disabled={installing} onclick={() => void installJava()}>
                 {installing ? '正在下载…' : `下载 Java ${requirement.minimum}`}
-              </button>
+              </Button>
             {/if}
 
             <!--
@@ -458,9 +459,9 @@
               请人踩一个我们已经知道的坑。
             -->
             {#if unfit.length > 0}
-              <button class="btn btn--link fold" onclick={() => (showUnfit = !showUnfit)}>
+              <Button variant="link" class="fold" onclick={() => (showUnfit = !showUnfit)}>
                 {showUnfit ? '收起不兼容的版本' : `显示不兼容的版本（${unfit.length}）`}
-              </button>
+              </Button>
               {#if showUnfit}
                 {#each unfit as item (item.path)}
                   <button
@@ -479,9 +480,9 @@
       </section>
 
       <section>
-        <button class="btn btn--link advanced" onclick={() => (advanced = !advanced)}>
+        <Button variant="link" tone="quiet" class="advanced" onclick={() => (advanced = !advanced)}>
           <ChevronRight size={13} strokeWidth={2} class={advanced ? 'turned' : ''} />高级
-        </button>
+        </Button>
         {#if advanced}
           <!--
             三档而不是两档：「跟随全局」和「G1」不是一回事——前者是「我不管」，
@@ -530,27 +531,24 @@
       </section>
 
       <section>
-        <button class="btn btn--link advanced" onclick={() => (managing = !managing)}>
+        <Button variant="link" tone="quiet" onclick={() => (managing = !managing)}>
           <ChevronRight size={13} strokeWidth={2} class={managing ? 'turned' : ''} />管理
-        </button>
+        </Button>
         {#if managing}
           <div class="row-head adv">
             <span class="label">名称</span>
           </div>
           <div class="rename">
             <input class="input" bind:value={renamed} maxlength="64" />
-            <button
-              class="btn btn--ghost"
-              disabled={!renamed.trim() || renamed.trim() === instanceName}
-              onclick={() => void rename()}
-            >
+            <Button variant="ghost" disabled={!renamed.trim() || renamed.trim() === instanceName}
+              onclick={() => void rename()}>
               重命名
-            </button>
+            </Button>
           </div>
 
           <div class="row-foot manage">
             <span class="t-quiet">复制不含存档与日志</span>
-            <button class="btn btn--ghost" onclick={() => void duplicate()}>复制实例</button>
+            <Button variant="ghost" onclick={() => void duplicate()}>复制实例</Button>
           </div>
 
           <div class="row-foot manage">
@@ -559,13 +557,13 @@
             </span>
             {#if confirmingDelete}
               <span class="confirm">
-                <button class="btn btn--ghost" onclick={() => (confirmingDelete = false)}>
+                <Button variant="ghost" onclick={() => (confirmingDelete = false)}>
                   取消
-                </button>
-                <button class="btn danger" onclick={() => void remove()}>确认删除</button>
+                </Button>
+                <Button tone="danger" onclick={() => void remove()}>确认删除</Button>
               </span>
             {:else}
-              <button class="btn btn--ghost" onclick={() => (confirmingDelete = true)}>删除</button>
+              <Button variant="ghost" onclick={() => (confirmingDelete = true)}>删除</Button>
             {/if}
           </div>
         {/if}
@@ -656,26 +654,19 @@
     color: var(--danger);
   }
 
-  .install,
-  .fold {
+  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  .choices :global(.install),
+  .choices :global(.fold) {
     justify-self: start;
     margin-top: var(--s2);
   }
 
-  .advanced {
-    color: var(--ink-3);
-  }
-
-  .advanced:hover {
-    color: var(--ink);
-  }
-
   /* 箭头转 90 度表示展开，和崩溃报告里那处是同一套。 */
-  .advanced :global(svg) {
+  section :global(.advanced svg) {
     transition: transform var(--t-base) var(--ease);
   }
 
-  .advanced :global(svg.turned) {
+  section :global(.advanced svg.turned) {
     transform: rotate(90deg);
   }
 
@@ -708,14 +699,6 @@
   }
 
   /* 删除是唯一不可撤销的动作，给它唯一的红。 */
-  .btn.danger {
-    color: #fff;
-    background: #c42b1c;
-  }
-
-  .btn.danger:hover {
-    background: #d8402f;
-  }
 
   .choices {
     display: grid;
