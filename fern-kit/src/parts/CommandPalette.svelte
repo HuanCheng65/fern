@@ -10,8 +10,8 @@
    * store、收键盘。搜什么、怎么排、执行之后关不关，全在 ./palette.svelte 里
    * ——那是语法所在的地方。
    */
-  import Overlay from './Overlay.svelte'
-  import Cover from './Cover.svelte'
+  import Overlay from '../ui/Overlay.svelte'
+  import Cover from '../ui/Cover.svelte'
   import PalettePanel from './PalettePanel.svelte'
   import { palette, type Row } from './palette.svelte'
 

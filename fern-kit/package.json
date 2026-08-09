@@ -6,25 +6,25 @@
   "type": "module",
   "_comment_exports": "源码包，不构建：两边都是 Vite，让各自的构建去编译，省一层产物和一层 sourcemap。",
   "exports": {
-    "./mark": "./src/mark.ts",
-    "./biome": "./src/biome.ts",
-    "./palette": "./src/palette.svelte.ts",
     "./host": "./src/host.svelte.ts",
-    "./supply": "./src/supply.ts",
-    "./advice": "./src/advice.ts",
-    "./crash": "./src/crash.ts",
     "./scope": "./src/scope.ts",
     "./styles": "./src/styles/index.css",
+    "./ui/mark": "./src/ui/mark.ts",
+    "./ui/biome": "./src/ui/biome.ts",
     "./ui/Button.svelte": "./src/ui/Button.svelte",
-    "./Mark.svelte": "./src/Mark.svelte",
-    "./Cover.svelte": "./src/Cover.svelte",
-    "./Overlay.svelte": "./src/Overlay.svelte",
-    "./Advice.svelte": "./src/Advice.svelte",
-    "./CrashPanel.svelte": "./src/CrashPanel.svelte",
-    "./SupplyCard.svelte": "./src/SupplyCard.svelte",
-    "./PaletteRow.svelte": "./src/PaletteRow.svelte",
-    "./PalettePanel.svelte": "./src/PalettePanel.svelte",
-    "./CommandPalette.svelte": "./src/CommandPalette.svelte"
+    "./ui/Mark.svelte": "./src/ui/Mark.svelte",
+    "./ui/Cover.svelte": "./src/ui/Cover.svelte",
+    "./ui/Overlay.svelte": "./src/ui/Overlay.svelte",
+    "./parts/advice": "./src/parts/advice.ts",
+    "./parts/crash": "./src/parts/crash.ts",
+    "./parts/supply": "./src/parts/supply.ts",
+    "./parts/palette": "./src/parts/palette.svelte.ts",
+    "./parts/Advice.svelte": "./src/parts/Advice.svelte",
+    "./parts/CrashPanel.svelte": "./src/parts/CrashPanel.svelte",
+    "./parts/SupplyCard.svelte": "./src/parts/SupplyCard.svelte",
+    "./parts/PaletteRow.svelte": "./src/parts/PaletteRow.svelte",
+    "./parts/PalettePanel.svelte": "./src/parts/PalettePanel.svelte",
+    "./parts/CommandPalette.svelte": "./src/parts/CommandPalette.svelte"
   },
   "dependencies": {
     "lucide-svelte": "^0.469.0",
@@ -32,5 +32,6 @@
   },
   "peerDependencies": {
     "svelte": "^5.19.0"
-  }
+  },
+  "_comment_layers": "ui/ 只认形状，parts/ 认 Fern 的名词（实例、模组、崩溃）。parts 可以用 ui，反过来不行。"
 }

@@ -9,7 +9,7 @@
    * 做的事由调用方给（`onfix`），做的过程中的忙碌态和失败话术归这里。
    */
   import { AlertTriangle, CircleAlert } from 'lucide-svelte'
-  import Button from './ui/Button.svelte'
+  import Button from '../ui/Button.svelte'
   import { label, type FixAction } from './advice'
 
   interface Props {

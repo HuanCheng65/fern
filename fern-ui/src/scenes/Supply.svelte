@@ -13,7 +13,7 @@
    * 再返回，接着看，不用重新往下滑一遍。
    */
   import { Check, Search } from 'lucide-svelte'
-  import SupplyCard from 'fern-kit/SupplyCard.svelte'
+  import SupplyCard from 'fern-kit/parts/SupplyCard.svelte'
   import FilterGroup from '../components/FilterGroup.svelte'
   import Loading from '../components/Loading.svelte'
   import Browse from '../layouts/Browse.svelte'

@@ -39,7 +39,7 @@
   import { flip } from 'svelte/animate'
   import { scale } from 'svelte/transition'
   import { TriangleAlert, X } from 'lucide-svelte'
-  import Mark from 'fern-kit/Mark.svelte'
+  import Mark from 'fern-kit/ui/Mark.svelte'
   import { island, type Presence } from '../lib/island.svelte'
   import { DURATION, scaled } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'

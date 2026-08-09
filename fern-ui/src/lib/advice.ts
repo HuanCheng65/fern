@@ -9,14 +9,14 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import type { FixAction } from 'fern-kit/advice'
+import type { FixAction } from 'fern-kit/parts/advice'
 import { instances, inTauri } from './instances.svelte'
 import { nav } from './nav.svelte'
 import { supply } from './supply.svelte'
 import { restoreSnapshot } from './backup'
 
 // 枚举本身和按钮上的字都在 kit 里——官网要画同一条诊断，也得认识它们。
-export { label, type FixAction } from 'fern-kit/advice'
+export { label, type FixAction } from 'fern-kit/parts/advice'
 
 /** 执行。调用方负责在之后刷新自己那一屏。 */
 export async function perform(action: FixAction, instanceId: string) {

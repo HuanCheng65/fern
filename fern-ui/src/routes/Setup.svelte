@@ -15,7 +15,7 @@
   import { fly } from 'svelte/transition'
   import { ArrowLeft, ArrowRight, Check, Plus } from 'lucide-svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
-  import Mark from 'fern-kit/Mark.svelte'
+  import Mark from 'fern-kit/ui/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource, type DownloadSource } from '../lib/prefs.svelte'
   import { accounts, type AccountKind } from '../lib/accounts.svelte'

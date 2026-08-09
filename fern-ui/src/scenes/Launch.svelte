@@ -23,7 +23,7 @@
    * 光有名字根本分不开。
    */
   import { ChevronDown, Play, Plus, X } from 'lucide-svelte'
-  import { palette } from 'fern-kit/palette'
+  import { palette } from 'fern-kit/parts/palette'
   import AccountFace from '../components/AccountFace.svelte'
   import Stage from '../layouts/Stage.svelte'
   import { accounts, launchIdentity, originOf, switchAction } from '../lib/accounts.svelte'

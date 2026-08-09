@@ -11,7 +11,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { commands, provides, type Subject } from 'fern-kit/palette'
+import { commands, provides, type Subject } from 'fern-kit/parts/palette'
 import { nav } from './nav.svelte'
 
 export interface Instance {

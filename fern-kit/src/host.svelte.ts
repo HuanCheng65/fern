@@ -14,7 +14,7 @@
  * 启动器里，也能落在一张静态页面上。
  */
 
-import type { BiomeOptions } from './biome'
+import type { BiomeOptions } from './ui/biome'
 
 export type OffscreenPainter = (
   width: number,

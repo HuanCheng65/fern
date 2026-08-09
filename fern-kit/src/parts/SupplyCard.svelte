@@ -8,7 +8,7 @@
    * 它不认识数据源，也不认识那一页：给它一条结果，它负责画。点了之后发生
    * 什么由调用方决定——产品那边是进项目详情，官网那边什么都不做。
    */
-  import Cover from './Cover.svelte'
+  import Cover from '../ui/Cover.svelte'
   import { compactNumber, type Hit } from './supply'
 
   interface Props {

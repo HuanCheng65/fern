@@ -12,10 +12,10 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { commands, palette, providesRemote, type Subject } from 'fern-kit/palette'
+import { commands, palette, providesRemote, type Subject } from 'fern-kit/parts/palette'
 // 一条结果的形状和下载量的写法都在 kit 里，官网也用同一份。
-export { compactNumber, type Hit } from 'fern-kit/supply'
-import type { Hit } from 'fern-kit/supply'
+export { compactNumber, type Hit } from 'fern-kit/parts/supply'
+import type { Hit } from 'fern-kit/parts/supply'
 import { nav } from './nav.svelte'
 import { inTauri, instances } from './instances.svelte'
 

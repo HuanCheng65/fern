@@ -29,7 +29,7 @@ import {
   type Env,
   type RGB,
   type Resolved,
-} from 'fern-kit/biome'
+} from 'fern-kit/ui/biome'
 
 /** 一套完整的画面参数:构图、色板、归一化区间。 */
 export interface GlLayer {

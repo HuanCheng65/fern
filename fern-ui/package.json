@@ -1,14 +1,14 @@
 {
   "name": "fern-ui",
   "private": true,
-  "_comment_version": "这不是 Fern 的版本号，产品版本在 src-tauri/Cargo.toml。这个包不发布，npm 只是要求这里有个字段。",
+  "_comment_version": "\u8fd9\u4e0d\u662f Fern \u7684\u7248\u672c\u53f7\uff0c\u4ea7\u54c1\u7248\u672c\u5728 src-tauri/Cargo.toml\u3002\u8fd9\u4e2a\u5305\u4e0d\u53d1\u5e03\uff0cnpm \u53ea\u662f\u8981\u6c42\u8fd9\u91cc\u6709\u4e2a\u5b57\u6bb5\u3002",
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "tauri": "tauri",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "node ../fern-kit/check-layers.mjs && svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",

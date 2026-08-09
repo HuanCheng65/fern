@@ -10,7 +10,7 @@
    * 一张样式表。
    */
   import { fade, scale } from 'svelte/transition'
-  import { host } from './host.svelte'
+  import { host } from '../host.svelte'
 
   interface Props {
     label: string

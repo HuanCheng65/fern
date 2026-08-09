@@ -31,7 +31,7 @@
     type BiomeOptions,
     type Env,
     type RGB,
-  } from 'fern-kit/biome'
+  } from 'fern-kit/ui/biome'
   import { renderBiome, supportsBiomeWorker } from '../lib/biome-client'
   import { scopeRoot } from 'fern-kit/scope'
   import { createBackdropGl, layerOf, type BackdropGl, type GlLayer } from '../lib/biome-gl'

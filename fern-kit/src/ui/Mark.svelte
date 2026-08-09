@@ -14,7 +14,7 @@
    * 品牌在每一次等待里出现一次。
    */
   import { CELLS, CELLS_COMPACT, layout } from './mark'
-  import { host } from './host.svelte'
+  import { host } from '../host.svelte'
 
   interface Props {
     size?: number

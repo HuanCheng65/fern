@@ -19,7 +19,7 @@
   import { ArrowLeft, Settings } from 'lucide-svelte'
   import Island from './Island.svelte'
   import { updates } from '../lib/update.svelte'
-  import Mark from 'fern-kit/Mark.svelte'
+  import Mark from 'fern-kit/ui/Mark.svelte'
   import { platform } from '../lib/frame.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
   import Button from 'fern-kit/ui/Button.svelte'

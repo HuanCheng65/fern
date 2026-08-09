@@ -14,7 +14,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { inTauri, instances } from './instances.svelte'
 import { nav } from './nav.svelte'
-import { commands, provides, type Action } from 'fern-kit/palette'
+import { commands, provides, type Action } from 'fern-kit/parts/palette'
 
 export type AccountKind = 'offline' | 'microsoft' | 'authlib'
 
