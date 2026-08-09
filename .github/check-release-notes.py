@@ -66,8 +66,8 @@ def check(short: str, message: str) -> list[str]:
 
     if len(notes) > 1:
         problems.append(
-            f"有 {len(notes)} 条 Release-Note。一个提交最多一条——"
-            "需要两条说明这个提交该拆开。"
+            f"包含 {len(notes)} 条 Release-Note，每个提交最多一条。"
+            "需要两条时，应拆分为两个提交。"
         )
     if not notes:
         return problems
@@ -79,24 +79,26 @@ def check(short: str, message: str) -> list[str]:
         problems.append("提交标题不符合 Conventional Commits，无法确定更新日志的分类。")
     elif kind not in TYPES_WITH_NOTES:
         problems.append(
-            f"类型是 {kind}，它改的是用户看不见的东西，不该带 Release-Note。"
-            f"（能带的只有 {'、'.join(sorted(TYPES_WITH_NOTES))}）"
+            f"提交类型为 {kind}，其改动对用户不可见，不应包含 Release-Note。"
+            f"（可包含的类型：{'、'.join(sorted(TYPES_WITH_NOTES))}）"
         )
 
     if not note:
-        problems.append("Release-Note 是空的。")
+        problems.append("Release-Note 内容为空。")
         return problems
     if not note.endswith("。"):
-        problems.append(f"要以句号结尾：{note!r}")
+        problems.append(f"Release-Note 应以句号结尾：「{note}」")
     if len(note) > MAX_LENGTH:
-        problems.append(f"超过 {MAX_LENGTH} 个字符（现在 {len(note)} 个）：{note!r}")
+        problems.append(
+            f"Release-Note 超过 {MAX_LENGTH} 个字符（当前 {len(note)} 个）：「{note}」"
+        )
     if not re.search(r"[一-鿿]", note):
-        problems.append(f"更新日志写中文：{note!r}")
+        problems.append(f"Release-Note 应使用中文：「{note}」")
     for phrase in EMPTY_PHRASES:
         if phrase in note:
             problems.append(
-                f"「{phrase}」没有信息量。写不出具体是什么，"
-                "就说明这条不该进更新日志。"
+                f"「{phrase}」不具体。Release-Note 应说明具体改动，"
+                "无法说明的改动不应写入更新日志。"
             )
             break
     return problems
@@ -122,9 +124,9 @@ def main() -> int:
             failed = True
 
     if failed:
-        print("\n规范见 AGENTS.md 的「更新日志」一节。", file=sys.stderr)
+        print("\n写法规范见 AGENTS.md 的「更新日志」一节。", file=sys.stderr)
         return 1
-    print(f"{checked} 个提交的 Release-Note 都合规（{revision_range}）")
+    print(f"已检查 {checked} 个提交的 Release-Note（范围 {revision_range}），未发现问题。")
     return 0
 
 

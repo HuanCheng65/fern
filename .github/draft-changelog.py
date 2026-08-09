@@ -105,7 +105,7 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="不写文件，只在内容需要更新时以非零码退出。",
+        help="不写文件；内容需要更新时以非零状态码退出。",
     )
     args = parser.parse_args()
 
@@ -122,15 +122,21 @@ def main() -> int:
 
     if args.check:
         if before != after:
-            print("CHANGELOG.md 的「未发布」小节和提交里的 Release-Note 对不上。", file=sys.stderr)
-            print("跑一次 .github/draft-changelog.py 再读一遍生成的内容。", file=sys.stderr)
+            print(
+                f"{args.changelog} 的「未发布」小节与提交中的 Release-Note 不一致。",
+                file=sys.stderr,
+            )
+            print(
+                "运行 .github/draft-changelog.py 重新生成，并确认生成的内容。",
+                file=sys.stderr,
+            )
             return 1
-        print("「未发布」小节是最新的")
+        print("「未发布」小节与提交中的 Release-Note 一致。")
         return 0
 
     args.changelog.write_text(after)
     print(section)
-    print(f"已写入 {args.changelog}（{revision_range}）。**读一遍再提交。**")
+    print(f"已写入 {args.changelog}（范围 {revision_range}）。这是草稿，提交前请确认内容。")
     return 0
 
 

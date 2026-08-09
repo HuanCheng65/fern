@@ -97,7 +97,7 @@ jobs:
             base=$(git describe --tags --abbrev=0 2>/dev/null || true)
           fi
           if [ -z "$base" ]; then
-            echo "找不到比较基准，跳过。"
+            echo "未找到比较基准，跳过检查。"
             exit 0
           fi
           python3 .github/check-release-notes.py "$base..HEAD"

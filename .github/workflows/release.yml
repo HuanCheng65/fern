@@ -50,7 +50,7 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           crate=$(grep -m1 '^version = ' fern-ui/src-tauri/Cargo.toml | cut -d'"' -f2)
           if [ "$tag" != "$crate" ]; then
-            echo "::error::tag 是 v$tag，但 fern-ui/src-tauri/Cargo.toml 写的是 $crate。"
+            echo "::error::标签为 v$tag，但 fern-ui/src-tauri/Cargo.toml 中的版本为 $crate。"
             echo "::error::两者必须一致，见 docs/fern-update-design.md §5.9。"
             exit 1
           fi
@@ -62,7 +62,7 @@ jobs:
           esac
           echo "version=$tag" >> "$GITHUB_OUTPUT"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          echo "发布 $tag 到 $channel 通道"
+          echo "将 $tag 发布到 $channel 通道。"
 
       # 客户端把更新源编译进了二进制，而清单里的下载地址由这条流水线生成。
       # 两边不一致的症状是「检查更新永远失败」，而且改客户端才能修——
@@ -73,12 +73,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${BASE_URL:-}" ]; then
-            echo "::error::仓库变量 UPDATE_BASE_URL 没设。"
+            echo "::error::未设置仓库变量 UPDATE_BASE_URL。"
             exit 1
           fi
           compiled=$(grep -m1 'DEFAULT_ENDPOINT: &str' fern-core/src/update/mod.rs | cut -d'"' -f2)
           if [ "${BASE_URL%/}" != "${compiled%/}" ]; then
-            echo "::error::客户端编进去的是 $compiled，而这次要发布到 $BASE_URL。"
+            echo "::error::客户端内置的更新地址为 $compiled，与本次发布目标 $BASE_URL 不一致。"
             exit 1
           fi
           # 域名在第三个地方也出现了：tauri.conf.json 的 plugins.updater.endpoints。
@@ -87,7 +87,7 @@ jobs:
           configured=$(python3 -c "import json;print(json.load(open('fern-ui/src-tauri/tauri.conf.json'))['plugins']['updater']['endpoints'][0])")
           case "$configured" in
             "${BASE_URL%/}"/*) ;;
-            *) echo "::error::tauri.conf.json 里的 $configured 不在 $BASE_URL 下面。"; exit 1 ;;
+            *) echo "::error::tauri.conf.json 中的 $configured 不在 $BASE_URL 之下。"; exit 1 ;;
           esac
 
   build:
@@ -239,8 +239,8 @@ jobs:
             local found
             found=$(find "incoming/$1" -type f -name "$2" | head -1 || true)
             if [ -z "$found" ]; then
-              echo "::error::在 incoming/$1 里找不到 $2"
-              find "incoming/$1" -type f | sed 's/^/  有：/'
+              echo "::error::在 incoming/$1 中找不到 $2。"
+              find "incoming/$1" -type f | sed 's/^/  现有：/'
               exit 1
             fi
             cp "$found" "out/$3"
@@ -287,4 +287,4 @@ jobs:
             --endpoint-url "$AWS_ENDPOINT" \
             --content-type "application/json" \
             --cache-control "public, max-age=60"
-          echo "$CHANNEL 通道现在指向 $VERSION"
+          echo "$CHANNEL 通道已指向 $VERSION。"

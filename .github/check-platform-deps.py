@@ -62,7 +62,7 @@ def main() -> int:
             extra = other - deps
             if missing or extra:
                 failed = True
-                print(f"{crate} 在 {target} 上和 {baseline_target} 不一致：")
+                print(f"{crate} 在 {target} 与 {baseline_target} 上解析出的依赖不一致：")
                 if missing:
                     print(f"  缺少：{', '.join(sorted(missing))}")
                 if extra:
@@ -70,12 +70,12 @@ def main() -> int:
 
     if failed:
         print()
-        print("多半是某个 [target.'cfg(...)'.dependencies] 段的位置写错了，")
-        print("把它后面本该跨平台的依赖一起圈了进去。")
+        print("常见原因：某个 [target.'cfg(...)'.dependencies] 段的位置有误，")
+        print("其后本应跨平台的依赖被一并归入该段。")
         return 1
 
     summary = "、".join(f"{crate} {len(deps)} 项" for crate, deps in sorted(baseline.items()))
-    print(f"{len(TARGETS)} 个目标平台的依赖一致：{summary}")
+    print(f"已比对 {len(TARGETS)} 个目标平台，依赖一致：{summary}")
     return 0
 
 

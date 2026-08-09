@@ -29,7 +29,7 @@ def run_blocks(document: dict):
             shell = step.get("shell", "bash")
             if shell not in ("bash", "sh"):
                 continue
-            yield f"{job_name}[{index}] {step.get('name', '(无名)')}", script
+            yield f"{job_name}[{index}] {step.get('name', '(未命名)')}", script
 
 
 def main() -> int:
@@ -51,7 +51,7 @@ def main() -> int:
                 failed = True
     if failed:
         return 1
-    print(f"{checked} 段 run: 的 shell 语法没问题")
+    print(f"已检查 {checked} 段 run: 脚本的 shell 语法，未发现问题。")
     return 0
 
 
