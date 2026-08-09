@@ -13,6 +13,7 @@
    * 再返回，接着看，不用重新往下滑一遍。
    */
   import { Check, Search } from 'lucide-svelte'
+  import Select from 'fern-kit/ui/Select.svelte'
   import SupplyCard from 'fern-kit/parts/SupplyCard.svelte'
   import FilterGroup from '../components/FilterGroup.svelte'
   import Loading from '../components/Loading.svelte'
@@ -211,11 +212,13 @@
           <span class="t-quiet">{supply.total} 个结果</span>
           <label class="sort">
             <span class="t-quiet">排序</span>
-            <select class="bare" bind:value={supply.sort} onchange={() => supply.refresh()}>
-              {#each SORTS as item (item.id)}
-                <option value={item.id}>{item.label}</option>
-              {/each}
-            </select>
+            <Select
+              variant="bare"
+              label="排序"
+              options={SORTS.map((item) => ({ value: item.id, label: item.label }))}
+              bind:value={supply.sort}
+              onchange={() => supply.refresh()}
+            />
           </label>
         </div>
 
@@ -337,24 +340,6 @@
     display: flex;
     align-items: center;
     gap: var(--s2);
-  }
-
-  /* 排序在结果上方，重量要压住——一个带边框的 select 会盖过它下面的卡片。 */
-  .bare {
-    padding: 0;
-    color: var(--ink-2);
-    font-size: var(--t-small);
-    cursor: pointer;
-  }
-
-  .bare:hover {
-    color: var(--ink);
-  }
-
-  /* 下拉里的选项由系统画，深色前景色在浅色菜单上读不出来。 */
-  .bare option {
-    color: #10171b;
-    background: #dfe6e6;
   }
 
   /* 滚动容器就是结果区本身，哨兵和滚动记忆都挂在它身上。 */

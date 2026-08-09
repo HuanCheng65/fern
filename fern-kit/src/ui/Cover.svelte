@@ -13,7 +13,7 @@
    */
   import { onMount } from 'svelte'
   import { paint } from './biome'
-  import { host } from './host.svelte'
+  import { host } from '../host.svelte'
 
   interface Props {
     /** 恒定种子。实例用实例名——名字就是脸。 */

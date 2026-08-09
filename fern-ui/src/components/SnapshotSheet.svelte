@@ -32,6 +32,7 @@
     type Snapshot,
   } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Select from 'fern-kit/ui/Select.svelte'
 
   interface Props {
     instanceId: string
@@ -222,16 +223,12 @@
       {#if snapshot.saves.length > 1}
         <div class="field">
           <label for="snapshot-save">世界</label>
-          <select
+          <Select
             id="snapshot-save"
-            class="select"
+            options={snapshot.saves.map((world) => ({ value: world, label: world }))}
             bind:value={save}
             onchange={() => (name = copyName(save, snapshot.takenAt))}
-          >
-            {#each snapshot.saves as world (world)}
-              <option value={world}>{world}</option>
-            {/each}
-          </select>
+          />
         </div>
       {/if}
 

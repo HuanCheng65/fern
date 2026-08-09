@@ -16,7 +16,7 @@
  * 层级只有两级：内容直接坐在背景上（靠留白和发丝线分组），只有浮层
  * （命令面板、对话框）才有玻璃、描边和影子。界面本身不画花纹。
  *
- * 待办：`.field` / `.input` / `.select` / `.alert` 还要变成 ui/ 下的组件——有
+ * 待办：`.field` / `.input` / `.alert` 还要变成 ui/ 下的组件——有
  * 变体、有状态、有结构的东西该由类型管，写错 `btn--ghsot` 那种不该是静默失效。
  * 按钮已经迁完（`ui/Button.svelte`）。留下的只有真正的修饰符（.t-* / .scroll /
  * .selectable）——那些是刷在别人已有元素上的一层漆，做成组件反而要多插一层。
@@ -181,8 +181,7 @@
   color: var(--ink-3);
 }
 
-:where(.fern) .input,
-:where(.fern) .select {
+:where(.fern) .input {
   width: 100%;
   min-height: 40px;
   padding: 0 var(--s3);
@@ -198,31 +197,17 @@
     background var(--t-fast) var(--ease);
 }
 
-:where(.fern) .select {
-  cursor: pointer;
-  appearance: none;
-  padding-right: var(--s6);
-}
-
 :where(.fern) .input::placeholder {
   color: var(--ink-4);
 }
 
-:where(.fern) .input:hover,
-:where(.fern) .select:hover {
+:where(.fern) .input:hover {
   background: var(--well-2);
 }
 
-:where(.fern) .input:focus,
-:where(.fern) .select:focus {
+:where(.fern) .input:focus {
   background: var(--well-3);
   box-shadow: inset 0 0 0 1.5px var(--accent);
-}
-
-/* 下拉展开的那一层由系统画，跟不了表面，只能自己给一组能读的颜色。 */
-:where(.fern) .select option {
-  color: #10171b;
-  background: #dfe6e6;
 }
 
 /* 错误。真的出了事才出现，所以给它足够的对比度，别做成灰色小字。 */

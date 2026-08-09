@@ -32,6 +32,7 @@
     type ResourceKind,
   } from '../lib/supply.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Select from 'fern-kit/ui/Select.svelte'
 
   interface Props {
     slug: string
@@ -274,15 +275,17 @@
           -->
           <label class="target">
             <span class="t-quiet">安装到</span>
-            <select
-              class="select"
-              value={target?.id ?? ''}
-              onchange={(event) => (supply.targetId = event.currentTarget.value)}
-            >
-              {#each instances.recent as item (item.id)}
-                <option value={item.id}>{item.name}（{item.gameVersion} · {item.loader}）</option>
-              {/each}
-            </select>
+            <div class="picker">
+              <Select
+                label="安装到"
+                value={target?.id ?? ''}
+                options={instances.recent.map((item) => ({
+                  value: item.id,
+                  label: `${item.name}（${item.gameVersion} · ${item.loader}）`,
+                }))}
+                onchange={(id) => (supply.targetId = id)}
+              />
+            </div>
           </label>
           <span class="t-quiet">
             {judged.length} 个版本中 {fitting.length} 个装得上
@@ -518,8 +521,7 @@
     gap: var(--s2);
   }
 
-  .target .select {
-    width: auto;
+  .target .picker {
     min-width: 200px;
   }
 

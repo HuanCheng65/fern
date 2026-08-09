@@ -8,31 +8,53 @@
  * 但那既会误伤注释，也拦不住 `import type { Hit }` 这种真正的越界。
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const src = join(dirname(fileURLToPath(import.meta.url)), 'src')
 
 function filesIn(dir) {
   return readdirSync(join(src, dir), { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => join(dir, entry.name))
+    .flatMap((entry) =>
+      entry.isDirectory()
+        ? filesIn(join(dir, entry.name))
+        : /\.(svelte|ts)$/.test(entry.name)
+          ? [join(dir, entry.name)]
+          : [],
+    )
 }
 
-const bad = []
-for (const file of filesIn('ui')) {
+const wrongWay = []
+const dangling = []
+
+for (const file of filesIn('.')) {
   const text = readFileSync(join(src, file), 'utf8')
   for (const match of text.matchAll(/from\s+'([^']+)'/g)) {
     const target = match[1]
-    if (target.includes('parts/') || target.startsWith('fern-kit/parts')) {
-      bad.push(`  ${file} → ${target}`)
+
+    if (file.startsWith('ui/') && (target.includes('parts/') || target.startsWith('fern-kit/parts'))) {
+      wrongWay.push(`  ${file} → ${target}`)
+    }
+
+    /*
+     * 相对路径解析不到就报。看着多余（构建当然会报），但 svelte-check 漏过一次：
+     * 组件在层之间搬家之后 `./host.svelte` 变成了死路，check 全绿，直到构建才炸。
+     * 搬家正是这条最容易断的时候，所以在最快的那道关口就拦住。
+     */
+    if (target.startsWith('.')) {
+      const base = resolve(dirname(join(src, file)), target)
+      const found = ['', '.ts', '.js', '.svelte', '.svelte.ts'].some((ext) => existsSync(base + ext))
+      if (!found) dangling.push(`  ${file} → ${target}`)
     }
   }
 }
 
-if (bad.length > 0) {
-  console.error('ui/ 引用了 parts/，方向反了：\n' + bad.join('\n'))
+if (wrongWay.length > 0) {
+  console.error('ui/ 引用了 parts/，方向反了：\n' + wrongWay.join('\n'))
   console.error('\nui/ 只认形状，不认 Fern 的名词。要么把用到的东西降到 ui/，要么这个组件本来就属于 parts/。')
-  process.exit(1)
 }
+if (dangling.length > 0) {
+  console.error('相对路径解析不到：\n' + dangling.join('\n'))
+}
+if (wrongWay.length > 0 || dangling.length > 0) process.exit(1)
