@@ -214,7 +214,7 @@
             <span class="t-quiet">排序</span>
             <Select
               variant="bare"
-              label="排序"
+              aria-label="排序"
               options={SORTS.map((item) => ({ value: item.id, label: item.label }))}
               bind:value={supply.sort}
               onchange={() => supply.refresh()}

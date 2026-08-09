@@ -221,15 +221,12 @@
 
     {#if part === 'save'}
       {#if snapshot.saves.length > 1}
-        <div class="field">
-          <label for="snapshot-save">世界</label>
-          <Select
-            id="snapshot-save"
-            options={snapshot.saves.map((world) => ({ value: world, label: world }))}
-            bind:value={save}
-            onchange={() => (name = copyName(save, snapshot.takenAt))}
-          />
-        </div>
+        <Select
+          label="世界"
+          options={snapshot.saves.map((world) => ({ value: world, label: world }))}
+          bind:value={save}
+          onchange={() => (name = copyName(save, snapshot.takenAt))}
+        />
       {/if}
 
       <div class="field">

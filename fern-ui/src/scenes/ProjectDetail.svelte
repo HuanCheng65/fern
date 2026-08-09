@@ -273,11 +273,15 @@
             值取自实际生效的目标而不是 targetId：没选过时它是空的，绑上去
             下拉框会显示一片空白，而实际上装的是当前实例。
           -->
-          <label class="target">
+          <!--
+            这里不能用 <label> 包着：下拉现在是一颗 <button>，而 <label> 只跟
+            原生表单控件建立关联，包着它等于没关联。名字直接给 aria-label。
+          -->
+          <div class="target">
             <span class="t-quiet">安装到</span>
             <div class="picker">
               <Select
-                label="安装到"
+                aria-label="安装到"
                 value={target?.id ?? ''}
                 options={instances.recent.map((item) => ({
                   value: item.id,
@@ -286,7 +290,7 @@
                 onchange={(id) => (supply.targetId = id)}
               />
             </div>
-          </label>
+          </div>
           <span class="t-quiet">
             {judged.length} 个版本中 {fitting.length} 个装得上
           </span>

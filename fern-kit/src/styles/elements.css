@@ -22,6 +22,19 @@
  * .selectable）——那些是刷在别人已有元素上的一层漆，做成组件反而要多插一层。
  */
 
+/*
+ * 自带盒模型。两端目前都有自己的全局重置，所以这条今天不改变任何东西——但
+ * kit 的规矩是组件要能落在一张没铺过那份样式表的页面上，而 `.input` 是
+ * `width: 100%` 加左右内边距，少了这条就会比容器宽出 24px。
+ *
+ * `:where()` 让它的特异度是 0，和裸 `*` 一样，所以宿主自己的重置照样说了算。
+ */
+:where(.fern) *,
+:where(.fern) *::before,
+:where(.fern) *::after {
+  box-sizing: border-box;
+}
+
 :where(.fern) button,
 :where(.fern) input,
 :where(.fern) select,

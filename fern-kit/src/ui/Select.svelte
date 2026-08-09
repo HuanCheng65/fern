@@ -32,7 +32,9 @@
    * 把焦点还回来。
    */
   import { ChevronDown } from 'lucide-svelte'
-  import { tick } from 'svelte'
+  import { tick, type Snippet } from 'svelte'
+  import Field from './Field.svelte'
+  import type { ControlProps } from './field'
 
   interface Option {
     value: T
@@ -43,8 +45,14 @@
     options: Option[]
     value: T
     onchange?: (value: T) => void
-    /** 没有可见 label 时给一个无障碍名字。 */
+    /**
+     * 标签。给了就自动画出来并绑好 `for`——和 `Input` 走的是同一个 `Field`。
+     * 不想要可见标签时（排序那种）用 `aria-label`。
+     */
     label?: string
+    hint?: string
+    error?: string
+    'aria-label'?: string
     id?: string
     disabled?: boolean
     /**
@@ -59,10 +67,15 @@
     value = $bindable(),
     onchange,
     label,
+    hint,
+    error,
+    'aria-label': ariaLabel,
     id,
     disabled = false,
     variant = 'field',
   }: Props = $props()
+
+  const framed = $derived(Boolean(label || hint || error))
 
   let open = $state(false)
   let active = $state(0)
@@ -73,8 +86,6 @@
   let typedAt = 0
 
   const selected = $derived(options.find((option) => option.value === value))
-  const listId = $derived(`${id ?? 'select'}-listbox`)
-  const optionId = (index: number) => `${listId}-${index}`
 
   /** 视口边上留出的余量，别让菜单贴着窗口边缘。 */
   const EDGE = 8
@@ -215,57 +226,69 @@
   })
 </script>
 
-<button
-  bind:this={trigger}
-  {id}
-  type="button"
-  class="select"
-  class:bare={variant === 'bare'}
-  {disabled}
-  role="combobox"
-  aria-haspopup="listbox"
-  aria-expanded={open}
-  aria-controls={listId}
-  aria-activedescendant={open ? optionId(active) : undefined}
-  aria-label={label}
-  onclick={() => (open ? hide() : void show())}
-  onkeydown={onKeydown}
->
-  <span class="text">{selected?.label ?? ''}</span>
-  <ChevronDown size={variant === 'bare' ? 13 : 15} strokeWidth={1.9} />
-</button>
+{#snippet control(props: Partial<ControlProps>)}
+  {@const controlId = props.id ?? id ?? 'select'}
+  {@const listboxId = `${controlId}-listbox`}
+  <button
+    bind:this={trigger}
+    id={controlId}
+    type="button"
+    class="select"
+    class:bare={variant === 'bare'}
+    {disabled}
+    role="combobox"
+    aria-haspopup="listbox"
+    aria-expanded={open}
+    aria-controls={listboxId}
+    aria-activedescendant={open ? `${listboxId}-${active}` : undefined}
+    aria-describedby={props['aria-describedby']}
+    aria-invalid={props['aria-invalid']}
+    aria-label={framed ? undefined : ariaLabel}
+    onclick={() => (open ? hide() : void show())}
+    onkeydown={onKeydown}
+  >
+    <span class="text">{selected?.label ?? ''}</span>
+    <ChevronDown size={variant === 'bare' ? 13 : 15} strokeWidth={1.9} />
+  </button>
 
-<div
-  bind:this={list}
-  id={listId}
-  class="list"
-  class:shown={open}
-  popover="manual"
-  role="listbox"
-  aria-label={label}
-  tabindex="-1"
->
-  {#each options as option, index (option.value)}
-    <!--
-      键盘不在这一层：焦点始终留在触发按钮上，方向键和回车都由它接
-      （combobox 的托管焦点模式）。所以这里的点击处理没有对应的键盘处理，
-      不是漏了。tabindex 是 -1——选项不该进 Tab 序列，Tab 应该离开整个控件。
-    -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div
-      id={optionId(index)}
-      class="option"
-      role="option"
-      tabindex="-1"
-      aria-selected={option.value === value}
-      data-active={index === active}
-      onclick={() => pick(option.value)}
-      onmousemove={() => (active = index)}
-    >
-      <span class="text">{option.label}</span>
-    </div>
-  {/each}
-</div>
+  <div
+    bind:this={list}
+    id={listboxId}
+    class="list"
+    class:shown={open}
+    popover="manual"
+    role="listbox"
+    aria-label={label ?? ariaLabel}
+    tabindex="-1"
+  >
+    {#each options as option, index (option.value)}
+      <!--
+        键盘不在这一层：焦点始终留在触发按钮上，方向键和回车都由它接
+        （combobox 的托管焦点模式）。所以这里的点击处理没有对应的键盘处理，
+        不是漏了。tabindex 是 -1——选项不该进 Tab 序列，Tab 应该离开整个控件。
+      -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
+        id={`${listboxId}-${index}`}
+        class="option"
+        role="option"
+        tabindex="-1"
+        aria-selected={option.value === value}
+        data-active={index === active}
+        onclick={() => pick(option.value)}
+        onmousemove={() => (active = index)}
+      >
+        <span class="text">{option.label}</span>
+      </div>
+    {/each}
+  </div>
+{/snippet}
+
+{#if framed}
+  <Field {label} {hint} {error} control={control as Snippet<[ControlProps]>} />
+{:else}
+  {@render control({})}
+{/if}
 
 <style>
   .select {
