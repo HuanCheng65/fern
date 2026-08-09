@@ -16,8 +16,8 @@
    * （主线程照样不卡），连 Worker 都没有才回到原来的同步 paint。CPU 路径
    * 保留旧的双画布交叉淡入呼吸，样式变化不做过渡。
    *
-   * 支点规则也在这里落地：每次配色确定就把色板写进 :root 的 --c0..--c4，
-   * 界面其余部分全部向它取色。
+   * 支点规则也在这里落地：每次配色确定就把色板写进 --c0..--c4，界面其余
+   * 部分全部向它取色。
    */
   import { onMount } from 'svelte'
   import {
@@ -33,6 +33,7 @@
     type RGB,
   } from 'fern-kit/biome'
   import { renderBiome, supportsBiomeWorker } from '../lib/biome-client'
+  import { tokenRoot } from '../lib/tokens'
   import { createBackdropGl, layerOf, type BackdropGl, type GlLayer } from '../lib/biome-gl'
 
   interface Props {
@@ -80,9 +81,10 @@
   let blendStart = -Infinity
   let lastKey = ''
 
-  const root = () => document.documentElement
+  // 写在挂着 .fern-app 的那个元素上。写 :root 不生效，原因见 lib/tokens.ts。
+  const root = tokenRoot
 
-  /** 色板写进 :root，界面其余部分全部向它取色。 */
+  /** 色板写进 token 根，界面其余部分全部向它取色。 */
   function setPalette(palette: RGB[]) {
     palette.forEach((c, i) =>
       root().style.setProperty(`--c${i}`, `rgb(${c.map(Math.round).join(',')})`),
@@ -243,7 +245,7 @@
       last = t
       ctx.clearRect(0, 0, cv.width, cv.height)
       if (!particles || paused) return
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--c4').trim()
+      ctx.fillStyle = getComputedStyle(root()).getPropertyValue('--c4').trim()
       for (const q of P) {
         q.y -= q.s * 1000
         if (q.y < -0.02) {
