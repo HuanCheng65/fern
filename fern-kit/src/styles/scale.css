@@ -1,0 +1,81 @@
+/*
+ * 尺度：间距、字号、圆角、时长。
+ *
+ * 全部离散，能选的值少，界面才不会在一百个 13px 和 14px 之间慢慢烂掉。
+ *
+ * 这一层与明暗无关——纸白和墨松用的是同一套节奏，换的只是颜色。所以它和
+ * 表面（surface-*.css）分开：一个界面片段挂上 `.fern` 就有了节奏，再挂一张
+ * 表面才有颜色。
+ *
+ * 作用域是 `.fern` 而不是 `:root`：官网只把界面嵌进页面的一块里，纸白的正文
+ * 不该被卷进启动器的度量。代价是运行时改这些值只能改到带 `.fern` 的那个元素
+ * 上——见 scope.ts。
+ */
+
+.fern {
+  /*
+   * 不自带字体。每个平台的原生字体在自己平台上都是最好看的那个，尤其
+   * macOS 的苹方——打包一套 Latin 字体反而会把中文和西文拆成两种气质。
+   */
+  --sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui,
+    'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  --mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, 'Noto Sans Mono',
+    monospace;
+
+  /* 主题乘数，由宿主在运行时改写。密度只缩间距不缩字号——字号缩了就是另一套设计了。 */
+  --density: 1;
+  --radius: 1;
+  --motion: 1;
+
+  /* 间距，4 的倍数，跟着密度缩放。 */
+  --s1: calc(4px * var(--density));
+  --s2: calc(8px * var(--density));
+  --s3: calc(12px * var(--density));
+  --s4: calc(16px * var(--density));
+  --s5: calc(24px * var(--density));
+  --s6: calc(32px * var(--density));
+  --s7: calc(48px * var(--density));
+  --s8: calc(72px * var(--density));
+
+  /*
+   * 控件高度，两档。
+   *
+   * 它们要成为变量而不是各处写死，是因为**并排的控件必须一样高**：一颗主按钮
+   * 边上站着一颗次按钮和一枚芯片，三个高度就是三条底边，看上去像没对齐的表格。
+   * 谁跟谁并排由布局决定，那时候要能指名道姓地说「跟主按钮一样高」。
+   */
+  --control: 38px;
+  --control-lg: 44px;
+
+  /* 点得到的最小尺寸。见 elements.css 里那条最小点击区的规则。 */
+  --hit: 24px;
+
+  /* 字号。一张挑好的表，别处不许再写数字。 */
+  --t-micro: 11px;
+  --t-small: 12px;
+  --t-body: 14px;
+  --t-lead: 16px;
+  --t-h2: 19px;
+  --t-h3: 16px;
+  --t-cap: 12px;
+  --t-mono: 12px;
+  --t-h1: clamp(26px, 2.4vw, 32px);
+  --t-display: clamp(40px, 5.4vw, 68px);
+
+  /* 圆角，三档。 */
+  --r1: calc(7px * var(--radius));
+  --r2: calc(11px * var(--radius));
+  --r3: calc(18px * var(--radius));
+
+  /*
+   * 动效。转场 200ms 以内是硬指标（PS5 的场景切换速度），所以主曲线前段快、
+   * 尾巴长——快在体感，慢在收尾。--motion 为 0 时全部塌成 1ms。
+   */
+  --t-fast: calc(130ms * var(--motion) + 1ms);
+  --t-base: calc(190ms * var(--motion) + 1ms);
+  --t-slow: calc(340ms * var(--motion) + 1ms);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring: cubic-bezier(0.18, 0.92, 0.24, 1.04);
+}

@@ -1,0 +1,74 @@
+/*
+ * 应用自己的那一半：页面级的重置、窗口度量、以及几条只有桌面应用需要的规则。
+ *
+ * 设计系统（token、表面、元件类）全部在 fern-kit/styles 里，官网引的是同一份。
+ * 这里只放**官网不需要、也不该有**的东西——铺满一整个窗口、禁掉文本拖选、
+ * 窗口失焦就停掉动画。
+ */
+
+@import 'fern-kit/styles';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  /*
+   * 窗口栅格。顶栏 48px（4px 网格的 12 格）：40 太挤，56 开始有网站页头的
+   * 味道。它同时是拖拽区，48 也够手指抓。
+   *
+   * 这几个是**窗口**的度量，不是设计系统的尺度——官网没有窗口，所以它们留在
+   * 这里，不进 kit。
+   */
+  --top: 48px;
+  --pad-x: clamp(24px, 4.4vw, 60px);
+  --pad-b: clamp(24px, 3.4vh, 44px);
+  /* 自绘窗口按钮占掉的右上角宽度。有系统标题栏的平台上是 0。 */
+  --frame-controls: 0px;
+
+  font-family: var(--sans);
+  font-size: var(--t-body);
+  line-height: 1.5;
+  color: var(--ink);
+  /* 背景层铺开之前的那一层底。用墨松而不是一个中性的近黑：第一帧也是品牌。 */
+  background: var(--pine);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* 桌面应用不是网页：文本不该能被随手拖蓝一片。可选中的地方单独开。 */
+  user-select: none;
+  cursor: default;
+}
+
+body.frameless {
+  --frame-controls: 138px;
+}
+
+/*
+ * 性能红线：窗口失焦立刻停掉所有动态背景和特效（见 docs/UI_DESIGN.md 八）。
+ * 用一个 class 统一关，比让每个组件各自监听可靠。
+ */
+body.paused *,
+body.paused *::before,
+body.paused *::after {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -33,7 +33,7 @@
     type RGB,
   } from 'fern-kit/biome'
   import { renderBiome, supportsBiomeWorker } from '../lib/biome-client'
-  import { tokenRoot } from '../lib/tokens'
+  import { scopeRoot } from 'fern-kit/scope'
   import { createBackdropGl, layerOf, type BackdropGl, type GlLayer } from '../lib/biome-gl'
 
   interface Props {
@@ -81,8 +81,8 @@
   let blendStart = -Infinity
   let lastKey = ''
 
-  // 写在挂着 .fern-app 的那个元素上。写 :root 不生效，原因见 lib/tokens.ts。
-  const root = tokenRoot
+  // 写在挂着 .fern-dark 的那个元素上。写 :root 不生效，原因见 fern-kit/src/scope.ts。
+  const root = scopeRoot
 
   /** 色板写进 token 根，界面其余部分全部向它取色。 */
   function setPalette(palette: RGB[]) {

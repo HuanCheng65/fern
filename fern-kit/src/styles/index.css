@@ -1,0 +1,19 @@
+/*
+ * Fern 设计系统。四层，从下往上：
+ *
+ *   brand      品牌四色。唯一写死颜色的地方，挂在 :root，不给任何东西上色
+ *   scale      间距、字号、圆角、时长。与明暗无关
+ *   surface    颜色。`.fern-dark` 是深色那张；换一张表面就换一身皮
+ *   elements   按钮、输入框、字号类。只用语义名，两张表面下都成立
+ *
+ * 挂法：`class="fern fern-dark"`。`.fern` 说「这一块用 Fern 的设计系统」，
+ * 表面类说「用哪张皮」。产品把它俩挂在 body 上，等于挂在根上；官网只挂在
+ * 嵌进去的那几块上，于是纸白的页面不会被染黑，也不用在构建期改写选择器。
+ *
+ * 运行时改这些变量，只能改到挂着这两个类的那个元素上——见 scope.ts。
+ */
+
+@import './brand.css';
+@import './scale.css';
+@import './surface-dark.css';
+@import './elements.css';

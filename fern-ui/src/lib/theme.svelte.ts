@@ -8,7 +8,7 @@
  * 存在数据目录的 settings.json 里（见 lib/persist.ts），身份和网络偏好各存
  * 各的——主题码是拿来分享的，不该带上用户名。
  *
- * CSS 变量写在带 `.fern-app` 的那个元素上（见 lib/tokens.ts）。背景层每隔
+ * CSS 变量写在设计系统的作用域元素上（见 fern-kit/src/scope.ts）。背景层每隔
  * 几秒会把算出来的色板刷进同一个元素（那是支点规则，界面向背景学色彩），
  * 两边写的是不同的变量名——它交色板（--c*），这里交主题层（--accent 等，
  * 默认转发给色板）。所以玩家锁定强调色只要把转发那几行改掉，不必去动背景层。
@@ -16,7 +16,7 @@
 
 import { host } from 'fern-kit/host'
 import { patch, snapshot } from './persist'
-import { tokenRoot } from './tokens'
+import { scopeRoot } from 'fern-kit/scope'
 
 export type AccentMode = 'biome' | 'locked'
 export type Density = 'compact' | 'default' | 'roomy'
@@ -171,7 +171,7 @@ class ThemeStore {
   /** 把主题写成 CSS 变量。整个界面只从变量取值，所以改动是立刻全局的。 */
   apply() {
     const theme = this.#theme
-    const style = tokenRoot().style
+    const style = scopeRoot().style
     style.setProperty('--density', String(DENSITY_SCALE[theme.density]))
     style.setProperty('--radius', String(RADIUS_SCALE[theme.radius]))
     style.setProperty('--motion', String(MOTION_SCALE[theme.motion]))

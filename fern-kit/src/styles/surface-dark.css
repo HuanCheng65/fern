@@ -1,0 +1,83 @@
+/*
+ * 深色表面：墨松底、浅色字，颜色向背景学。启动器全程用它，官网用在那些
+ * 「把真界面拆出来摆在纸上」的片段里。
+ *
+ * 一张表面回答的是同一组问题——压在这上面的字是什么颜色、发丝线多深、
+ * 浮层长什么样。组件只认这些语义名，不认具体的色值，所以换一张表面就换
+ * 一身皮，组件一行都不用改。
+ *
+ * 挂法：`class="fern fern-dark"`。`.fern` 给节奏，这一层给颜色。
+ */
+
+.fern-dark {
+  color-scheme: dark;
+
+  /*
+   * 由背景层注入（fern-ui/src/components/Backdrop.svelte）。这里的值只是第一帧
+   * 画出来之前的样子。--c4 是强调色，--on-accent 是压在它上面的文字色。
+   *
+   * 注入必须落在挂着 `.fern-dark` 的那个元素上，写 `document.documentElement`
+   * 不生效——这几行是直接长在这个元素上的声明，继承来的值压不过它。见 scope.ts。
+   */
+  --c0: #0a1016;
+  --c1: #12283a;
+  --c2: #1e5468;
+  --c3: #3e9aa4;
+  --c4: #a8dcd4;
+  --on-accent: #0a0f12;
+  --accent-glow: rgba(168, 220, 212, 0.3);
+
+  /*
+   * 强调色。默认全部转发给背景交出的色板——出厂时启动器向背景学色彩。
+   * 玩家锁定颜色后，宿主会在同一个元素上覆盖这三行。
+   */
+  --accent: var(--c4);
+  --accent-ink: var(--on-accent);
+  --accent-soft: var(--accent-glow);
+
+  /* 文字。四档就够：正文、次要、说明、几乎消失。 */
+  --ink: #f3f6f6;
+  --ink-2: rgba(243, 246, 246, 0.68);
+  --ink-3: rgba(243, 246, 246, 0.42);
+  --ink-4: rgba(243, 246, 246, 0.22);
+  --danger: #eb9c88;
+
+  /* 压在背景上的浅色叠加，用于 hover 和选中。不描边。 */
+  --tint-1: rgba(255, 255, 255, 0.055);
+  --tint-2: rgba(255, 255, 255, 0.1);
+  --tint-3: rgba(255, 255, 255, 0.16);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --hairline-2: rgba(255, 255, 255, 0.055);
+
+  /* 输入框的凹面。比 tint 更沉一点，表示「这里可以写字」。 */
+  --well: rgba(255, 255, 255, 0.05);
+  --well-2: rgba(255, 255, 255, 0.075);
+  --well-3: rgba(255, 255, 255, 0.08);
+
+  /* 出事了才出现的那一块。给足对比度，别做成灰色小字。 */
+  --danger-bg: rgba(120, 48, 38, 0.32);
+  --danger-line: rgba(235, 156, 136, 0.34);
+  --danger-ink: #f6c4b6;
+
+  /* 浮层。整个界面只有这一种「有实体」的表面。 */
+  --panel: rgba(11, 14, 16, 0.82);
+  --panel-line: rgba(255, 255, 255, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.32), 0 28px 70px rgba(0, 0, 0, 0.46);
+
+  /*
+   * 顶栏浮出来的那一层。比浮层薄得多——顶栏不是一块浮起来的板子，它只需要
+   * 刚好让文字在滚过去的内容上仍然读得出来。用 --panel 的话，一滚动整条就
+   * 变成一根深色横杠，那正是「桌面应用的顶栏该像菜单栏」要避开的样子。
+   */
+  --top-glass: color-mix(in srgb, var(--c0) 34%, transparent);
+
+  /* 联机工具沿用同一套玻璃和节奏，只保留 Pearl 组件需要的语义别名。 */
+  --glass: color-mix(in srgb, var(--c0) 46%, transparent);
+  --glass-2: color-mix(in srgb, var(--c0) 72%, transparent);
+  --line: var(--hairline);
+  --line-2: var(--hairline-2);
+  --shadow-1: var(--shadow);
+  --shadow-2: var(--shadow-lg);
+  --soft: var(--t-fast);
+}

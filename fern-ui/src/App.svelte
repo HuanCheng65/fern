@@ -41,7 +41,7 @@
   import { supply } from './lib/supply.svelte'
   import { theme } from './lib/theme.svelte'
   import { session } from './lib/pearl-session.svelte'
-  import './styles/tokens.css'
+  import './styles/app.css'
 
   let setupOpen = $state(false)
   /** 设置在磁盘上，读完才知道该不该出向导。读完之前只铺背景。 */

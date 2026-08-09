@@ -1,60 +1,31 @@
 /*
- * Token 体系与基础样式（见 docs/UI_DESIGN.md 六、九）。
+ * 元件：按钮、输入框、字号类，以及所有控件都适用的那几条基础规则。
  *
- * 三类东西住在这里：
+ * 全部作用在 `.fern` 之下，所以官网引它也只影响嵌进去的那一块，纸白的正文
+ * 不受影响。这正是把它从产品里搬出来的理由——kit 的组件从此可以用 `.btn`，
+ * 不必每搬一个组件就手抄一遍描边按钮和滚动条。
  *
- *   1. 尺度   间距、字号、圆角、时长。全部离散，能选的值少，界面才不会
- *             在一百个 13px 和 14px 之间慢慢烂掉。
- *   2. 主题   密度、圆角、动效、强调色。由 lib/theme.svelte.ts 写在 body 上，
- *             覆盖这里的默认值——玩家能动的就是这几个乘数。
- *   3. 元件   按钮、输入框、列表行、字号类。做成全局 class 而不是组件，
- *             因为 Svelte 的样式是组件私有的，共用一套 class 是让五个场景
- *             长得一样的最短路径。
+ * 作用域写成 `:where(.fern)` 而不是 `.fern` 是**必须的**：`:where()` 不贡献
+ * 特异度，于是 `:where(.fern) .btn` 仍然是 (0,1,0)，和它待在产品里、没有作用域
+ * 的时候逐位相同。写成 `.fern .btn` 就成了 (0,2,0)，和 Svelte 组件里的局部覆盖
+ * 打平——谁赢取决于 CSS 的打包顺序，样式会随机地掉。
+ *
+ * 规矩：这里只准出现语义名（--ink / --tint-1 / --accent…），不准出现十六进制。
+ * 颜色由表面（surface-*.css）回答，元件才能在深色和纸白上都成立。
  *
  * 层级只有两级：内容直接坐在背景上（靠留白和发丝线分组），只有浮层
  * （命令面板、对话框）才有玻璃、描边和影子。界面本身不画花纹。
+ *
+ * 待办：`.btn` / `.field` / `.input` / `.select` / `.alert` 正在变成 ui/ 下的
+ * 组件——有变体、有状态、有结构的东西该由类型管，写错 `btn--ghsot` 不该是
+ * 静默失效。迁完就把这几段删掉，只留下真正的修饰符（.t-* / .scroll /
+ * .selectable）——那些是刷在别人已有元素上的一层漆，做成组件反而要多插一层。
  */
 
-@import 'fern-kit/tokens';
-
-/* 变量在 fern-kit 里，挂在 .fern-app 上（body 带着这个类）。这里是应用自己的
-   那一半：基础样式和元件类——官网不需要它们，所以它们不能跟着变量一起走。 */
-:root {
-  color-scheme: dark;
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#app {
-  margin: 0;
-  height: 100%;
-  overflow: hidden;
-}
-
-body {
-  font-family: var(--sans);
-  font-size: var(--t-body);
-  line-height: 1.5;
-  color: var(--ink);
-  /* 背景层铺开之前的那一层底。用墨松而不是一个中性的近黑：第一帧也是品牌。 */
-  background: var(--pine);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  /* 桌面应用不是网页：文本不该能被随手拖蓝一片。可选中的地方单独开。 */
-  user-select: none;
-  cursor: default;
-}
-
-button,
-input,
-select,
-textarea {
+:where(.fern) button,
+:where(.fern) input,
+:where(.fern) select,
+:where(.fern) textarea {
   font: inherit;
   color: inherit;
   background: none;
@@ -81,15 +52,15 @@ textarea {
  * 组件里 `position: absolute` 的按钮（顶栏的返回箭头、卡片上的启动键）作用域
  * 类选择器权重更高，不会被这里的 relative 顶掉。
  */
-button,
-summary,
-[role='button'] {
+:where(.fern) button,
+:where(.fern) summary,
+:where(.fern) [role='button'] {
   position: relative;
 }
 
-button::after,
-summary::after,
-[role='button']::after {
+:where(.fern) button::after,
+:where(.fern) summary::after,
+:where(.fern) [role='button']::after {
   content: '';
   position: absolute;
   top: 50%;
@@ -101,25 +72,21 @@ summary::after,
   transform: translate(-50%, -50%);
 }
 
-:focus-visible {
+:where(.fern) :focus-visible {
   outline: 1.5px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;
 }
 
-body.frameless {
-  --frame-controls: 138px;
-}
-
 /* 可以选中的东西：路径、房间码这类要复制出去的。 */
-.selectable {
+:where(.fern) .selectable {
   user-select: text;
   cursor: text;
 }
 
 /* ─────────────────────────── 字号类 ─────────────────────────── */
 
-.t-display {
+:where(.fern) .t-display {
   margin: 0;
   font-size: var(--t-display);
   font-weight: 620;
@@ -128,7 +95,7 @@ body.frameless {
   text-wrap: balance;
 }
 
-.t-h1 {
+:where(.fern) .t-h1 {
   margin: 0;
   font-size: var(--t-h1);
   font-weight: 600;
@@ -136,7 +103,7 @@ body.frameless {
   letter-spacing: -0.024em;
 }
 
-.t-h2 {
+:where(.fern) .t-h2 {
   margin: 0;
   font-size: var(--t-h2);
   font-weight: 600;
@@ -144,13 +111,13 @@ body.frameless {
   letter-spacing: -0.014em;
 }
 
-.t-body {
+:where(.fern) .t-body {
   font-size: var(--t-body);
   line-height: 1.6;
 }
 
 /* 说明文字。写之前先问一句：删掉它界面会变得不能用吗？不会就删掉。 */
-.t-quiet {
+:where(.fern) .t-quiet {
   font-size: var(--t-small);
   line-height: 1.6;
   color: var(--ink-3);
@@ -160,22 +127,51 @@ body.frameless {
  * 等宽只留给机器数据：版本号、字节数、路径、快捷键、PID。
  * 拿它当装饰用，界面就会开始有仪表盘味。
  */
-.t-mono {
+:where(.fern) .t-mono {
   font-family: var(--mono);
   font-size: var(--t-small);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
 
-.t-micro {
+:where(.fern) .t-micro {
   font-size: var(--t-micro);
   line-height: 1.5;
   color: var(--ink-3);
 }
 
-/* ─────────────────────────── 按钮 ─────────────────────────── */
+/* ─────────────────────────── 滚动条 ─────────────────────────── */
 
-.btn {
+/*
+ * 留在 class 而不是做成组件：它必须落在**本来就在滚的那个元素**上——布局
+ * 自己的容器、grid 的某个子项。包一层 <Scroll> 就把 flex/grid 关系打断了。
+ */
+:where(.fern) .scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tint-3) transparent;
+  overscroll-behavior: contain;
+}
+
+:where(.fern) .scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+:where(.fern) .scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background: var(--tint-2);
+  background-clip: content-box;
+}
+
+:where(.fern) .scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--tint-3);
+  background-clip: content-box;
+}
+
+/* ─────────────────── 以下待迁成组件，见文件抬头 ─────────────────── */
+
+:where(.fern) .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -194,21 +190,21 @@ body.frameless {
     transform var(--t-fast) var(--ease);
 }
 
-.btn:hover {
+:where(.fern) .btn:hover {
   color: var(--ink);
   background: var(--tint-1);
 }
 
-.btn:active {
+:where(.fern) .btn:active {
   transform: scale(0.985);
 }
 
-.btn:disabled {
+:where(.fern) .btn:disabled {
   opacity: 0.4;
   pointer-events: none;
 }
 
-.btn--primary {
+:where(.fern) .btn--primary {
   min-height: var(--control-lg);
   padding: 0 var(--s5);
   color: var(--accent-ink);
@@ -217,22 +213,22 @@ body.frameless {
   box-shadow: 0 6px 22px -8px var(--accent-soft);
 }
 
-.btn--primary:hover {
+:where(.fern) .btn--primary:hover {
   color: var(--accent-ink);
   background: var(--accent);
   filter: brightness(1.06);
 }
 
-.btn--ghost {
+:where(.fern) .btn--ghost {
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
-.btn--ghost:hover {
+:where(.fern) .btn--ghost:hover {
   box-shadow: inset 0 0 0 1px var(--tint-3);
 }
 
 /* 只有一个图标的按钮：顶栏、关闭、加号。 */
-.btn--icon {
+:where(.fern) .btn--icon {
   min-height: 0;
   width: 30px;
   height: 30px;
@@ -241,43 +237,41 @@ body.frameless {
   border-radius: var(--r1);
 }
 
-.btn--icon:hover {
+:where(.fern) .btn--icon:hover {
   color: var(--ink);
   background: var(--tint-2);
 }
 
 /* 文字动作。没有背景，只有一个词和一个箭头。 */
-.btn--link {
+:where(.fern) .btn--link {
   min-height: 0;
   padding: 0;
   font-size: var(--t-small);
   color: var(--accent);
 }
 
-.btn--link:hover {
+:where(.fern) .btn--link:hover {
   background: none;
   color: var(--ink);
 }
 
-/* ─────────────────────────── 表单 ─────────────────────────── */
-
-.field {
+:where(.fern) .field {
   display: grid;
   gap: var(--s2);
 }
 
-.field > label {
+:where(.fern) .field > label {
   font-size: var(--t-small);
   color: var(--ink-3);
 }
 
-.input,
-.select {
+:where(.fern) .input,
+:where(.fern) .select {
   width: 100%;
   min-height: 40px;
   padding: 0 var(--s3);
   border-radius: var(--r1);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--well);
   box-shadow: inset 0 0 0 1px var(--hairline);
   color: var(--ink);
   font-size: var(--t-body);
@@ -288,86 +282,42 @@ body.frameless {
     background var(--t-fast) var(--ease);
 }
 
-.select {
+:where(.fern) .select {
   cursor: pointer;
   appearance: none;
   padding-right: var(--s6);
 }
 
-.input::placeholder {
+:where(.fern) .input::placeholder {
   color: var(--ink-4);
 }
 
-.input:hover,
-.select:hover {
-  background: rgba(255, 255, 255, 0.075);
+:where(.fern) .input:hover,
+:where(.fern) .select:hover {
+  background: var(--well-2);
 }
 
-.input:focus,
-.select:focus {
-  background: rgba(255, 255, 255, 0.08);
+:where(.fern) .input:focus,
+:where(.fern) .select:focus {
+  background: var(--well-3);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
-.select option {
+/* 下拉展开的那一层由系统画，跟不了表面，只能自己给一组能读的颜色。 */
+:where(.fern) .select option {
   color: #10171b;
   background: #dfe6e6;
 }
 
 /* 错误。真的出了事才出现，所以给它足够的对比度，别做成灰色小字。 */
-.alert {
+:where(.fern) .alert {
   padding: var(--s3) var(--s4);
   border-radius: var(--r1);
-  background: rgba(120, 48, 38, 0.32);
-  box-shadow: inset 0 0 0 1px rgba(235, 156, 136, 0.34);
-  color: #f6c4b6;
+  background: var(--danger-bg);
+  box-shadow: inset 0 0 0 1px var(--danger-line);
+  color: var(--danger-ink);
   font-family: var(--mono);
   font-size: var(--t-small);
   line-height: 1.55;
   user-select: text;
-}
-
-/* ─────────────────────────── 滚动条 ─────────────────────────── */
-
-.scroll {
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--tint-3) transparent;
-  overscroll-behavior: contain;
-}
-
-.scroll::-webkit-scrollbar {
-  width: 8px;
-}
-
-.scroll::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 99px;
-  background: var(--tint-2);
-  background-clip: content-box;
-}
-
-.scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--tint-3);
-  background-clip: content-box;
-}
-
-/*
- * 性能红线：窗口失焦立刻停掉所有动态背景和特效（见 docs/UI_DESIGN.md 八）。
- * 用一个 class 统一关，比让每个组件各自监听可靠。
- */
-body.paused *,
-body.paused *::before,
-body.paused *::after {
-  animation-play-state: paused !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
 }
