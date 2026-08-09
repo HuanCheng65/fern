@@ -4,6 +4,7 @@
     .github/release.py 0.2.0
     .github/release.py 0.2.0-beta.1
     .github/release.py 0.2.0 --dry-run
+    .github/release.py 0.2.0 --yes        # 不询问
 
 一条命令做完这些，因为手做要碰五个地方，而其中一个漏了不会有任何提示：
 
@@ -14,8 +15,9 @@
 5. tag `v<version>`（漏了或打错，CI 的 plan 会停）
 
 只碰上面这几个文件，也只提交这几个文件。仓库里其他没提交的东西——在写的官网、
-还没定稿的文档——既不会挡住发版，也不会被带进 `chore(release)` 提交。它们不在
-这次的标签里，所以只会被列出来提醒一句。
+还没定稿的文档——既不会挡住发版，也不会被带进 `chore(release)` 提交。但它们同样
+不在这次的标签里，所以会被列出来并等一次明确确认：漏掉一个本该发出去的文件，
+在流水线跑完之前不会有任何症状。非交互场景用 `--yes`。
 
 **为什么不用 cargo-release。** 它是这件事的标准工具，但在这个仓库里要为三处
 布局写自定义替换规则才能用：产品版本在一个嵌套的、`publish = false` 的独立
@@ -79,8 +81,8 @@ def changed(paths: list[str]) -> list[str]:
     return [line[3:] for line in status.splitlines() if line.strip()]
 
 
-def check_scope() -> None:
-    """版本号文件必须干净，其余改动只报告，不阻拦。"""
+def check_scope() -> list[str]:
+    """版本号文件必须干净。返回不属于本次发布的那些改动。"""
     dirty = changed(VERSION_FILES)
     if dirty:
         listed = "\n".join(f"  {path}" for path in dirty)
@@ -89,17 +91,37 @@ def check_scope() -> None:
             f"{listed}\n"
             "请先提交或撤销这些改动。"
         )
+    return sorted(set(changed(["."])) - set(RELEASE_FILES))
 
-    everything = set(changed(["."]))
-    outside = sorted(everything - set(RELEASE_FILES))
-    if outside:
-        shown = outside[:8]
-        listed = "\n".join(f"  {path}" for path in shown)
-        more = f"\n  （另有 {len(outside) - len(shown)} 项）" if len(outside) > len(shown) else ""
-        print(
-            f"以下改动不属于本次发布，不会被提交，也不会进入标签：\n{listed}{more}\n",
-            flush=True,  # 出错信息走 stderr，不刷一次的话两边的顺序会颠倒。
-        )
+
+def confirm_scope(outside: list[str], assume_yes: bool) -> None:
+    """把不进本次发布的改动列出来，等一次明确的确认。
+
+    这里要的是「知情」而不是「许可」：漏提交一个文件，标签指向的就不是你以为的
+    那份代码，而这件事在流水线跑完之前不会有任何症状。所以默认是不继续。
+    """
+    if not outside:
+        return
+
+    shown = outside[:20]
+    listed = "\n".join(f"  {path}" for path in shown)
+    more = f"\n  （另有 {len(outside) - len(shown)} 项）" if len(outside) > len(shown) else ""
+    # 出错信息走 stderr，不刷一次的话输出被重定向时两边的顺序会颠倒。
+    print(f"以下改动不属于本次发布，不会被提交，也不会进入标签：\n{listed}{more}", flush=True)
+
+    if assume_yes:
+        print("已跳过确认。\n")
+        return
+    if not sys.stdin.isatty():
+        fail("需要确认，但当前不是交互式终端。确认无误后加上 --yes。")
+
+    try:
+        answer = input("确认这些改动不需要进入本次发布？[y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer not in ("y", "yes"):
+        fail("已取消。")
+    print()
 
 
 def current_version() -> str:
@@ -172,19 +194,28 @@ def close_changelog(version: str, today: str) -> None:
 
 
 def main() -> int:
+    # 这个脚本的输出会和 git 自己的输出、以及 stderr 上的错误交替出现。默认的块
+    # 缓冲只在终端里看着是对的，一重定向就乱序。
+    sys.stdout.reconfigure(line_buffering=True)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("version", help="版本号，例如 0.2.0 或 0.2.0-beta.1")
     parser.add_argument(
         "--dry-run", action="store_true", help="只修改文件，不提交，也不创建标签"
     )
     parser.add_argument("--date", default=None, help="更新日志中的发布日期，默认为今天")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="不询问，直接确认「其余改动不进入本次发布」",
+    )
     args = parser.parse_args()
 
     version = args.version.removeprefix("v")
     if not SEMVER.match(version):
         fail(f"{version} 不是合法的 SemVer 版本号。")
 
-    check_scope()
+    outside = check_scope()
 
     now = current_version()
     if version == now:
@@ -195,6 +226,9 @@ def main() -> int:
             f"标签 {tag} 已存在。版本号不重复使用：产物路径中带版本号，"
             "已发布的内容不可覆盖。"
         )
+
+    # 确认放在所有能提前失败的检查之后：先问一遍再报「标签已存在」是在浪费人的时间。
+    confirm_scope(outside, assume_yes=args.yes or args.dry_run)
 
     today = args.date or datetime.date.today().isoformat()
     close_changelog(version, today)
