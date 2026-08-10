@@ -10,9 +10,11 @@
    * 第一步只做一件事：说清楚三种方式各自是什么。这一步选错的代价不小——离线
    * 账户进不了正版服务器，而这句话要在选之前说，不是在失败之后说。
    */
-  import { ArrowLeft } from 'lucide-svelte'
+  import { invoke } from '@tauri-apps/api/core'
+  import { ArrowLeft, ExternalLink } from 'lucide-svelte'
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { notices } from '../lib/notices.svelte'
+  import { offlineLoginAllowed } from '../lib/region'
   import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
 
@@ -31,11 +33,20 @@
   let password = $state('')
 
   const OFFLINE_NAME = /^[A-Za-z0-9_]{3,16}$/
+  /** 官方商店。离线那一步要给得出一条通往正版的路。 */
+  const BUY_URL = 'https://www.minecraft.net/store/minecraft-java-bedrock-edition-pc'
 
+  /** 交给系统浏览器。后端只放行 https。 */
+  const openExternal = (url: string) => void invoke('open_external', { url })
+
+  // 离线登录按地区提供，和首次启动向导用的是同一条判断（见 lib/region.ts）。
+  // 关掉的只是这个入口，名册里已有的离线账户照常能用。
   const KINDS: { kind: AccountKind; title: string; note: string }[] = [
     { kind: 'microsoft', title: '微软账户', note: '正版登录，支持联机、皮肤与成就' },
     { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 兼容皮肤站' },
-    { kind: 'offline', title: '离线模式', note: '仅可游玩本地世界与离线服务器' },
+    ...(offlineLoginAllowed()
+      ? [{ kind: 'offline' as const, title: '离线模式', note: '仅可游玩本地世界与离线服务器' }]
+      : []),
   ]
 
   /** 加完之后新出现的那一个就是它。名册按添加顺序排，最新的在最后。 */
@@ -115,6 +126,9 @@
         <div class="submit">
           <Button variant="primary" type="submit" disabled={!OFFLINE_NAME.test(offlineName.trim())}>
             添加
+          </Button>
+          <Button variant="link" onclick={() => openExternal(BUY_URL)}>
+            购买正版 Minecraft<ExternalLink size={13} strokeWidth={1.8} />
           </Button>
         </div>
       </form>
@@ -244,6 +258,9 @@
   }
 
   .fields .submit {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
     justify-self: start;
   }
 

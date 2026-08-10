@@ -13,6 +13,7 @@
  */
 
 import { emptyGameDefaults, patch, snapshot, type GameDefaults } from './persist'
+import { looksLikeChina } from './region'
 
 export type DownloadSource = 'official' | 'bmclapi'
 
@@ -24,13 +25,7 @@ export type DownloadSource = 'official' | 'bmclapi'
  * 23ms」诚实。
  */
 export function suggestedSource(): DownloadSource {
-  try {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''
-    const cn = /Shanghai|Chongqing|Harbin|Urumqi|Macau/i.test(zone)
-    return cn || navigator.language.toLowerCase().startsWith('zh-cn') ? 'bmclapi' : 'official'
-  } catch {
-    return 'official'
-  }
+  return looksLikeChina() ? 'bmclapi' : 'official'
 }
 
 class PrefsStore {

@@ -13,13 +13,14 @@
    */
   import { invoke } from '@tauri-apps/api/core'
   import { fly } from 'svelte/transition'
-  import { ArrowLeft, ArrowRight, Plus } from 'lucide-svelte'
+  import { ArrowLeft, ArrowRight, ExternalLink, Plus } from 'lucide-svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import Mark from 'fern-kit/ui/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource, type DownloadSource } from '../lib/prefs.svelte'
-  import { accounts, type AccountKind } from '../lib/accounts.svelte'
-  import { inTauri } from '../lib/instances.svelte'
+  import { accounts } from '../lib/accounts.svelte'
+  import { offlineLoginAllowed } from '../lib/region'
+  import { inTauri, instances } from '../lib/instances.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
   import RadioGroup from 'fern-kit/ui/RadioGroup.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
@@ -36,10 +37,32 @@
   let index = $state(0)
   let direction = $state(1)
 
-  // 只在这一屏里活着：账户类型不再是一个偏好，选它只是决定这一步问什么。
-  let accountKind = $state<AccountKind>('offline')
+  /**
+   * 登录这一步现在在哪一屏。
+   *
+   * 三种方式不是平级的三个选项：正版登录是绝大多数人该走的那一条，另外两条
+   * 各有各的前提。摆成一组竖排单选，等于让每个人都先做一道自己没有依据的
+   * 选择题；而真正的登录还被推到设置里，于是选完「微软账户」的人反而什么都
+   * 没登上。所以这一步默认就是正版登录本身——能在这里登完，另外两条留成
+   * 两个入口，进去是各自的一屏。
+   */
+  type LoginView = 'microsoft' | 'authlib' | 'offline'
+  let loginView = $state<LoginView>('microsoft')
+  /** 离线登录按地区提供，见 lib/region.ts。 */
+  const offlineAllowed = offlineLoginAllowed()
+
   let playerName = $state('')
   let nameError = $state('')
+  let apiRoot = $state('https://littleskin.cn/api/yggdrasil')
+  let username = $state('')
+  let password = $state('')
+
+  const OFFLINE_NAME = /^[A-Za-z0-9_]{3,16}$/
+  /** 官方商店。离线那一屏要给得出一条通往正版的路。 */
+  const BUY_URL = 'https://www.minecraft.net/store/minecraft-java-bedrock-edition-pc'
+
+  /** 交给系统浏览器。后端只放行 https。 */
+  const openExternal = (url: string) => void invoke('open_external', { url })
 
   let source = $state<DownloadSource>(suggestedSource())
   const recommended = suggestedSource()
@@ -102,19 +125,38 @@
     }
   }
 
+  function pickLogin(next: LoginView) {
+    loginView = next
+    accounts.error = ''
+    nameError = ''
+  }
+
   /**
-   * 离线那一支在这里就把账户建出来；另外两支只往下走。
+   * 登录成功之后往下走。
    *
-   * 登录要填三个框、要联网、还可能失败，那不该是第一印象的一部分——所以向导
-   * 只问「先用哪种」，真正的登录留给设置页那份名单。
+   * 要先确认人还站在这一步：正版登录要等用户去浏览器里输码，这中间他完全可能
+   * 按了「稍后登录」自己往前走了，那时候再推一步就是把他从下一屏挤走。
    */
-  async function submitAccount() {
-    if (accountKind !== 'offline') {
-      go(1)
-      return
-    }
+  function advanceAfterLogin() {
+    if (step === 'account') go(1)
+  }
+
+  async function loginMicrosoft() {
+    await accounts.loginMicrosoft()
+    if (!accounts.error) advanceAfterLogin()
+  }
+
+  async function loginYggdrasil() {
+    if (!apiRoot.trim() || !username.trim() || !password) return
+    await accounts.loginYggdrasil(apiRoot.trim(), username.trim(), password)
+    // 拿到令牌就把密码从内存里去掉，它已经没有用处了。
+    password = ''
+    if (!accounts.error) advanceAfterLogin()
+  }
+
+  async function addOffline() {
     const value = playerName.trim()
-    if (!/^[A-Za-z0-9_]{3,16}$/.test(value)) {
+    if (!OFFLINE_NAME.test(value)) {
       nameError = '3–16 位字母、数字或下划线'
       return
     }
@@ -123,7 +165,7 @@
       nameError = accounts.error
       return
     }
-    go(1)
+    advanceAfterLogin()
   }
 
   function submitSource() {
@@ -156,12 +198,6 @@
     prefs.finishSetup()
     ondone(create)
   }
-
-  const ACCOUNTS: { kind: AccountKind; title: string; note: string; ready: boolean }[] = [
-    { kind: 'microsoft', title: '微软账户', note: '正版登录，支持联机、皮肤与成就', ready: true },
-    { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 兼容皮肤站', ready: true },
-    { kind: 'offline', title: '离线模式', note: '仅可游玩本地世界与离线服务器', ready: true },
-  ]
 </script>
 
 <section class="setup" data-tauri-drag-region="deep">
@@ -182,39 +218,108 @@
           <Button variant="primary" onclick={() => go(1)}>开始<ArrowRight size={15} /></Button>
         </div>
       {:else if step === 'account'}
-        <h1 class="title">你是谁？</h1>
-        <p class="lede">选择一种登录方式。之后随时可以更换或添加。</p>
+        {#if loginView === 'microsoft'}
+          <h1 class="title">你是谁？</h1>
+          <p class="lede">
+            使用微软账户登录，即可联机、使用正版皮肤与成就。密码只在微软的页面中输入，不经过 Fern。
+          </p>
 
-        <div class="options">
-        <RadioGroup
-          aria-label="登录方式"
-          value={accountKind}
-          onchange={(next) => {
-            accountKind = next
-            nameError = ''
-          }}
-          options={ACCOUNTS.map((item) => ({
-            value: item.kind,
-            label: item.title,
-            note: item.note,
-            disabled: !item.ready,
-            badge: item.ready ? undefined : '尚未接入',
-          }))}
-        />
-        </div>
+          {#if accounts.deviceCode}
+            {@const code = accounts.deviceCode}
+            <!-- 登录码是这一刻唯一要做的事，所以给它整行和最大的字号。 -->
+            <div class="device">
+              <span class="device-label">在浏览器中打开下面的地址，输入这串代码</span>
+              <p class="code t-mono selectable">{code.userCode}</p>
+              <p class="site t-mono selectable">{code.verificationUri}</p>
+              <div class="device-action">
+                <Button variant="ghost" onclick={() => openExternal(code.verificationUri)}>
+                  <ExternalLink size={14} strokeWidth={1.8} />打开验证页面
+                </Button>
+              </div>
+            </div>
+          {/if}
 
-        <!-- 向导只问「用哪种」，登录本身留到设置页：一屏一件事，而登录要填
-             三个框、要联网、还可能失败，那不该是第一印象的一部分。 -->
-        {#if accountKind === 'authlib'}
-          <p class="note">继续完成设置，稍后可在设置中登录皮肤站账号。</p>
-        {:else if accountKind === 'microsoft'}
-          <p class="note">继续完成设置，稍后可在设置中完成登录。</p>
-        {/if}
+          {#if accounts.error}<p class="alert">{accounts.error}</p>{/if}
 
-        {#if accountKind === 'offline'}
+          <div class="actions">
+            <div class="back">
+              <Button variant="link" tone="quiet" onclick={() => go(-1)}>
+                <ArrowLeft size={14} />上一步
+              </Button>
+            </div>
+            <Button variant="primary" disabled={accounts.busy} onclick={() => void loginMicrosoft()}>
+              {accounts.busy ? '等待验证' : '登录微软账户'}<ArrowRight size={15} />
+            </Button>
+            <Button variant="link" tone="quiet" onclick={() => go(1)}>稍后登录</Button>
+          </div>
+
+          <!-- 另外两条路各自是一屏，不是这一屏里的两个单选项。 -->
+          <div class="alternates">
+            <Button variant="link" onclick={() => pickLogin('authlib')}>使用外置登录</Button>
+            {#if offlineAllowed}
+              <Button variant="link" onclick={() => pickLogin('offline')}>使用离线模式</Button>
+            {/if}
+          </div>
+        {:else if loginView === 'authlib'}
+          <div class="step-back">
+            <Button variant="link" tone="quiet" onclick={() => pickLogin('microsoft')}>
+              <ArrowLeft size={14} />返回正版登录
+            </Button>
+          </div>
+          <h1 class="title">外置登录。</h1>
+          <p class="lede">
+            在 LittleSkin 等 Yggdrasil 兼容皮肤站上登录。密码仅用于换取令牌，不会保存。
+          </p>
+
+          <form
+            class="fields"
+            onsubmit={(event) => {
+              event.preventDefault()
+              void loginYggdrasil()
+            }}
+          >
+            <Input
+              label="皮肤站地址"
+              hint="Yggdrasil API 根地址，可在皮肤站的「在启动器中使用」页面获取。"
+              bind:value={apiRoot}
+              spellcheck="false"
+            />
+            <Input label="邮箱" bind:value={username} spellcheck="false" autocomplete="username" />
+            <Input
+              label="密码"
+              type="password"
+              bind:value={password}
+              autocomplete="current-password"
+            />
+
+            {#if accounts.error}<p class="alert">{accounts.error}</p>{/if}
+
+            <div class="actions">
+              <div class="back">
+                <Button variant="link" tone="quiet" onclick={() => go(-1)}>
+                  <ArrowLeft size={14} />上一步
+                </Button>
+              </div>
+              <Button variant="primary" type="submit" disabled={accounts.busy}>
+                {accounts.busy ? '登录中' : '登录'}<ArrowRight size={15} />
+              </Button>
+            </div>
+          </form>
+        {:else}
+          <div class="step-back">
+            <Button variant="link" tone="quiet" onclick={() => pickLogin('microsoft')}>
+              <ArrowLeft size={14} />返回正版登录
+            </Button>
+          </div>
+          <h1 class="title">离线模式。</h1>
+          <p class="lede">
+            离线账户只能游玩本地世界与离线服务器，无法进入正版服务器，也无法使用正版皮肤。
+          </p>
+
           <div class="inline">
             <Input
               label="玩家名称"
+              hint="3–16 位字母、数字或下划线。UUID 由名称推导，修改名称即更换身份。"
               error={nameError}
               bind:value={playerName}
               maxlength={16}
@@ -222,17 +327,27 @@
               autocomplete="nickname"
               placeholder="Steve"
               oninput={() => (nameError = '')}
-              onkeydown={(event) => event.key === 'Enter' && void submitAccount()}
+              onkeydown={(event) => event.key === 'Enter' && void addOffline()}
             />
           </div>
-        {/if}
 
-        <div class="actions">
-          <div class="back">
-            <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
+          <div class="alternates">
+            <Button variant="link" onclick={() => openExternal(BUY_URL)}>
+              购买正版 Minecraft<ExternalLink size={13} strokeWidth={1.8} />
+            </Button>
           </div>
-          <Button variant="primary" onclick={() => void submitAccount()}>继续<ArrowRight size={15} /></Button>
-        </div>
+
+          <div class="actions">
+            <div class="back">
+              <Button variant="link" tone="quiet" onclick={() => go(-1)}>
+                <ArrowLeft size={14} />上一步
+              </Button>
+            </div>
+            <Button variant="primary" onclick={() => void addOffline()}>
+              继续<ArrowRight size={15} />
+            </Button>
+          </div>
+        {/if}
       {:else if step === 'source'}
         <h1 class="title">让下载快一点。</h1>
         <p class="lede">
@@ -423,11 +538,62 @@
     margin-top: var(--s4);
   }
 
-  /* 选了外置登录之后的一句交代，和 .lede 同级但更轻。 */
-  .note {
-    margin: var(--s4) 0 0;
-    color: var(--ink-3);
-    font-size: var(--t-body);
+  /* 外置登录那一屏的三个字段。 */
+  .fields {
+    display: grid;
+    gap: var(--s4);
+    width: min(400px, 100%);
+    margin-top: var(--s5);
+  }
+
+  /* 从正版登录进来的两屏，返回的出口在标题上方。 */
+  .step-back {
+    justify-self: start;
+    margin-bottom: var(--s3);
+  }
+
+  /* 正版登录之外的两个入口。它们是入口，不是这一屏的动作。 */
+  .alternates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s4);
+    margin-top: var(--s5);
+  }
+
+  /* 等待用户去浏览器输码的那一刻，这块就是这一屏的全部内容。 */
+  .device {
+    display: grid;
+    justify-items: start;
+    gap: var(--s2);
+    margin-top: var(--s5);
+  }
+
+  .device-label {
+    color: var(--ink-2);
+    font-size: var(--t-small);
+  }
+
+  /* 八位码是这一刻唯一要读的东西，字号给到位。 */
+  .code {
+    margin: 0;
+    color: var(--ink);
+    font-size: var(--t-h1);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+  }
+
+  .site {
+    margin: 0;
+    color: var(--ink-2);
+    overflow-wrap: anywhere;
+  }
+
+  .device-action {
+    margin-top: var(--s2);
+  }
+
+  .alert {
+    margin-top: var(--s4);
   }
 
   .foot-note {
