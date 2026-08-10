@@ -1,18 +1,17 @@
 <script lang="ts">
   /**
-   * 添加账户。设置里的二级页，分两步。
+   * 添加账户。设置里的二级页。
    *
-   * 分步不是为了仪式感，是因为**三种方式要问的东西差别极大**：离线要一个名字，
-   * 正版要你去浏览器输一个八位码，外置要三个字段。上一版把三者塞进名单里就地
-   * 展开，于是这一块的高度每选一次就跳一次，而且三张表单必须同时存在于同一段
-   * 标记里。
+   * 三种方式要问的东西差别极大：离线要一个名字，正版要你去浏览器输一个八位码，
+   * 外置要三个字段。上一版把三者塞进名单里就地展开，于是这一块的高度每选一次
+   * 就跳一次，而且三张表单必须同时存在于同一段标记里。
    *
    * 第一步只做一件事：说清楚三种方式各自是什么。这一步选错的代价不小——离线
    * 账户进不了正版服务器，而这句话要在选之前说，不是在失败之后说。
    */
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowLeft, ExternalLink } from 'lucide-svelte'
-  import { accounts, type AccountKind } from '../lib/accounts.svelte'
+  import { accounts, verificationTarget, type AccountKind } from '../lib/accounts.svelte'
   import { notices } from '../lib/notices.svelte'
   import { offlineLoginAllowed } from '../lib/region'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -134,23 +133,29 @@
       </form>
     {:else if kind === 'microsoft'}
       {#if accounts.deviceCode}
+        {@const code = accounts.deviceCode}
         <!-- 登录码是这一屏此刻唯一要做的事，所以给它整行和最大的字号。 -->
         <div class="fields">
           <span class="field-label">
-            在浏览器中输入以下代码
+            浏览器已经打开，在其中输入以下代码
             <small>密码仅在微软页面输入，不经过 Fern。</small>
           </span>
-          <p class="code t-mono selectable">{accounts.deviceCode.userCode}</p>
-          <p class="t-mono site selectable">{accounts.deviceCode.verificationUri}</p>
+          <p class="code t-mono selectable">{code.userCode}</p>
+          <p class="t-mono site selectable">{code.verificationUri}</p>
+          <div class="submit">
+            <Button variant="ghost" onclick={() => openExternal(verificationTarget(code))}>
+              重新打开页面<ExternalLink size={13} strokeWidth={1.8} />
+            </Button>
+          </div>
         </div>
       {:else}
         <div class="fields">
           <span class="field-label">
             微软账户
-            <small>获取登录码后在浏览器中完成验证，无需在此输入密码。</small>
+            <small>将打开浏览器完成验证，无需在此输入密码。</small>
           </span>
           <Button variant="primary" disabled={accounts.busy} onclick={() => void submitMicrosoft()}>
-            {accounts.busy ? '等待中' : '获取登录码'}
+            {accounts.busy ? '等待中' : '打开浏览器登录'}
           </Button>
         </div>
       {/if}

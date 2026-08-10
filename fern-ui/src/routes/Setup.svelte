@@ -18,7 +18,7 @@
   import Mark from 'fern-kit/ui/Mark.svelte'
   import { theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource, type DownloadSource } from '../lib/prefs.svelte'
-  import { accounts } from '../lib/accounts.svelte'
+  import { accounts, verificationTarget } from '../lib/accounts.svelte'
   import { offlineLoginAllowed } from '../lib/region'
   import { inTauri, instances } from '../lib/instances.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -228,12 +228,12 @@
             {@const code = accounts.deviceCode}
             <!-- 登录码是这一刻唯一要做的事，所以给它整行和最大的字号。 -->
             <div class="device">
-              <span class="device-label">在浏览器中打开下面的地址，输入这串代码</span>
+              <span class="device-label">浏览器已经打开，在其中输入这串代码</span>
               <p class="code t-mono selectable">{code.userCode}</p>
               <p class="site t-mono selectable">{code.verificationUri}</p>
               <div class="device-action">
-                <Button variant="ghost" onclick={() => openExternal(code.verificationUri)}>
-                  <ExternalLink size={14} strokeWidth={1.8} />打开验证页面
+                <Button variant="ghost" onclick={() => openExternal(verificationTarget(code))}>
+                  <ExternalLink size={14} strokeWidth={1.8} />重新打开页面
                 </Button>
               </div>
             </div>
@@ -600,6 +600,9 @@
   }
 
   .device-action {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
     margin-top: var(--s2);
   }
 

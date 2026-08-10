@@ -28,6 +28,20 @@ export interface Account {
   addedAt: number
 }
 
+/** 正版登录等待期间要显示的那一段。令牌不在里面，这一份可以放心进 webview。 */
+export interface DeviceCode {
+  /** 八位码，念给人听的。 */
+  userCode: string
+  /** 让用户去这个地址输码。 */
+  verificationUri: string
+  /** 同一个地址，但把码带上了。有就用它开浏览器，省掉抄写那一步。 */
+  verificationUriComplete?: string
+}
+
+/** 该把哪一个地址交给浏览器。 */
+export const verificationTarget = (code: DeviceCode) =>
+  code.verificationUriComplete || code.verificationUri
+
 /** 类型说成一句人话。`authlib` 这种词不该出现在界面上。 */
 export const KIND_LABEL: Record<AccountKind, string> = {
   offline: '离线',
@@ -64,7 +78,7 @@ class AccountStore {
   loading = $state(false)
   error = $state('')
   /** 正版登录要用户去浏览器输的那八位码。只在等待的那段时间里有值。 */
-  deviceCode = $state<{ userCode: string; verificationUri: string } | null>(null)
+  deviceCode = $state<DeviceCode | null>(null)
   /** 有一次登录正在进行。两次同时来只会互相打架。 */
   busy = $state(false)
 
@@ -155,16 +169,20 @@ class AccountStore {
    *
    * 八位码由后端在拿到之后推过来——它要显示的那一刻，登录还在等用户去浏览器
    * 里输。整个过程里密码和令牌都不经过 webview。
+   *
+   * 拿到码就顺手把浏览器打开。这一步之前留给用户自己做，而那个地址在界面上
+   * 是一段不能点的文字——于是「登录」这个动作的第一步变成了手工复制粘贴。
    */
   async loginMicrosoft() {
     if (!inTauri() || this.busy) return
     this.busy = true
     this.error = ''
     this.deviceCode = null
-    const stop = await listen<{ userCode: string; verificationUri: string }>(
-      'microsoft-device-code',
-      ({ payload }) => (this.deviceCode = payload),
-    )
+    const stop = await listen<DeviceCode>('microsoft-device-code', ({ payload }) => {
+      this.deviceCode = payload
+      // 开不起来也不算登录失败：码还在屏幕上，用户照样能自己打开那个地址。
+      void invoke('open_external', { url: verificationTarget(payload) }).catch(() => {})
+    })
     try {
       await invoke<Account>('microsoft_login')
       await this.load()
