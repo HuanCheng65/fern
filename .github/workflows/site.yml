@@ -80,15 +80,22 @@ jobs:
         run: pnpm build
         working-directory: fern-site
 
-      # wrangler 的版本不钉。Node 和 pnpm 钉住是因为它们决定构建出什么；wrangler
-      # 只是个把目录传上去的客户端，产物一个字节都不经它的手，而它对面那个 API 是
-      # 一直在走的。钉住反而是让一个只会越来越旧的客户端去够一个新接口。
+      # 不走 cloudflare/wrangler-action。它装 wrangler 的办法是在目标目录里跑
+      # `npm i wrangler@…`，而 `fern-site/package.json` 依赖着 `fern-kit:
+      # workspace:*`——npm 不认识 workspace: 协议，当场 EUNSUPPORTEDPROTOCOL。
+      # pnpm dlx 装到自己的临时目录里，不碰这个包的依赖，顺带也少一个碰得到部署
+      # 令牌的第三方 action。
+      #
+      # 大版本钉住，小版本不钉：wrangler 只是个把目录传上去的客户端，产物一个字节
+      # 都不经它的手，而它对面那个 API 一直在走——钉死小版本是让一个越来越旧的客户端
+      # 去够一个新接口。大版本必须钉：v5 换掉行为时该是这里报错，不是线上变样。
+      #
+      # 在 fern-site 里跑，wrangler 才读得到 wrangler.jsonc；命令没有参数，该传
+      # 什么全写在那个文件里。
       - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # 在这个目录里跑，wrangler 才读得到 wrangler.jsonc；命令本身没有参数，
-          # 该传什么全写在那个文件里。
-          workingDirectory: fern-site
-          command: deploy
+        run: pnpm dlx wrangler@4 deploy
+        working-directory: fern-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
