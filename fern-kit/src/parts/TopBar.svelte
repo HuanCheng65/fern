@@ -347,13 +347,19 @@
     }
   }
 
-  /* 一个点，不是一个数字：数量在这里没有意义，有没有才有。 */
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
+  /*
+   * 一个点，不是一个数字：数量在这里没有意义，有没有才有。
+   * 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。
+   *
+   * 画在 `::before` 上，不是 `::after`——设计系统用 `::after` 给每颗按钮撑最小点击区
+   * （elements.css 里那条 `min-width: var(--hit)`）。两样东西抢同一个伪元素时，点的
+   * `width: 6px` 压得过，`min-width` 压不过，于是这颗六像素的点是按 24px 画出来的。
+   */
   .right :global(.marked) {
     position: relative;
   }
 
-  .right :global(.marked)::after {
+  .right :global(.marked)::before {
     content: '';
     position: absolute;
     top: 6px;
