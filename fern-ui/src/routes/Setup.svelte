@@ -235,6 +235,10 @@
                 <Button variant="ghost" onclick={() => openExternal(verificationTarget(code))}>
                   <ExternalLink size={14} strokeWidth={1.8} />重新打开页面
                 </Button>
+                <!-- 轮询自己也会发现，这一颗省的是那几秒的干等。 -->
+                <Button variant="primary" onclick={() => void accounts.checkMicrosoft()}>
+                  我已完成登录
+                </Button>
               </div>
             </div>
           {/if}
@@ -247,7 +251,10 @@
                 <ArrowLeft size={14} />上一步
               </Button>
             </div>
-            <Button variant="primary" disabled={accounts.busy} onclick={() => void loginMicrosoft()}>
+            <Button
+              variant={accounts.deviceCode ? 'ghost' : 'primary'}
+              disabled={accounts.busy}
+              onclick={() => void loginMicrosoft()}>
               {accounts.busy ? '等待验证' : '登录微软账户'}<ArrowRight size={15} />
             </Button>
             <Button variant="link" tone="quiet" onclick={() => go(1)}>稍后登录</Button>

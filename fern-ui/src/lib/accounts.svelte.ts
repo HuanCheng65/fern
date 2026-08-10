@@ -195,6 +195,22 @@ class AccountStore {
     }
   }
 
+  /**
+   * 「我已经登完了」。
+   *
+   * 后端本来就在轮询，这一下只是把它从两次轮询之间的等待里叫醒。省下的几秒
+   * 发生在用户已经做完自己那一半、正盯着启动器的时候——那是整条流程里最难
+   * 熬的一段。
+   */
+  async checkMicrosoft() {
+    if (!inTauri() || !this.deviceCode) return
+    try {
+      await invoke('check_microsoft_login')
+    } catch {
+      // 催一下失败没有任何后果：轮询照旧会自己发现。
+    }
+  }
+
   /** 外置登录。密码只在这一次调用里存在，换到令牌之后就没有用处了。 */
   async loginYggdrasil(apiRoot: string, username: string, password: string) {
     if (!inTauri() || this.busy) return

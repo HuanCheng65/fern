@@ -143,7 +143,11 @@
           <p class="code t-mono selectable">{code.userCode}</p>
           <p class="t-mono site selectable">{code.verificationUri}</p>
           <div class="submit">
-            <Button variant="ghost" onclick={() => openExternal(verificationTarget(code))}>
+            <!-- 轮询自己也会发现，这一颗省的是那几秒的干等。 -->
+            <Button variant="primary" onclick={() => void accounts.checkMicrosoft()}>
+              我已完成登录
+            </Button>
+            <Button variant="link" onclick={() => openExternal(verificationTarget(code))}>
               重新打开页面<ExternalLink size={13} strokeWidth={1.8} />
             </Button>
           </div>
