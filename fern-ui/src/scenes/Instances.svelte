@@ -13,9 +13,9 @@
    * 「设为当前」在详情里——它会改变启动场景上摆着的是谁，不该是随手一点
    * 就发生的事。
    */
-  import { FolderOpen, Play, Plus } from 'lucide-svelte'
+  import { FolderOpen, Plus } from 'lucide-svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
-  import Cover from 'fern-kit/ui/Cover.svelte'
+  import InstanceCard from 'fern-kit/parts/InstanceCard.svelte'
   import Loading from '../components/Loading.svelte'
   import Collection from '../layouts/Collection.svelte'
   import InstanceDetail from './InstanceDetail.svelte'
@@ -91,29 +91,16 @@
 
     <div class="grid">
       {#each instances.recent as item, index (item.id)}
-        <div class="card" in:riseIn={{ index }}>
-          <button class="face" onclick={() => nav.open(item.id)} title="打开 {item.name}">
-            <Cover seed={item.cover} quality={0.55} />
-          </button>
-
-          <!-- 「我就想立刻玩这个」的那条路径，不必先进详情。 -->
-          <button
-            class="go"
-            aria-label="启动 {item.name}"
-            title="启动"
-            disabled={launch.occupied(item.id)}
-            onclick={() => void launch.launch(item.id)}
-          >
-            <Play size={14} fill="currentColor" strokeWidth={0} />
-          </button>
-
-          <button class="text" onclick={() => nav.open(item.id)}>
-            <span class="line">
-              <strong>{item.name}</strong>
-              {#if instances.current?.id === item.id}<span class="now">当前</span>{/if}
-            </span>
-            <small class="t-mono">{item.gameVersion} · {item.loader}</small>
-          </button>
+        <div in:riseIn={{ index }}>
+          <InstanceCard
+            name={item.name}
+            cover={item.cover}
+            detail={`${item.gameVersion} · ${item.loader}`}
+            current={instances.current?.id === item.id}
+            busy={launch.occupied(item.id)}
+            onopen={() => nav.open(item.id)}
+            onlaunch={() => void launch.launch(item.id)}
+          />
         </div>
       {/each}
     </div>
@@ -157,7 +144,7 @@
     line-height: 1.65;
   }
 
-  /* 列数跟着窗口走，不写断点。 */
+  /* 列数跟着窗口走，不写断点。一张卡长什么样是 InstanceCard 的事。 */
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
@@ -165,103 +152,7 @@
     align-content: start;
   }
 
-  .card {
-    position: relative;
-    display: grid;
-    gap: var(--s2);
-  }
-
-  .face {
-    display: block;
-    width: 100%;
-    aspect-ratio: 4 / 3;
-    padding: 0;
-    overflow: hidden;
-    border-radius: var(--r2);
-    background: var(--tint-1);
-    transition:
-      transform var(--t-base) var(--ease),
-      box-shadow var(--t-base) var(--ease);
-  }
-
-  .card:hover .face {
-    transform: translateY(-2px);
-  }
-
-  /*
-   * 当前实例标在名字旁边，不标在封面上。
-   *
-   * 封面是这一屏的主视觉，上一版在它外沿描了一圈强调色——一道 1.5px 的硬边
-   * 贴着一张生成的图，读起来是「这张图被选中了」，而要说的是「这个实例是当前
-   * 的」。那句话属于名字，不属于画。
-   */
-  .line {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    min-width: 0;
-  }
-
-  .now {
-    flex: none;
-    padding: 0 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    color: var(--accent);
-    font-size: var(--t-micro);
-    line-height: 1.7;
-  }
-
-  .go {
-    position: absolute;
-    top: var(--s2);
-    right: var(--s2);
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    background: rgba(10, 14, 16, 0.6);
-    color: #f3f6f6;
-    opacity: 0;
-    transform: scale(0.9);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
-    transition:
-      opacity var(--t-fast) var(--ease),
-      transform var(--t-fast) var(--ease);
-  }
-
-  .card:hover .go,
-  .go:focus-visible {
-    opacity: 1;
-    transform: none;
-  }
-
-  .go:disabled {
-    display: none;
-  }
-
-  .text {
-    display: grid;
-    gap: 1px;
-    padding: 0;
-    min-width: 0;
-    text-align: left;
-  }
-
-  .text strong {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--ink);
-    font-size: var(--t-body);
-    font-weight: 500;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .text small {
-    color: var(--ink-4);
-    font-size: var(--t-micro);
+  .alert {
+    margin-bottom: var(--s4);
   }
 </style>

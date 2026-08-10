@@ -48,6 +48,20 @@
 :where(.fern) img,
 :where(.fern) svg,
 :where(.fern) video,
+/*
+ * 宿主的正文排版不该漏进来。
+ *
+ * 官网的 app.css 里有一条 `p + p { margin-top: 1.1em }`——那是给文章段落写的，
+ * 而它同样命中了状态岛每一行里的说明和数字，于是同一块面板在官网上凭空高出一截。
+ * 组件自己设了间距，这里只是把宿主留下的默认值清掉。
+ *
+ * 这条不用 :where()：它要压过宿主那种 `p + p`（0,0,2）的规则，所以取 (0,1,1)。
+ * 组件自己的作用域类是 (0,2,0)，照样压得过它。
+ */
+.fern :is(p, h1, h2, h3, h4, h5, h6, figure, blockquote, dl, dd, ul, ol) {
+  margin: 0;
+}
+
 :where(.fern) canvas {
   display: block;
   max-width: 100%;
