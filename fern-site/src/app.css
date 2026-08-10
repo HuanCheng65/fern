@@ -1,0 +1,277 @@
+/* ---------- 字体 ----------
+   都自托管、都按站上用到的字裁过（scripts/subset-fonts.py），一共两百来 KB。
+   拉丁一个可变字体走天下：opsz 轴 14–32，浏览器按字号自动取，
+   所以大标题拿到的是 Inter Display 那一头，不用另挂一个家族。
+   中文里 Inter 没有的字自然落到鸿蒙；中文标点也因此来自中文字体，宽度才对。 */
+
+@font-face {
+  font-family: 'Inter var';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-var.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/harmony-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  font-style: normal;
+  font-weight: 500 620;
+  font-display: swap;
+  src: url('/fonts/harmony-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'HarmonyOS Sans SC';
+  font-style: normal;
+  font-weight: 621 900;
+  font-display: swap;
+  src: url('/fonts/harmony-700.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/plex-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/plex-500.woff2') format('woff2');
+}
+
+:root {
+  /* 品牌四色不在这里——它们在 fern-kit/styles 的 brand.css，两端同一份。 */
+
+  --ink: #17251d;
+  --line: #e2e0d6;
+  --mut: #6b7a6f;
+
+  --on-dark-mut: rgba(246, 244, 236, 0.62);
+  --on-dark-line: rgba(246, 244, 236, 0.16);
+
+  --sans:
+    'Inter var', 'HarmonyOS Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  --mono:
+    'IBM Plex Mono', 'HarmonyOS Sans SC', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --pad: clamp(88px, 13vw, 176px);
+
+  /* 固定顶栏的高度。钉住的东西要让开它，否则会被压在下面。 */
+  --nav: 68px;
+}
+
+/* ---------- 从产品里端出来的那些组件 ----------
+   启动器的色板是背景交出来的：`Backdrop` 每隔几秒把 --c0..c4 写在挂着 .fern-dark
+   的那个元素上，界面因此向当前的群系学色彩。官网没有背景，也不该有——一张讲产品
+   的页面不能每次打开都是另一个颜色。
+
+   所以这里把那五档钉死在品牌色上。不钉的话组件拿到的是 kit 里的出厂值，那是一支
+   青色——在松绿的页面上，一条青色的进度条看着像是从别的产品里抠来的。
+   在 app.css 里覆盖是靠顺序：它和 surface-dark.css 同为 (0,1,0)，而它后引入。 */
+.fern-dark {
+  --c0: #060f0a;
+  --c1: #12281c;
+  --c2: #24503a;
+  --c3: #4a8f63;
+  --c4: #bfe4b2;
+  --on-accent: #0e2018;
+  --accent-glow: rgba(191, 228, 178, 0.3);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.9;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* opsz 跟着字号走：正文拿文本字面，大标题拿展示字面 */
+  font-optical-sizing: auto;
+  /* 中文标点挤一挤，别在句读处留出一个空格宽的洞 */
+  font-feature-settings: 'palt' 1;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--sprout);
+  color: var(--pine);
+}
+
+/* ---------- 版心 ---------- */
+
+.wrap {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 4vw, 48px);
+}
+.col {
+  max-width: 62ch;
+}
+
+/*
+ * 只挑页面自己那一层的章节。
+ *
+ * 写成裸 `section` 的话，这条整屏留白会漏进任何一个内部也用 `<section>` 的组件
+ * ——状态岛的面板按来源分段，用的正是它，于是一块 320px 的浮层底下多出 176px 空白。
+ * 页面的章节全是 `<main>` 的直接子元素，加一个子代组合器就够把边界画清楚。
+ */
+main > section {
+  position: relative;
+  padding: var(--pad) 0;
+}
+main > section.dark {
+  background: var(--pine);
+  color: var(--paper);
+}
+
+/* ---------- 字级 ---------- */
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mut);
+}
+.dark .eyebrow {
+  color: var(--on-dark-mut);
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.14;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: clamp(40px, 5.6vw, 76px);
+  line-height: 1.06;
+}
+h2 {
+  font-size: clamp(32px, 4.2vw, 56px);
+}
+h3 {
+  font-size: clamp(22px, 2.5vw, 32px);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.lede {
+  font-size: clamp(17px, 1.35vw, 20px);
+  line-height: 1.85;
+  color: var(--mut);
+}
+.dark .lede {
+  color: var(--on-dark-mut);
+}
+p + p {
+  margin-top: 1.1em;
+}
+
+strong {
+  font-weight: 620;
+  color: var(--ink);
+}
+.dark strong {
+  color: var(--paper);
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+/* ---------- 控件 ---------- */
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 28px;
+  border-radius: 999px;
+  background: var(--fern);
+  color: var(--paper);
+  font-size: 16px;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.3, 1),
+    background-color 220ms ease;
+}
+.cta:hover {
+  background: #2c5f3e;
+  transform: translateY(-1px);
+}
+.dark .cta {
+  background: var(--sprout);
+  color: var(--pine);
+}
+.dark .cta:hover {
+  background: #cdeec1;
+}
+
+.ghost {
+  display: inline-block;
+  font-size: 15px;
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 2px;
+  opacity: 0.7;
+  transition: opacity 200ms ease;
+}
+.ghost:hover {
+  opacity: 1;
+}
+
+/* ---------- 进场 ---------- */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 760ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 760ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.reveal.in {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
