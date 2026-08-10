@@ -17,26 +17,62 @@
    * 背景层提取的色板走；只有场景内容滚到它底下时才浮现毛玻璃。
    */
   import { ArrowLeft, Settings } from 'lucide-svelte'
-  import Island from 'fern-kit/parts/Island.svelte'
-  import { updates } from '../lib/update.svelte'
-  import Mark from 'fern-kit/ui/Mark.svelte'
-  import { platform } from '../lib/frame.svelte'
-  import { nav, SCENES } from '../lib/nav.svelte'
-  import { island } from '../lib/island.svelte'
-  import Button from 'fern-kit/ui/Button.svelte'
+  import Island from './Island.svelte'
+  import Mark from '../ui/Mark.svelte'
+  import Button from '../ui/Button.svelte'
+  import type { Presence } from './island'
 
-  interface Props {
-    /** 当前详情的名字。顶栏不认识实例，只认识一个要显示的词。 */
-    detailLabel?: string
+  interface Scene {
+    id: string
+    label: string
   }
 
-  let { detailLabel = '' }: Props = $props()
+  interface Props {
+    /** 五个场景词。顺序就是它们的位置，位置不重排。 */
+    scenes: Scene[]
+    /** 当前在哪个场景。 */
+    scene: string
+    /** 推进详情的深度。大于 0 且有名字时，其余的词退到景深之外。 */
+    depth?: number
+    /** 当前详情的名字。顶栏不认识实例，只认识一个要显示的词。 */
+    detailLabel?: string
+    /** 内容滚到顶栏底下了没有——决定那层毛玻璃浮不浮现。 */
+    scrolled?: boolean
+    /** macOS 的交通灯浮在内容上，要给它让出安全区。 */
+    mac?: boolean
+    presences?: Presence[]
+    islandPinned?: boolean
+    onisland?: () => void
+    /** 有新版本时在设置键上点一个点。 */
+    updateAvailable?: boolean
+    onbrand?: () => void
+    onscene?: (id: string) => void
+    onback?: () => void
+    onsettings?: () => void
+  }
+
+  let {
+    scenes,
+    scene,
+    depth = 0,
+    detailLabel = '',
+    scrolled = false,
+    mac = false,
+    presences = [],
+    islandPinned = false,
+    onisland,
+    updateAvailable = false,
+    onbrand,
+    onscene,
+    onback,
+    onsettings,
+  }: Props = $props()
 
   let buttons: HTMLButtonElement[] = $state([])
   /** 面包屑要长在当前那个词上，位置从真实布局量——字宽随字体和语言变。 */
   let anchor = $state({ left: 0, right: 0 })
 
-  const inDetail = $derived(nav.depth > 0 && detailLabel !== '')
+  const inDetail = $derived(depth > 0 && detailLabel !== '')
 
   /**
    * 收起时名字要留在原地被卷走。
@@ -49,10 +85,9 @@
   $effect(() => {
     if (detailLabel) held = detailLabel
   })
-  const isMac = $derived(platform === 'macos')
-
+  const index = $derived(Math.max(0, scenes.findIndex((item) => item.id === scene)))
   $effect(() => {
-    const el = buttons[nav.index]
+    const el = buttons[index]
     if (el) anchor = { left: el.offsetLeft, right: el.offsetLeft + el.offsetWidth }
   })
 </script>
@@ -63,11 +98,11 @@
 -->
 <header
   class="top"
-  class:mac={isMac}
-  class:glass={nav.scrolled}
+  class:mac={mac}
+  class:glass={scrolled}
   data-tauri-drag-region="deep"
 >
-  <button class="brand" onclick={() => nav.go('launch')} title="回到启动">
+  <button class="brand" onclick={() => onbrand?.()} title="回到启动">
     <Mark size={18} />
     <!-- 字标：小写、650、字距 −1.5%（见 docs/fern-brand-system.html 04）。 -->
     <span class="word">fern</span>
@@ -85,18 +120,18 @@
       tabindex={inDetail ? 0 : -1}
       aria-hidden={!inDetail}
       aria-label="返回"
-      onclick={() => nav.back()}
+      onclick={() => onback?.()}
     >
       <ArrowLeft size={14} strokeWidth={2} />
     </button>
 
-    {#each SCENES as item, index (item.id)}
+    {#each scenes as item, i (item.id)}
       <button
-        bind:this={buttons[index]}
+        bind:this={buttons[i]}
         class="scene"
-        class:on={nav.scene === item.id}
-        aria-current={nav.scene === item.id ? 'page' : undefined}
-        onclick={() => nav.go(item.id)}
+        class:on={scene === item.id}
+        aria-current={scene === item.id ? 'page' : undefined}
+        onclick={() => onscene?.(item.id)}
       >
         {item.label}
       </button>
@@ -118,11 +153,7 @@
       是——切到任何场景，你都知道游戏还开着、东西还在下。顶栏不认识作业也不
       认识游戏，那是岛的事。
     -->
-    <Island
-      presences={island.all}
-      pinned={nav.overlay === 'island'}
-      ontoggle={() => nav.toggle('island')}
-    />
+    <Island {presences} pinned={islandPinned} ontoggle={() => onisland?.()} />
 
     <!--
       有新版本时在这里点一个点。不弹窗、不横幅、不加一行文字——更新是启动器
@@ -130,10 +161,10 @@
     -->
     <Button
       variant="icon"
-      class={updates.available ? 'marked' : ''}
-      aria-label={updates.available ? '设置（有新版本）' : '设置'}
-      title={updates.available ? '设置（有新版本）' : '设置'}
-      onclick={() => nav.toggle('settings')}
+      class={updateAvailable ? 'marked' : ''}
+      aria-label={updateAvailable ? '设置（有新版本）' : '设置'}
+      title={updateAvailable ? '设置（有新版本）' : '设置'}
+      onclick={() => onsettings?.()}
     >
       <Settings size={16} strokeWidth={1.8} />
     </Button>
@@ -149,8 +180,10 @@
     display: flex;
     align-items: center;
     width: 100%;
-    height: var(--top);
-    padding: 0 calc(var(--pad-x) + var(--frame-controls)) 0 var(--pad-x);
+    /* --top / --pad-x / --frame-controls 是**窗口**的度量，留在产品的 app.css 里
+       （官网没有窗口）。这里给回落值，好让这条顶栏落在别处也站得住。 */
+    height: var(--top, 48px);
+    padding: 0 calc(var(--pad-x, 24px) + var(--frame-controls, 0px)) 0 var(--pad-x, 24px);
     transition:
       background var(--t-base) var(--ease),
       box-shadow var(--t-base) var(--ease);

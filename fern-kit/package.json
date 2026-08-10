@@ -32,6 +32,7 @@
     "./parts/LaunchHero.svelte": "./src/parts/LaunchHero.svelte",
     "./parts/pearl": "./src/parts/pearl.ts",
     "./parts/snapshots": "./src/parts/snapshots.ts",
+    "./parts/TopBar.svelte": "./src/parts/TopBar.svelte",
     "./parts/SnapshotList.svelte": "./src/parts/SnapshotList.svelte",
     "./parts/PeerCard.svelte": "./src/parts/PeerCard.svelte",
     "./parts/JavaRuntimeProfile.svelte": "./src/parts/JavaRuntimeProfile.svelte",

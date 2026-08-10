@@ -13,7 +13,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { fly } from 'svelte/transition'
   import Backdrop from './components/Backdrop.svelte'
-  import TopBar from './components/TopBar.svelte'
+  import TopBar from 'fern-kit/parts/TopBar.svelte'
   import CommandPalette from 'fern-kit/parts/CommandPalette.svelte'
   import Notices from './components/Notices.svelte'
   import Mark from 'fern-kit/ui/Mark.svelte'
@@ -27,13 +27,14 @@
   import SupplyScene from './scenes/Supply.svelte'
   import Setup from './routes/Setup.svelte'
   import Settings from './routes/Settings.svelte'
-  import { frame, frameless, selfRounded } from './lib/frame.svelte'
+  import { frame, frameless, platform, selfRounded } from './lib/frame.svelte'
   import { flush, hydrate } from './lib/persist'
   import { accounts } from './lib/accounts.svelte'
   import { instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
   import { DURATION, scaled } from './lib/motion'
-  import { nav } from './lib/nav.svelte'
+  import { island } from './lib/island.svelte'
+  import { nav, SCENES, type SceneId } from './lib/nav.svelte'
   import { palette } from 'fern-kit/parts/palette'
   import './lib/places.svelte'
   import { prefs } from './lib/prefs.svelte'
@@ -177,7 +178,22 @@
       }}
     />
   {:else}
-    <TopBar {detailLabel} />
+    <TopBar
+      scenes={SCENES}
+      scene={nav.scene}
+      depth={nav.depth}
+      {detailLabel}
+      scrolled={nav.scrolled}
+      mac={platform === 'macos'}
+      presences={island.all}
+      islandPinned={nav.overlay === 'island'}
+      onisland={() => nav.toggle('island')}
+      updateAvailable={updates.available}
+      onbrand={() => nav.go('launch')}
+      onscene={(id) => nav.go(id as SceneId)}
+      onback={() => nav.back()}
+      onsettings={() => nav.toggle('settings')}
+    />
 
     <main class="stage">
       {#key nav.scene}
