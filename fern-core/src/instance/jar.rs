@@ -35,6 +35,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::LoaderKind;
 
+/// 一条依赖声明说的是哪一种关系。
+///
+/// **不是一个布尔量。** 三家都能声明「装了它反而起不来」，而那和「没装它起不来」
+/// 正好相反——把它当成一条必需依赖，说出口的就是「缺少 X，去装一个」，而用户照做
+/// 之后游戏才真的起不来。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Relation {
+    /// 没有它就起不来。
+    Required,
+    /// 有更好，没有也行。缺了不是问题，不该拿去烦用户。
+    Optional,
+    /// 有它才起不来。NeoForge 的 `incompatible`、Fabric 的 `breaks`。
+    Incompatible,
+    /// 装在一起会出问题，但加载器只给个警告。`discouraged` / `conflicts`。
+    Discouraged,
+}
+
 /// 一条依赖声明。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,8 +60,7 @@ pub struct Dependency {
     pub mod_id: String,
     /// 版本区间，原样保留。看不懂的写法由 `launch::ranges` 兜底。
     pub range: String,
-    /// 必需的。可选依赖缺了不是问题，不该拿去烦用户。
-    pub required: bool,
+    pub relation: Relation,
 }
 
 /// 一个 jar 里为某一家加载器写的那份清单。
@@ -53,6 +70,22 @@ pub struct Manifest {
     pub loader: LoaderKind,
     /// **这一份**清单声明的依赖。同一个 jar 的另一份可以完全不同。
     pub depends: Vec<Dependency>,
+}
+
+impl Manifest {
+    /// 这一份清单里必需的那些依赖。
+    pub fn required(&self) -> impl Iterator<Item = &Dependency> {
+        self.depends
+            .iter()
+            .filter(|dependency| dependency.relation == Relation::Required)
+    }
+
+    /// 它声明支持的 Minecraft 版本区间。没声明就是没有。
+    pub fn minecraft_range(&self) -> Option<&str> {
+        self.required()
+            .find(|dependency| dependency.mod_id == "minecraft")
+            .map(|dependency| dependency.range.as_str())
+    }
 }
 
 /// 从一个 jar 里读到的东西。
@@ -89,70 +122,19 @@ impl ModJar {
             .collect()
     }
 
-    /// 这个实例的加载器会读它吗。读不出清单时算读得了：一个我们看不懂的 jar
-    /// 照样能被加载器加载，不该因为看不懂就判它出局。
-    pub fn fits(&self, loader: LoaderKind) -> bool {
-        self.manifests.is_empty()
-            || self
-                .manifests
-                .iter()
-                .any(|manifest| accepts(loader, manifest.loader))
-    }
-
-    /// 在这个实例里真正生效的那份依赖。
-    ///
-    /// 加载器只读它认得的那一份清单，别的那些一个字都不看。Explorify 的
-    /// `fabric.mod.json` 写着 `depends: fabric-api`，同一个 jar 里的
-    /// `neoforge.mods.toml` 只写 `minecraft`——在 NeoForge 实例里按前者去报
-    /// 「缺 Fabric API」，说的是一份根本没有人读的文件。
-    ///
-    /// 一份都对不上时退回第一份，聊胜于无。**但那时候本就不该问这个问题**——
-    /// 一个不会被加载的 jar 谈不上缺前置，预检查在问依赖之前先把它们筛掉了。
-    pub fn depends(&self, loader: LoaderKind) -> &[Dependency] {
-        self.manifests
-            .iter()
-            // 先找一模一样的：Quilt 实例上，一个同时带两份清单的 jar 该读
-            // 它的 `quilt.mod.json`，而不是那份将就着也能用的 Fabric 清单。
-            .find(|manifest| manifest.loader == loader)
-            .or_else(|| {
-                self.manifests
-                    .iter()
-                    .find(|manifest| accepts(loader, manifest.loader))
-            })
-            .or_else(|| self.manifests.first())
-            .map(|manifest| manifest.depends.as_slice())
-            .unwrap_or_default()
-    }
-
-    /// 所有清单里的依赖，不分加载器。
+    /// 所有清单里必需的那些依赖，不分加载器。
     ///
     /// 给挑 Java 那条路用：`depends: { "java": ">=25" }` 三份清单写的是同一件
-    /// 事，而那条路在实例的加载器之外还有别的调用点，宁可多看一眼。
-    pub fn every_dependency(&self) -> impl Iterator<Item = &Dependency> {
-        self.manifests
-            .iter()
-            .flat_map(|manifest| manifest.depends.iter())
-    }
-
-    /// 它声明支持的 Minecraft 版本区间。没声明就是没有。
-    pub fn minecraft_range(&self, loader: LoaderKind) -> Option<&str> {
-        self.depends(loader)
-            .iter()
-            .find(|dependency| dependency.mod_id == "minecraft")
-            .map(|dependency| dependency.range.as_str())
+    /// 事，而那条路在实例的加载器之外还有别的调用点，宁可多看一眼。**要问的是
+    /// 「装在哪个实例里都成立的话」时才用它**，别的地方一律只看生效的那一份。
+    pub fn every_requirement(&self) -> impl Iterator<Item = &Dependency> {
+        self.manifests.iter().flat_map(Manifest::required)
     }
 
     /// 这个 jar 让某个 id 算「装了」没有。自己的 id 也算。
     pub fn supplies(&self, mod_id: &str) -> bool {
         self.mod_id.as_deref() == Some(mod_id) || self.provides.iter().any(|id| id == mod_id)
     }
-}
-
-/// 这个实例的加载器读不读得了那一份清单。
-///
-/// Quilt 读得了 Fabric 的模组，NeoForge 读不了 Forge 的（1.20.2 之后分家了）。
-pub fn accepts(instance: LoaderKind, manifest: LoaderKind) -> bool {
-    instance == manifest || (instance == LoaderKind::Quilt && manifest == LoaderKind::Fabric)
 }
 
 /// 读一个 jar。读不动就只留文件名。
@@ -405,10 +387,19 @@ fn provided_ids(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Fabric 的四张表，各是一种关系。
+///
+/// `breaks` 和 `conflicts` 说的是「装在一起会坏」，方向和 `depends` 相反。
+/// `suggests` 只是一句推荐，加载器完全不管，不读。
 fn fabric(text: &str) -> Option<Described> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let mut depends = Vec::new();
-    for (key, required) in [("depends", true), ("recommends", false)] {
+    for (key, relation) in [
+        ("depends", Relation::Required),
+        ("recommends", Relation::Optional),
+        ("breaks", Relation::Incompatible),
+        ("conflicts", Relation::Discouraged),
+    ] {
         let Some(table) = value.get(key).and_then(serde_json::Value::as_object) else {
             continue;
         };
@@ -416,7 +407,7 @@ fn fabric(text: &str) -> Option<Described> {
             depends.push(Dependency {
                 mod_id: mod_id.clone(),
                 range: range_text(range),
-                required,
+                relation,
             });
         }
     }
@@ -429,36 +420,41 @@ fn fabric(text: &str) -> Option<Described> {
     })
 }
 
+/// Quilt 的 `depends` 和 `breaks` 是两个数组，写法一样，方向相反。
 fn quilt(text: &str) -> Option<Described> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let loader = value.get("quilt_loader")?;
-    let depends = loader
-        .get("depends")
-        .and_then(serde_json::Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|item| match item {
-                    serde_json::Value::String(id) => Some(Dependency {
-                        mod_id: id.clone(),
-                        range: "*".to_owned(),
-                        required: true,
-                    }),
-                    serde_json::Value::Object(_) => Some(Dependency {
-                        mod_id: string_at(item, "id")?,
-                        range: item
-                            .get("versions")
-                            .map(range_text)
-                            .unwrap_or_else(|| "*".to_owned()),
-                        required: !matches!(
-                            item.get("optional").and_then(serde_json::Value::as_bool),
-                            Some(true)
-                        ),
-                    }),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut depends = Vec::new();
+    for (key, present, absent) in [
+        ("depends", Relation::Optional, Relation::Required),
+        // `breaks` 里的 `optional: true` 是「不建议装在一起」，不是「不能」。
+        ("breaks", Relation::Discouraged, Relation::Incompatible),
+    ] {
+        let Some(list) = loader.get(key).and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        depends.extend(list.iter().filter_map(|item| {
+            match item {
+                serde_json::Value::String(id) => Some(Dependency {
+                    mod_id: id.clone(),
+                    range: "*".to_owned(),
+                    relation: absent,
+                }),
+                serde_json::Value::Object(_) => Some(Dependency {
+                    mod_id: string_at(item, "id")?,
+                    range: item
+                        .get("versions")
+                        .map(range_text)
+                        .unwrap_or_else(|| "*".to_owned()),
+                    relation: match item.get("optional").and_then(serde_json::Value::as_bool) {
+                        Some(true) => present,
+                        _ => absent,
+                    },
+                }),
+                _ => None,
+            }
+        }));
+    }
     Some(Described {
         mod_id: string_at(loader, "id"),
         name: loader
@@ -506,6 +502,31 @@ fn forge(text: &str) -> Option<Described> {
         kind: Option<String>,
     }
 
+    /// `type` 的四个取值，大小写不敏感。
+    ///
+    /// **`incompatible` 不是一种依赖。** 它说的是「装了它我就起不来」，AllTheLeaks
+    /// 那样的修补型模组会一口气列出十来个。把它当成必需依赖，预检查报出来的是
+    /// 「缺少 ambientsounds，去装一个」——一句和事实正好相反的话。
+    ///
+    /// 两个字段都没写就是必需：`type` 的默认值是 `required`。
+    fn relation(requirement: &Requirement) -> Relation {
+        match requirement
+            .kind
+            .as_deref()
+            .map(str::to_lowercase)
+            .as_deref()
+        {
+            Some("optional") => Relation::Optional,
+            Some("incompatible") => Relation::Incompatible,
+            Some("discouraged") => Relation::Discouraged,
+            // 老写法只有必需与否两种，落到这里的 `type` 我们不认识，同样按它论。
+            _ => match requirement.mandatory {
+                Some(false) => Relation::Optional,
+                _ => Relation::Required,
+            },
+        }
+    }
+
     let file: File = toml::from_str(text).ok()?;
     let first = file.mods.first();
     let mod_id = first.and_then(|entry| entry.mod_id.clone());
@@ -519,10 +540,7 @@ fn forge(text: &str) -> Option<Described> {
             Some(Dependency {
                 mod_id: requirement.mod_id.clone()?,
                 range: requirement.version_range.clone().unwrap_or_default(),
-                required: requirement.mandatory.unwrap_or(!matches!(
-                    requirement.kind.as_deref(),
-                    Some("optional" | "discouraged")
-                )),
+                relation: relation(requirement),
             })
         })
         .collect();
@@ -673,6 +691,21 @@ mod tests {
         path
     }
 
+    fn manifest(jar: &ModJar, loader: LoaderKind) -> &Manifest {
+        jar.manifests
+            .iter()
+            .find(|manifest| manifest.loader == loader)
+            .unwrap_or_else(|| panic!("{loader:?} 那份清单"))
+    }
+
+    fn relation_to(manifest: &Manifest, mod_id: &str) -> Option<Relation> {
+        manifest
+            .depends
+            .iter()
+            .find(|dependency| dependency.mod_id == mod_id)
+            .map(|dependency| dependency.relation)
+    }
+
     fn temporary(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("fern-jar-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
@@ -696,21 +729,71 @@ mod tests {
         assert_eq!(read.mod_id.as_deref(), Some("sodium"));
         assert_eq!(read.name, "Sodium");
         assert_eq!(read.loaders(), vec![LoaderKind::Fabric]);
-        assert_eq!(read.minecraft_range(LoaderKind::Fabric), Some("~1.21"));
-        let depends = read.depends(LoaderKind::Fabric);
-        let api = depends
-            .iter()
-            .find(|dependency| dependency.mod_id == "fabric-api")
-            .expect("fabric-api");
-        assert!(api.required);
+        let fabric = manifest(&read, LoaderKind::Fabric);
+        assert_eq!(fabric.minecraft_range(), Some("~1.21"));
+        assert_eq!(relation_to(fabric, "fabric-api"), Some(Relation::Required));
         // 建议装的不是必需的，缺了不该拿去烦用户。
-        assert!(
-            !depends
-                .iter()
-                .find(|dependency| dependency.mod_id == "iris")
-                .expect("iris")
-                .required
+        assert_eq!(relation_to(fabric, "iris"), Some(Relation::Optional));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// `type` 的四个取值各是一种关系，`incompatible` 尤其不能当成依赖。
+    ///
+    /// 照着 AllTheLeaks 的 `neoforge.mods.toml` 写：那个修补型模组一口气列了
+    /// 十来条 `type = "incompatible"`，说的是「这些模组的老版本有内存泄漏，
+    /// 和我装在一起会起不来」。把它读成必需依赖，预检查说出口的就是「缺少
+    /// ambientsounds，去装一个」——一句和事实正好相反、而且用户照做之后更糟的话。
+    #[test]
+    fn the_four_kinds_of_forge_dependency_are_four_different_things() {
+        let root = temporary("relations");
+        let path = jar(
+            &root,
+            "alltheleaks.jar",
+            &[(
+                "META-INF/neoforge.mods.toml",
+                r#"
+modLoader = "javafml"
+[[mods]]
+modId = "alltheleaks"
+displayName = "All The Leaks"
+version = "1.1.7"
+[[dependencies.alltheleaks]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1.195,)"
+[[dependencies.alltheleaks]]
+    modId = "jei"
+    type = "optional"
+[[dependencies.alltheleaks]]
+    modId = "ambientsounds"
+    type = "incompatible"
+    versionRange = "(,6.1.0]"
+[[dependencies.alltheleaks]]
+    modId = "occultism"
+    type = "DISCOURAGED"
+"#,
+            )],
         );
+        let read = read(&path);
+        let neoforge = manifest(&read, LoaderKind::NeoForge);
+        assert_eq!(relation_to(neoforge, "neoforge"), Some(Relation::Required));
+        assert_eq!(relation_to(neoforge, "jei"), Some(Relation::Optional));
+        assert_eq!(
+            relation_to(neoforge, "ambientsounds"),
+            Some(Relation::Incompatible)
+        );
+        // 取值大小写不敏感，NeoForge 自己就是这么读的。
+        assert_eq!(
+            relation_to(neoforge, "occultism"),
+            Some(Relation::Discouraged)
+        );
+        // 必需的只有那一条，别的三条都不该出现在「缺什么」里。
+        let required: Vec<&str> = neoforge
+            .required()
+            .map(|dependency| dependency.mod_id.as_str())
+            .collect();
+        assert_eq!(required, vec!["neoforge"]);
+
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -743,11 +826,11 @@ version = "19.0.0"
         let read = read(&path);
         assert_eq!(read.mod_id.as_deref(), Some("appliedenergistics2"));
         assert_eq!(read.loaders(), vec![LoaderKind::Forge]);
-        let depends = read.depends(LoaderKind::Forge);
+        let depends = &manifest(&read, LoaderKind::Forge).depends;
         assert_eq!(depends.len(), 2);
-        assert!(depends[0].required);
+        assert_eq!(depends[0].relation, Relation::Required);
         assert_eq!(depends[0].range, "[19.5.0,)");
-        assert!(!depends[1].required);
+        assert_eq!(depends[1].relation, Relation::Optional);
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -793,8 +876,8 @@ version = "1.6.5"
         );
         // 装进哪个实例，就只有那一家的依赖算数。
         let ids = |loader| {
-            read.depends(loader)
-                .iter()
+            manifest(&read, loader)
+                .required()
                 .map(|dependency| dependency.mod_id.as_str())
                 .collect::<Vec<_>>()
         };
@@ -802,8 +885,14 @@ version = "1.6.5"
         assert_eq!(ids(LoaderKind::Forge), vec!["minecraft"]);
         assert!(ids(LoaderKind::Fabric).contains(&"fabric-api"));
         // 版本区间同样跟着清单走：Fabric 那份写的是另一种写法。
-        assert_eq!(read.minecraft_range(LoaderKind::NeoForge), Some("[1.20,)"));
-        assert_eq!(read.minecraft_range(LoaderKind::Fabric), Some(">=1.20"));
+        assert_eq!(
+            manifest(&read, LoaderKind::NeoForge).minecraft_range(),
+            Some("[1.20,)")
+        );
+        assert_eq!(
+            manifest(&read, LoaderKind::Fabric).minecraft_range(),
+            Some(">=1.20")
+        );
         // 名字、版本、modid 三家写的是同一件事，取哪一份都一样。
         assert_eq!(read.name, "Explorify");
         assert_eq!(read.version.as_deref(), Some("1.6.5"));
