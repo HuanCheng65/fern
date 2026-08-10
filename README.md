@@ -10,6 +10,8 @@ Pearl connectivity is consumed as the `pearl-core` Git dependency. Pearl remains
 - `fern-download`: content-addressed downloads, checksums, mirrors, and progress events.
 - `fern-core`: launcher orchestration and Pearl integration boundary.
 - `fern-ui`: Tauri 2 application. Its Rust crate is kept in a separate Cargo workspace because Tauri builds require platform WebView libraries.
+- `fern-kit`: the design system, shared as source by the application and the site.
+- `fern-site`: the marketing site. It renders the real `fern-kit` components rather than screenshots of them.
 
 ## Development
 
@@ -35,7 +37,7 @@ Conventions and hard-won gotchas are in [AGENTS.md](AGENTS.md).
 
 ## CI
 
-Two workflows, split by what they are for.
+Three workflows, split by what they are for.
 
 `Check and package` runs for `main`, pull requests and manual dispatches. It
 answers "does this commit still build", and uploads three GitHub Actions
@@ -60,6 +62,13 @@ version — `v0.2.0` goes to `stable`, `v0.2.0-beta.1` to `beta`. The tag must
 match the version in `fern-ui/src-tauri/Cargo.toml` or the run stops before
 building anything. What it needs configured, and why each piece is shaped the
 way it is, is in [docs/fern-update-design.md](docs/fern-update-design.md).
+
+`Deploy the site` runs when `fern-site` or `fern-kit` changes. It builds the
+site and uploads it to Cloudflare Pages. `fern-kit` is in that list because the
+site renders those components for real — a change there changes the site, and
+without it the site would quietly sit on an older version of the design system.
+It needs `CLOUDFLARE_API_TOKEN` (Account → Cloudflare Pages → Edit) and
+`CLOUDFLARE_ACCOUNT_ID` configured as repository secrets.
 
 ## License
 

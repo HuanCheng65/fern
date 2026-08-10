@@ -13,7 +13,12 @@ python3 .github/check-platform-deps.py
 cd fern-ui && pnpm check && pnpm build
 ```
 
-CI 跑的就是这五条。
+CI 跑的就是这五条。动过 `fern-site` 或 `fern-kit` 的话再加一条——官网那条流水线
+构建不过就发不出去，而它没有别的检查环节：
+
+```bash
+cd fern-site && pnpm build
+```
 
 ## 陷阱
 

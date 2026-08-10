@@ -1,0 +1,83 @@
+# 官网。
+#
+# 站变了就构建一遍，直接推到 Cloudflare Pages。和另外两条的分工：`package.yml`
+# 管「每次提交都能编过」，`release.yml` 管「桌面端发得出去」，这一条只管官网。
+#
+# 构建放在 Actions 里，不用 Pages 自己的 Git 集成——Pages 的构建环境要自己再钉一遍
+# Node 和 pnpm 版本，而这个仓库是 pnpm 工作区，官网直接引 `fern-kit` 的源码。同一份
+# 工具链在两个地方各配一次，迟早会分叉。所以这里只把构建好的目录传上去。
+#
+# **需要的仓库配置**（缺任何一项都会在部署那一步失败，不会静悄悄发错）：
+#
+#   secrets.CLOUDFLARE_API_TOKEN   权限只要 Account → Cloudflare Pages → Edit
+#   secrets.CLOUDFLARE_ACCOUNT_ID  账号 id，和 release.yml 里的 R2_ACCOUNT_ID 是同一个值
+#
+# Pages 项目名写死成 `fern-site`，不走仓库变量：它不是密钥，也不随环境变化，而一个
+# 没设的变量会变成一次名字为空的部署。名字对不上时 wrangler 直接报错停下。
+
+name: Deploy the site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # fern-kit 也在里面。官网那些「真实界面」不是截图，是真的把 kit 的组件渲染
+      # 出来——kit 改了，站上看到的就变了。漏掉它的症状是官网静悄悄地停在旧版本，
+      # 而没有任何一次构建失败提醒你。
+      - 'fern-site/**'
+      - 'fern-kit/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # wrangler-action 会用 GITHUB_TOKEN 在提交上挂一条部署记录。
+  deployments: write
+
+# 只有最新的那一次有意义：连着推三个提交，中间那两版没人需要看到。
+concurrency:
+  group: site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      # 锁文件在工作区根，装依赖也必须在根跑：官网 import fern-kit，那条链接是
+      # pnpm 在工作区范围内建的（和 package.yml 里是同一个理由）。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # adapter-static 会把每一页都预渲染出来，站内链接指向不存在的路由时这一步
+      # 直接失败——这就是官网这条流水线的检查环节，不另设一个。
+      - name: Build the site
+        run: pnpm build
+        working-directory: fern-site
+
+      # wrangler 的版本不钉。Node 和 pnpm 钉住是因为它们决定构建出什么；wrangler
+      # 只是个把目录传上去的客户端，产物一个字节都不经它的手，而它对面那个 API 是
+      # 一直在走的。钉住反而是让一个只会越来越旧的客户端去够一个新接口。
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # `--branch` 必须显式给。actions/checkout 落在游离头指针上，wrangler 从
+          # git 里读不出分支名，于是这一次会被当成预览部署传上去——线上纹丝不动，
+          # 而流水线全绿。
+          command: pages deploy fern-site/build --project-name=fern-site --branch=main

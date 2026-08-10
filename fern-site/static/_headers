@@ -1,0 +1,12 @@
+# Cloudflare Pages 的响应头规则。这个文件不会被当成一个页面发出去，Pages 读完就
+# 把它拿掉了（见 developers.cloudflare.com/pages/configuration/headers/）。
+#
+# Pages 默认给所有资源发 `Cache-Control: public, max-age=0, must-revalidate`，靠
+# ETag 换 304。对会变的东西这是对的；对 Vite 按内容哈希命名的那批不是——文件名里
+# 已经带着内容的指纹，改一个字节就是另一个文件名，却仍然每次访问都往回问一趟。
+#
+# 只放宽这一批。字体不在此列：`/fonts/inter-var.woff2` 的名字是固定的，重新裁一遍
+# 字（scripts/subset-fonts.py）还是这个名字，钉死一年就是让人一年拿不到新的。
+
+/_app/immutable/*
+  Cache-Control: public, max-age=31536000, immutable
