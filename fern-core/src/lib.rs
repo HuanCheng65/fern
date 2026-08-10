@@ -35,7 +35,7 @@ mod update;
 pub use account::Account;
 pub use account::credentials::{client_token, store_secret};
 pub use account::microsoft::{
-    DeviceCodeChallenge, MicrosoftSession, begin_login as begin_microsoft_login,
+    DeviceCodeChallenge, MicrosoftSession, Nudge, begin_login as begin_microsoft_login,
     ensure_fresh as refresh_microsoft_session, finish_login as finish_microsoft_login,
 };
 pub use account::roster::{

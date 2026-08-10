@@ -15,6 +15,7 @@
 //! 应用先有调用记录才受理审批。这条链现在就该跑，跑出来的 403 正是申请的
 //! 前提；批准之后同一段代码不用改。
 
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
@@ -70,6 +71,10 @@ pub struct DeviceCodeChallenge {
     pub user_code: String,
     /// 让用户去这个地址输入。
     pub verification_uri: String,
+    /// 同一个地址，但把码也带上了。有的话就用它开浏览器——省掉抄写那一步。
+    /// 微软目前不给，但这是 RFC 8628 里的标准字段，给了就该用上。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_uri_complete: Option<String>,
     /// 还剩多少秒。
     pub expires_in: u64,
     /// 轮询间隔，服务端指定。
@@ -85,6 +90,8 @@ struct DeviceCodeResponse {
     device_code: String,
     user_code: String,
     verification_uri: String,
+    #[serde(default)]
+    verification_uri_complete: Option<String>,
     expires_in: u64,
     #[serde(default = "default_interval")]
     interval: u64,
@@ -92,6 +99,57 @@ struct DeviceCodeResponse {
 
 fn default_interval() -> u64 {
     5
+}
+
+/// 轮询间隔的上限。
+///
+/// 服务端说 `slow_down` 就往上加，但不能一路加到用户以为登录卡死了：他此刻
+/// 正盯着启动器等它反应过来。
+const MAX_INTERVAL: u64 = 15;
+
+/// 催一下那条正在轮询的登录。
+///
+/// device code flow 里有两个对不上的时钟：用户在浏览器里按下「确认」的那一刻，
+/// 我们这边可能才刚睡下，最坏要等满一个轮询间隔才发现。界面上那颗「我已完成
+/// 登录」按下时 poke 一下，就把这一觉打断，立刻再问一次。
+///
+/// 没有人在等的时候 poke 不会丢——`notify_one` 会把这一次记下来，下一次等待
+/// 立即返回。所以「按得比轮询快」也不会白按。
+#[derive(Clone, Default)]
+pub struct Nudge(Arc<tokio::sync::Notify>);
+
+impl Nudge {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 用户说他已经登完了。
+    pub fn poke(&self) {
+        self.0.notify_one();
+    }
+
+    /// 睡这么久，或者睡到被 poke 醒——哪个先来算哪个。
+    async fn rest(&self, delay: Duration) {
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {}
+            _ = self.0.notified() => {}
+        }
+    }
+}
+
+/// 一次轮询问出来的结果。**只有真的没救了才是 `Err`。**
+///
+/// 这个区分是这一段的全部意义：轮询要跑十几分钟，其间网络抖一下、代理断一次、
+/// 服务端 502 一回都太正常了，而那时候用户正在浏览器里输码——把这些当成登录
+/// 失败，等于让一次丢包作废整场登录。
+enum Progress {
+    Done(TokenResponse),
+    /// 用户还没点完。这是这条流程的常态，不是错误。
+    Pending,
+    /// 服务端嫌我们问得太勤。
+    SlowDown,
+    /// 这一次没问成，下一次再说。
+    Hiccup(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,12 +204,19 @@ struct MinecraftProfile {
     name: String,
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("valid microsoft auth client")
+/// 认证用的那个 HTTP 客户端。
+///
+/// 只建一次。轮询一次登录要发上百个请求，每次现建一个客户端就是每次重来一遍
+/// TLS 握手和连接池——那正是「点完了还要等好一会儿」里看不见的那部分。
+fn client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("valid microsoft auth client")
+    })
 }
 
 fn now_seconds() -> u64 {
@@ -180,15 +245,21 @@ pub async fn begin_login() -> Result<DeviceCodeChallenge> {
     Ok(DeviceCodeChallenge {
         user_code: device.user_code,
         verification_uri: device.verification_uri,
+        verification_uri_complete: device
+            .verification_uri_complete
+            .filter(|uri| !uri.is_empty()),
         expires_in: device.expires_in,
-        interval: device.interval.max(1),
+        interval: device.interval.clamp(1, MAX_INTERVAL),
         device_code: device.device_code,
     })
 }
 
 /// 第二步到第五步：等用户在浏览器里点完，然后把整条链走到底。
-pub async fn finish_login(challenge: &DeviceCodeChallenge) -> Result<MicrosoftSession> {
-    let msa = poll_for_token(challenge).await?;
+pub async fn finish_login(
+    challenge: &DeviceCodeChallenge,
+    nudge: &Nudge,
+) -> Result<MicrosoftSession> {
+    let msa = poll_for_token(challenge, nudge).await?;
     complete_chain(msa.access_token, msa.refresh_token).await
 }
 
@@ -223,44 +294,86 @@ pub async fn ensure_fresh(session: &MicrosoftSession) -> Result<MicrosoftSession
     complete_chain(token.access_token, refresh).await
 }
 
-async fn poll_for_token(challenge: &DeviceCodeChallenge) -> Result<TokenResponse> {
+async fn poll_for_token(challenge: &DeviceCodeChallenge, nudge: &Nudge) -> Result<TokenResponse> {
     let deadline = now_seconds() + challenge.expires_in;
     let mut interval = challenge.interval;
+    // 上一次问的时候出了什么事。问通了就清掉——超时那句话要说的是最后发生了
+    // 什么，而不是十分钟里曾经断过一次网。
+    let mut hiccup: Option<String> = None;
     loop {
-        tokio::time::sleep(Duration::from_secs(interval)).await;
-        if now_seconds() >= deadline {
-            return Err(anyhow!("登录码已过期，请重新发起登录"));
+        let left = deadline.saturating_sub(now_seconds());
+        if left == 0 {
+            return Err(match hiccup {
+                Some(reason) => anyhow!("登录未能完成：{reason}"),
+                None => anyhow!("登录码已过期，请重新发起登录"),
+            });
         }
+        nudge.rest(Duration::from_secs(interval.min(left))).await;
 
-        let response = client()
-            .post(TOKEN_URL)
-            .form(&[
-                ("client_id", CLIENT_ID),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                ("device_code", challenge.device_code.as_str()),
-            ])
-            .send()
-            .await
-            .context("轮询微软令牌")?;
-        let status = response.status();
-        let bytes = response.bytes().await.context("读取令牌响应")?;
-        if status.is_success() {
-            return serde_json::from_slice(&bytes).context("解析令牌响应");
+        match ask_once(challenge).await? {
+            Progress::Done(token) => return Ok(token),
+            Progress::Pending => hiccup = None,
+            Progress::SlowDown => {
+                hiccup = None;
+                interval = (interval + 5).min(MAX_INTERVAL);
+            }
+            Progress::Hiccup(reason) => hiccup = Some(reason),
         }
+    }
+}
 
-        let error: OAuthError = serde_json::from_slice(&bytes).unwrap_or(OAuthError {
-            error: String::new(),
-            error_description: String::new(),
+/// 问一次「用户点完了吗」。
+async fn ask_once(challenge: &DeviceCodeChallenge) -> Result<Progress> {
+    let sent = client()
+        .post(TOKEN_URL)
+        .form(&[
+            ("client_id", CLIENT_ID),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", challenge.device_code.as_str()),
+        ])
+        .send()
+        .await;
+    let response = match sent {
+        Ok(response) => response,
+        Err(error) => return Ok(Progress::Hiccup(format!("{error}"))),
+    };
+    let status = response.status();
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(error) => return Ok(Progress::Hiccup(format!("{error}"))),
+    };
+    classify(&bytes, status)
+}
+
+/// 这一次的响应意味着什么。
+///
+/// 单独拎出来是为了能测：这段判断决定了「一次网络抖动」和「登录失败」的分界，
+/// 而它错的时候没有任何编译期或运行期的迹象——只有用户在半路上被踢出来。
+fn classify(bytes: &[u8], status: reqwest::StatusCode) -> Result<Progress> {
+    if status.is_success() {
+        // 读不懂一份 200 也再试一次：登录码还有效，而放弃的代价是整场重来。
+        return Ok(match serde_json::from_slice(bytes) {
+            Ok(token) => Progress::Done(token),
+            Err(error) => Progress::Hiccup(format!("{error}")),
         });
-        match error.error.as_str() {
-            // 用户还没点完，这是正常状态而不是错误。
-            "authorization_pending" => continue,
-            // 服务端嫌我们问得太勤，照做。
-            "slow_down" => interval += 5,
-            "expired_token" => return Err(anyhow!("登录码已过期，请重新发起登录")),
-            "authorization_declined" => return Err(anyhow!("登录请求已在浏览器中被拒绝")),
-            _ => return Err(oauth_error(&bytes, status)),
+    }
+
+    let error: OAuthError = serde_json::from_slice(bytes).unwrap_or(OAuthError {
+        error: String::new(),
+        error_description: String::new(),
+    });
+    match error.error.as_str() {
+        "authorization_pending" => Ok(Progress::Pending),
+        "slow_down" => Ok(Progress::SlowDown),
+        "expired_token" => Err(anyhow!("登录码已过期，请重新发起登录")),
+        "authorization_declined" => Err(anyhow!("登录请求已在浏览器中被拒绝")),
+        // 认不出来的那些分两种：服务端自己出了问题，等一等就好；请求本身不对，
+        // 再问一万次也是同一个答案。分不出来时按前者算——用户还站在浏览器前面，
+        // 而下一次轮询的代价只有几秒。
+        _ if status.is_server_error() || error.error.is_empty() => {
+            Ok(Progress::Hiccup(format!("{}", oauth_error(bytes, status))))
         }
+        _ => Err(oauth_error(bytes, status)),
     }
 }
 
@@ -473,6 +586,7 @@ mod tests {
         let challenge = DeviceCodeChallenge {
             user_code: "ABCD-EFGH".to_owned(),
             verification_uri: "https://microsoft.com/link".to_owned(),
+            verification_uri_complete: None,
             expires_in: 900,
             interval: 5,
             device_code: "super-secret-device-code".to_owned(),
@@ -480,6 +594,60 @@ mod tests {
         let json = serde_json::to_string(&challenge).expect("serialize");
         assert!(json.contains("ABCD-EFGH"));
         assert!(!json.contains("super-secret-device-code"));
+    }
+
+    /// 一次丢包不该作废整场登录。
+    ///
+    /// 轮询要跑十几分钟，其间用户正在浏览器里输码——那段时间里网络抖一下、
+    /// 代理断一次、服务端 502 一回都太正常了。这条钉住的是那个分界：只有
+    /// 「服务端明确说不」才是 `Err`，其余一律再问一次。
+    #[test]
+    fn a_network_hiccup_is_not_a_failed_login() {
+        let transient = |body: &str, status: reqwest::StatusCode| {
+            matches!(
+                classify(body.as_bytes(), status),
+                Ok(Progress::Hiccup(_)) | Ok(Progress::Pending) | Ok(Progress::SlowDown)
+            )
+        };
+        assert!(transient(
+            r#"{"error":"authorization_pending"}"#,
+            reqwest::StatusCode::BAD_REQUEST
+        ));
+        assert!(transient(
+            r#"{"error":"slow_down"}"#,
+            reqwest::StatusCode::BAD_REQUEST
+        ));
+        // 服务端自己出问题，等一等就好。
+        assert!(transient(
+            "<html>bad gateway</html>",
+            reqwest::StatusCode::BAD_GATEWAY
+        ));
+        // 代理塞回来一页 HTML，连 error 字段都没有——同样不能判死刑。
+        assert!(transient(
+            "<html>captive portal</html>",
+            reqwest::StatusCode::FORBIDDEN
+        ));
+
+        // 而这两条是真的没救了，再问一万次也是同一个答案。
+        for body in [
+            r#"{"error":"expired_token"}"#,
+            r#"{"error":"authorization_declined"}"#,
+            r#"{"error":"invalid_client","error_description":"应用标识不对"}"#,
+        ] {
+            assert!(classify(body.as_bytes(), reqwest::StatusCode::BAD_REQUEST).is_err());
+        }
+    }
+
+    #[test]
+    fn the_polling_interval_stays_within_reach() {
+        // 服务端说慢一点就慢一点，但不能慢到用户以为登录卡死了。
+        let mut interval = 5;
+        for _ in 0..10 {
+            interval = (interval + 5).min(MAX_INTERVAL);
+        }
+        assert_eq!(interval, MAX_INTERVAL);
+        // 服务端给的初始间隔也照这个上限收。
+        assert_eq!(60_u64.clamp(1, MAX_INTERVAL), MAX_INTERVAL);
     }
 
     #[test]

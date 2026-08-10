@@ -1244,6 +1244,24 @@ async fn yggdrasil_login(
     .await?
 }
 
+/// 那条正在轮询的登录的催促口。
+///
+/// 全局一个：同一时刻只该有一场登录在进行（界面那边也拦着）。没有人在等的
+/// 时候催一下不会有任何后果。
+fn login_nudge() -> &'static fern_core::Nudge {
+    static NUDGE: std::sync::OnceLock<fern_core::Nudge> = std::sync::OnceLock::new();
+    NUDGE.get_or_init(fern_core::Nudge::new)
+}
+
+/// 「我已经在浏览器里登完了」。
+///
+/// 轮询本来就会自己发现，这颗按钮省下的是那几秒的等待——而那几秒发生在用户
+/// 已经做完自己那一半、正盯着启动器看的时候，是整条流程里最难熬的一段。
+#[tauri::command]
+fn check_microsoft_login() {
+    login_nudge().poke();
+}
+
 /// 微软正版登录。
 ///
 /// device code flow：先要一个八位码，把它发给界面显示，然后一直轮询直到
@@ -1257,7 +1275,7 @@ async fn microsoft_login(app: tauri::AppHandle) -> Result<fern_core::AccountReco
     // DeviceCodeChallenge 序列化时会跳过 device_code，只带 user_code 出去。
     let _ = app.emit("microsoft-device-code", &challenge);
 
-    let session = fern_core::finish_microsoft_login(&challenge)
+    let session = fern_core::finish_microsoft_login(&challenge, login_nudge())
         .await
         .map_err(|error| format!("{error:#}"))?;
     off_thread(move || {
@@ -1404,6 +1422,7 @@ pub fn run() {
             remove_account,
             set_instance_account,
             microsoft_login,
+            check_microsoft_login,
             yggdrasil_login,
             memory_budget,
             list_java_runtimes,

@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
     );
     std::io::stdout().flush()?;
 
-    match fern_core::finish_microsoft_login(&challenge).await {
+    match fern_core::finish_microsoft_login(&challenge, &fern_core::Nudge::new()).await {
         Ok(session) => {
             println!();
             println!("登录成功：{} / {}", session.player_name, session.uuid);
