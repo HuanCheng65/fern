@@ -22,9 +22,8 @@
    * 的 Steve 是完全合法的状态（`roster.rs` 的去重键是 kind + uuid + 皮肤站），
    * 光有名字根本分不开。
    */
-  import { ChevronDown, Play, Plus, X } from 'lucide-svelte'
   import { palette } from 'fern-kit/parts/palette'
-  import AccountFace from '../components/AccountFace.svelte'
+  import LaunchHero from 'fern-kit/parts/LaunchHero.svelte'
   import Stage from '../layouts/Stage.svelte'
   import { accounts, launchIdentity, originOf, switchAction } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
@@ -32,6 +31,7 @@
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
+  import { skins } from '../lib/skins.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
@@ -100,101 +100,42 @@
 
 <Stage>
   {#if current}
-      <!--
-        题头。它在实例名之上，读下来是「以这个身份 · 玩这个世界 · 启动」。
-      -->
-      {#if identity}
-        <button class="hail" onclick={switchIdentity} title="切换账户">
-          <span class="salute">{salutation}，</span>
-          <AccountFace account={identity} size={26} round />
-          <span class="who">{identity.playerName}</span>
-          {#if ambiguous}<span class="origin">· {originOf(identity)}</span>{/if}
-          <ChevronDown size={15} strokeWidth={1.8} />
-        </button>
-      {:else if !accounts.loading}
-        <!-- 一个账户都没有时，这一行就是这一屏此刻唯一该做的事。 -->
-        <button class="hail none" onclick={() => nav.show('settings', 'account/list/new')}>
-          <Plus size={15} strokeWidth={2} />尚未添加账户
-        </button>
-      {/if}
-
-      <button class="name" onclick={onswitch} title="切换实例">
-        <span>{current.name}</span>
-        <ChevronDown size={26} strokeWidth={1.6} />
-      </button>
-
-      <p class="meta t-mono">
-        Minecraft {current.gameVersion} · {current.loader}
-        <!-- 这一屏把管理欲望引去实例详情，却一直没给出那扇门。就在这里。 -->
-        <Button variant="link" onclick={() => nav.enter('instances', current.id)}>
-          管理
-        </Button>
-      </p>
-
-      <div class="go-row">
-        <!-- 游戏已经开着的时候不再提供「启动」：再点一下会起第二个进程，
-             两份游戏抢同一个存档目录。 -->
-        <Button
-          variant="primary"
-          class="go {working ? 'busy' : ''}"
-          onclick={() => void launch.launch(current.id)}
-          disabled={phase !== undefined || job !== undefined}
-        >
-          <span
-            class="fill"
-            class:pulse={working && done === undefined}
-            style:width={done === undefined ? '100%' : `${done * 100}%`}
-          ></span>
-          <span class="go-text">
-            {#if phase === 'running'}
-              游戏运行中
-            {:else if phase === 'starting'}
-              正在启动
-            {:else if job}
-              {job.stage || job.title}
-            {:else if working}
-              准备中
-            {:else}
-              <Play size={16} fill="currentColor" strokeWidth={0} />启动游戏
-            {/if}
-          </span>
-        </Button>
-
-        <!--
-          结束只在游戏真的起来之后出现，而且说的是「强制」：这是 kill，没存
-          的进度会丢。它存在的理由是游戏已经不响应了。
-        -->
-        {#if phase === 'running' || phase === 'starting'}
-          <Button variant="ghost" onclick={() => void launch.stop(current.id)}>
-            强制结束
-          </Button>
-        {/if}
-
-        {#if job && measure(job)}
-          <span class="detail t-mono">{measure(job)}</span>
-        {/if}
-      </div>
-
-      <!--
-        只说一句，不在这一屏展开：它不拦启动，但按下去多半会崩，用户有权在
-        按之前知道。详细的几条在实例详情里。
-      -->
-      {#if blocking.length > 0}
-        <button class="warn" onclick={() => nav.enter('instances', current.id)}>
-          {blocking.length === 1
-            ? blocking[0].title
-            : `启动前有 ${blocking.length} 个问题`}<span class="t-quiet">查看</span>
-        </button>
-      {/if}
-
-      {#if launch.error}
-        <div class="alert error">
-          <span>{launch.error}</span>
-          <Button variant="icon" aria-label="关闭" onclick={() => launch.dismissError()}>
-            <X size={14} />
-          </Button>
-        </div>
-      {/if}
+    <!--
+      这一屏的样子在 `fern-kit/parts/LaunchHero.svelte`。留在这里的是产品才知道的
+      事：谁是当前实例、按下启动用谁的身份、作业跑到哪、预检查拦不拦。
+    -->
+    <LaunchHero
+      name={current.name}
+      detail={`Minecraft ${current.gameVersion} · ${current.loader}`}
+      identity={identity
+        ? {
+            name: identity.playerName,
+            face: skins.face(identity),
+            origin: ambiguous ? originOf(identity) : undefined,
+          }
+        : undefined}
+      {salutation}
+      noAccount={!identity && !accounts.loading}
+      {phase}
+      jobLabel={job ? job.stage || job.title : undefined}
+      {done}
+      {working}
+      measure={job ? measure(job) : undefined}
+      warn={blocking.length === 1
+        ? blocking[0].title
+        : blocking.length > 1
+          ? `启动前有 ${blocking.length} 个问题`
+          : undefined}
+      error={launch.error}
+      onidentity={switchIdentity}
+      onaddaccount={() => nav.show('settings', 'account/list/new')}
+      {onswitch}
+      onmanage={() => nav.enter('instances', current.id)}
+      onlaunch={() => void launch.launch(current.id)}
+      onstop={() => void launch.stop(current.id)}
+      onwarn={() => nav.enter('instances', current.id)}
+      ondismiss={() => launch.dismissError()}
+    />
   {:else}
       <h1 class="t-display">创建第一个实例</h1>
       <div class="go-row">
@@ -209,185 +150,13 @@
 </Stage>
 
 <style>
-  /*
-   * 题头。19px 而不是 12px——弄错身份的代价是进错服、白名单不认、存档里那不是
-   * 你的背包，重量该跟代价走，不跟操作频次走。实例名仍然是它的两三倍，主角没变。
-   */
-  .hail {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s1);
-    max-width: 100%;
-    margin-bottom: var(--s3);
-    padding: 0;
-    color: var(--ink-2);
-    font-size: var(--t-h2);
-    font-weight: 480;
-    letter-spacing: -0.01em;
-    transition: color var(--t-fast) var(--ease);
-  }
-
-  .hail:hover {
-    color: var(--ink);
-  }
-
-  .salute {
-    /* 逗号自己撑开了间距，再给一格就散了。 */
-    margin-right: calc(var(--s1) * -1);
-  }
-
-  .who {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* 出处比名字轻一档：它是用来分辨的，不是名字的一部分。 */
-  .origin {
-    color: var(--ink-3);
-    font-size: var(--t-body);
-  }
-
-  .hail :global(svg) {
-    flex: none;
-    margin-left: var(--s1);
-    color: var(--ink-4);
-    transition:
-      color var(--t-fast) var(--ease),
-      transform var(--t-base) var(--spring);
-  }
-
-  .hail:hover :global(svg) {
-    color: var(--accent);
-    transform: translateY(2px);
-  }
-
-  /* 没有账户是这一屏的空态，不是一句提示：它比问候语更该被看见。 */
-  .hail.none {
-    color: var(--ink);
-    font-size: var(--t-body);
-  }
-
-  .hail.none :global(svg) {
-    margin-left: 0;
-    color: var(--accent);
-  }
-
-  .hail.none:hover :global(svg) {
-    transform: none;
-  }
-
-  /* 实例名同时是切换器的入口——文档里说点实例名呼出切换器。 */
-  .name {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
-    max-width: 100%;
-    padding: 0;
-    color: var(--ink);
-    font-size: var(--t-display);
-    font-weight: 620;
-    line-height: 1.02;
-    letter-spacing: -0.035em;
-    text-align: left;
-    transition: color var(--t-fast) var(--ease);
-  }
-
-  .name span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .name :global(svg) {
-    flex: none;
-    color: var(--ink-4);
-    transition:
-      color var(--t-fast) var(--ease),
-      transform var(--t-base) var(--spring);
-  }
-
-  .name:hover :global(svg) {
-    color: var(--accent);
-    transform: translateY(2px);
-  }
-
-  .meta {
-    display: flex;
-    align-items: baseline;
-    gap: var(--s3);
-    margin: var(--s3) 0 0;
-    color: var(--ink-3);
-  }
-
-  /* 等宽只留给机器数据，「管理」两个字不是。 */
+  /* 空态：一个实例都没有的时候，这一屏只做一件事。启动那一屏的样子在
+     fern-kit/parts/LaunchHero.svelte。 */
   .go-row {
     display: flex;
     align-items: center;
     gap: var(--s4);
     margin-top: var(--s5);
-  }
-
-  /* 启动是英雄交互，进度就长在按钮上，不另起一个进度条区域。 */
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .go-row :global(.go) {
-    position: relative;
-    isolation: isolate;
-    min-width: 190px;
-    min-height: var(--control-lg);
-    overflow: hidden;
-  }
-
-  .go-row :global(.go.busy) {
-    cursor: progress;
-  }
-
-  .fill {
-    position: absolute;
-    inset: 0 auto 0 0;
-    z-index: -1;
-    background: rgba(0, 0, 0, 0.24);
-    transition: width var(--t-slow) var(--ease);
-  }
-
-  /* 进度未知时不停在 0%，让一道暗光自己走一趟。 */
-  .fill.pulse {
-    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.26) 50%, transparent);
-    animation: sweep 1.6s var(--ease) infinite;
-  }
-
-  @keyframes sweep {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(100%);
-    }
-  }
-
-  .go-text {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s2);
-  }
-
-  /* 不是错误，是一条提醒——所以它安静，但点得开。 */
-  .warn {
-    display: flex;
-    align-items: baseline;
-    gap: var(--s2);
-    margin-top: var(--s3);
-    color: var(--ink-2);
-    font-size: var(--t-small);
-  }
-
-  .warn:hover {
-    color: var(--ink);
-  }
-
-  .detail {
-    color: var(--ink-3);
-    font-variant-numeric: tabular-nums;
   }
 
   .error {
