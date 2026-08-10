@@ -14,6 +14,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { inTauri, instances } from './instances.svelte'
 import { nav } from './nav.svelte'
+import { offlineLoginAllowed } from './region'
 import { commands, provides, type Action } from 'fern-kit/parts/palette'
 
 export type AccountKind = 'offline' | 'microsoft' | 'authlib'
@@ -26,6 +27,25 @@ export interface Account {
   /** 只有外置登录有。同一个名字在不同皮肤站是不同的人。 */
   apiRoot: string | null
   addedAt: number
+}
+
+/**
+ * 现在能添加哪几种身份，按该被先看到的顺序。
+ *
+ * 一份定义三处使用：设置里那颗「添加账户」展开的菜单、添加页的兜底、首次
+ * 启动向导。三处各写一遍的下场是文案会漂，而选错的代价由用户承担。
+ *
+ * 离线那一支按地区提供（见 lib/region.ts）。关掉的只是这个入口——名册里已有
+ * 的离线账户照常能用、能切换、能启动。
+ */
+export function addableKinds(): { kind: AccountKind; title: string; note: string }[] {
+  return [
+    { kind: 'microsoft', title: '微软账户', note: '正版登录，支持联机、皮肤与成就' },
+    { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 兼容皮肤站' },
+    ...(offlineLoginAllowed()
+      ? [{ kind: 'offline' as const, title: '离线模式', note: '仅可游玩本地世界与离线服务器' }]
+      : []),
+  ]
 }
 
 /** 正版登录等待期间要显示的那一段。令牌不在里面，这一份可以放心进 webview。 */

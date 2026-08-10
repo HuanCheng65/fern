@@ -37,7 +37,7 @@
   import { javaLabel, megabytes, type JavaGroup } from 'fern-kit/parts/java'
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
-  import { accounts } from '../lib/accounts.svelte'
+  import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { SETTINGS_SECTIONS } from '../lib/settings-catalog'
   import { ui } from '../lib/i18n'
   import { expand } from '../lib/motion'
@@ -92,6 +92,14 @@
   /** 二级页属于哪一行。`分区/行`。 */
   const page = $derived(location.slice(0, 2).join('/'))
   const target = $derived(location.length >= 3 ? location[2] : '')
+  /**
+   * 目标自己还带的一段。
+   *
+   * 目前只有一处用得上：`account/list/new/microsoft` 说的是「添加账户，而且
+   * 已经选好了哪一种」——那一步在名单末尾那颗按钮上就做完了。不带这一段的
+   * `account/list/new` 仍然成立（⌘K 就落在那儿），只是要再问一次。
+   */
+  const detail = $derived(location.length >= 4 ? location[3]! : '')
 
   let section = $state<SectionId>('appearance')
   /**
@@ -383,7 +391,13 @@
             forget={forgetJavaPath}
           />
         {:else if target === 'new'}
-          <AddAccount ondone={(id) => nav.show('settings', `account/list${id ? `/${id}` : ''}`)} />
+          <!-- 换一个种类就是换一屏：那一屏的第一步已经由上一层做完了。 -->
+          {#key detail}
+            <AddAccount
+              initial={detail as AccountKind | ''}
+              ondone={(id) => nav.show('settings', `account/list${id ? `/${id}` : ''}`)}
+            />
+          {/key}
         {:else}
           <AccountProfile
             accountId={target}

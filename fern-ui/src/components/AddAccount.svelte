@@ -6,26 +6,41 @@
    * 外置要三个字段。上一版把三者塞进名单里就地展开，于是这一块的高度每选一次
    * 就跳一次，而且三张表单必须同时存在于同一段标记里。
    *
-   * 第一步只做一件事：说清楚三种方式各自是什么。这一步选错的代价不小——离线
-   * 账户进不了正版服务器，而这句话要在选之前说，不是在失败之后说。
+   * **哪一种由上一层决定。** 名单末尾那颗「添加账户」展开的就是这三条，选完
+   * 直接落在对应的表单上——分岔长在按钮上，不必再占一整屏。这里仍然留着那一屏：
+   * `account/list/new` 是可寻址的（⌘K 里的「添加账户」就落在这儿），没带上
+   * 种类时总得问一次。选错的代价不小，所以两处都写清楚每种是什么。
    */
+  import { untrack } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowLeft, ExternalLink } from 'lucide-svelte'
-  import { accounts, verificationTarget, type AccountKind } from '../lib/accounts.svelte'
+  import {
+    accounts,
+    addableKinds,
+    verificationTarget,
+    type AccountKind,
+  } from '../lib/accounts.svelte'
   import { notices } from '../lib/notices.svelte'
-  import { offlineLoginAllowed } from '../lib/region'
   import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
 
   interface Props {
     /** 加成了就带着新账户的 id 回去，取消则不带。 */
     ondone: (id?: string) => void
+    /** 上一层已经选好了哪一种。空串表示还得在这里问。 */
+    initial?: AccountKind | ''
   }
 
-  let { ondone }: Props = $props()
+  let { ondone, initial = '' }: Props = $props()
 
-  /** 空串表示还停在第一步。 */
-  let kind = $state<AccountKind | ''>('')
+  /**
+   * 空串表示还停在选择那一步。
+   *
+   * 只取一次上一层给的那个值：进来之后它就归这一屏管了——按「换一种方式」
+   * 退回选择步骤，不该被那个还挂在地址上的种类再拽回去。地址换了种类时
+   * 由调用方重建这一屏（见 routes/Settings.svelte 里的 `{#key}`）。
+   */
+  let kind = $state<AccountKind | ''>(untrack(() => initial))
   let offlineName = $state('')
   let apiRoot = $state('https://littleskin.cn/api/yggdrasil')
   let username = $state('')
@@ -38,15 +53,7 @@
   /** 交给系统浏览器。后端只放行 https。 */
   const openExternal = (url: string) => void invoke('open_external', { url })
 
-  // 离线登录按地区提供，和首次启动向导用的是同一条判断（见 lib/region.ts）。
-  // 关掉的只是这个入口，名册里已有的离线账户照常能用。
-  const KINDS: { kind: AccountKind; title: string; note: string }[] = [
-    { kind: 'microsoft', title: '微软账户', note: '正版登录，支持联机、皮肤与成就' },
-    { kind: 'authlib', title: '外置登录', note: 'LittleSkin 等 Yggdrasil 兼容皮肤站' },
-    ...(offlineLoginAllowed()
-      ? [{ kind: 'offline' as const, title: '离线模式', note: '仅可游玩本地世界与离线服务器' }]
-      : []),
-  ]
+  const KINDS = addableKinds()
 
   /** 加完之后新出现的那一个就是它。名册按添加顺序排，最新的在最后。 */
   const newest = () => accounts.list[accounts.list.length - 1]?.id

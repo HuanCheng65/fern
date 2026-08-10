@@ -19,6 +19,7 @@
     "./ui/Field.svelte": "./src/ui/Field.svelte",
     "./ui/Input.svelte": "./src/ui/Input.svelte",
     "./ui/Select.svelte": "./src/ui/Select.svelte",
+    "./ui/Menu.svelte": "./src/ui/Menu.svelte",
     "./ui/MemoryMeter.svelte": "./src/ui/MemoryMeter.svelte",
     "./ui/Mark.svelte": "./src/ui/Mark.svelte",
     "./ui/Cover.svelte": "./src/ui/Cover.svelte",

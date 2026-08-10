@@ -16,12 +16,22 @@
    */
   import { Check, ChevronRight, Plus } from 'lucide-svelte'
   import AccountFace from './AccountFace.svelte'
-  import { accounts, originOf } from '../lib/accounts.svelte'
+  import { accounts, addableKinds, originOf, type AccountKind } from '../lib/accounts.svelte'
   import { nav } from '../lib/nav.svelte'
-  import Button from 'fern-kit/ui/Button.svelte'
+  import Menu from 'fern-kit/ui/Menu.svelte'
 
   /** 二级页的地址。这一行本身的 id 是 `account/list`。 */
   const open = (target: string) => nav.show('settings', `account/list/${target}`)
+
+  /**
+   * 「添加账户」展开的就是三种方式本身。
+   *
+   * 之前点进去先撞上一屏三选一——那一屏没有内容，只有分岔，而分岔本来可以长在
+   * 按钮上。选完直接落在对应的表单上，少一次点击，也少一次「我到底走到哪了」。
+   */
+  const kinds = $derived(
+    addableKinds().map((item) => ({ value: item.kind, label: item.title, note: item.note })),
+  )
 </script>
 
 <div class="accounts">
@@ -56,9 +66,13 @@
   </ul>
 
   <div class="add">
-    <Button variant="ghost" onclick={() => open('new')}>
+    <Menu
+      aria-label="添加账户"
+      items={kinds}
+      onpick={(kind: AccountKind) => open(`new/${kind}`)}
+    >
       <Plus size={14} strokeWidth={2} />添加账户
-    </Button>
+    </Menu>
   </div>
 
   {#if accounts.error}<div class="alert">{accounts.error}</div>{/if}
