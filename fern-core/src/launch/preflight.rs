@@ -11,7 +11,9 @@
 //! **只报确定的事。** 可选依赖缺了不报，禁用的模组不参与依赖判断但会被单独提
 //! 一句。一个基于误解的警告会让用户去动一个本来没问题的模组，比不报更糟。
 //!
-//! 版本区间看不懂就当满足，见 `launch::ranges`。
+//! 于是看不懂的版本区间往哪边倒，要看这一条在问什么：问「它适配吗」时当作
+//! 满足，问「它会不会和谁打架」时当作不满足。两边都是同一句「宁可漏报」，
+//! 而写成同一个函数就会有一边说反（见 `ranges::contains`）。
 //!
 //! 预检查**不阻止启动**。它给的是判断依据，不是许可——用户可能比我们更清楚。
 //!
@@ -24,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     DataPaths, InstanceProfile, LoaderKind,
-    instance::jar::{self, Manifest, ModJar},
+    instance::jar::{self, Manifest, ModJar, Relation},
     launch::{crash::Action, mcversion, ranges},
 };
 
@@ -60,17 +62,20 @@ pub mod kind {
     pub const MISSING_DEPENDENCY: &str = "missing-dependency";
     /// 前置装了，但被关掉了。
     pub const DISABLED_DEPENDENCY: &str = "disabled-dependency";
+    /// 两个模组装在一起会起不来。
+    pub const INCOMPATIBLE: &str = "incompatible";
     /// 模组要求的 Java 大版本，不是这个实例会用的那个。
     pub const WRONG_JAVA: &str = "wrong-java";
 
     /// 全部取值。界面那边的文案表按它对齐。
-    pub const ALL: [&str; 7] = [
+    pub const ALL: [&str; 8] = [
         NO_LOADER,
         DUPLICATE,
         WRONG_LOADER,
         WRONG_GAME_VERSION,
         MISSING_DEPENDENCY,
         DISABLED_DEPENDENCY,
+        INCOMPATIBLE,
         WRONG_JAVA,
     ];
 }
@@ -263,6 +268,7 @@ pub fn inspect(
         .collect();
     findings.extend(wrong_game_version(&loadable, minecraft, loader));
     findings.extend(missing_dependencies(jars, &loadable, loader));
+    findings.extend(incompatible(&loadable));
     findings.extend(wrong_java(&loadable, java_major));
     findings.sort_by_key(|finding| finding.severity);
     findings
@@ -472,6 +478,78 @@ fn missing_dependencies(
     }
     findings.sort_by(|left, right| left.id.cmp(&right.id));
     findings
+}
+
+/// 两个模组装在一起会起不来。
+///
+/// 和「缺前置」正好相反的那一条：`incompatible` 说的是「这个模组在场，我就拒绝
+/// 加载」，加载器真的会照此罢工。补丁型模组最爱用它——AllTheLeaks 一口气点名十
+/// 来个模组的老版本，理由是那些版本有内存泄漏。
+///
+/// **只在能确定的时候说话。** 要三件事同时成立：那个模组确实装着、它的版本号
+/// 读得出来、而那个版本号**确定**落在点名的区间里。区间看不懂就闭嘴——别处的
+/// 「看不懂就当满足」在这里会变成凭空捏造一条冲突，而这一条是拦路的红字。
+///
+/// `discouraged` 不在这里。加载器自己也只是记一行日志然后照常启动，那是「可能
+/// 有问题」，不是「起不来」，我们不跟着喊。
+fn incompatible(loadable: &[(&ModJar, &Manifest)]) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (jar, manifest) in loadable {
+        let refused = manifest
+            .depends
+            .iter()
+            .filter(|dependency| dependency.relation == Relation::Incompatible);
+        for dependency in refused {
+            let Some(other) = loadable
+                .iter()
+                .map(|(other, _)| *other)
+                .filter(|other| other.file_name != jar.file_name)
+                .find(|other| other.supplies(&dependency.mod_id))
+            else {
+                continue;
+            };
+            // 版本号读不出来就没法判断它落不落在区间里，而「装了就是冲突」
+            // 只在区间是「所有版本」时才成立——那种写法这里一样走得通。
+            let Some(version) = other.version.as_deref() else {
+                continue;
+            };
+            if ranges::contains(&dependency.range, version) != Some(true) {
+                continue;
+            }
+            findings.push(Finding {
+                id: format!(
+                    "{}:{}:{}",
+                    kind::INCOMPATIBLE,
+                    jar.file_name,
+                    dependency.mod_id
+                ),
+                kind: kind::INCOMPATIBLE.to_owned(),
+                severity: Severity::Blocking,
+                args: args([
+                    ("mod", jar.name.clone()),
+                    ("other", other.name.clone()),
+                    ("version", version.to_owned()),
+                    // Forge 那边不写 versionRange 就是「所有版本」。
+                    ("range", displayed_range(&dependency.range)),
+                ]),
+                // 不给按钮。删哪一个、还是把另一个升上去，这里判断不了——而多数
+                // 时候正确答案是后者，一颗「移除」会把用户带到反方向。
+                action: None,
+            });
+        }
+    }
+    findings.sort_by(|left, right| left.id.cmp(&right.id));
+    findings
+}
+
+/// 说给人看的区间。空的就是「所有版本」，写成通配符总好过一片空白。
+fn displayed_range(range: &str) -> String {
+    let range = range.trim();
+    if range.is_empty() {
+        "*".to_owned()
+    } else {
+        range.to_owned()
+    }
 }
 
 /// 模组要求的 Java 大版本，和这个实例会用的那个对不上。
@@ -994,6 +1072,75 @@ mod tests {
         assert!(
             inspect(
                 &[leaks],
+                LoaderKind::NeoForge,
+                &Game::of("1.21.1", None),
+                None
+            )
+            .is_empty()
+        );
+    }
+
+    /// 装了会起不来的那一条，现在会说出口。
+    ///
+    /// 只在三件事都成立时说：那个模组确实装着、版本号读得出来、而且那个版本确定
+    /// 落在点名的区间里。
+    #[test]
+    fn an_incompatibility_is_reported_when_the_other_mod_is_actually_there() {
+        let leaks = || {
+            related(
+                jar("All The Leaks", "alltheleaks", LoaderKind::NeoForge),
+                0,
+                "ambientsounds",
+                "(,6.1.0]",
+                Relation::Incompatible,
+            )
+        };
+        let ambient = |version: &str| {
+            let mut jar = jar("AmbientSounds", "ambientsounds", LoaderKind::NeoForge);
+            jar.version = Some(version.to_owned());
+            jar
+        };
+        let look = |jars: Vec<ModJar>| {
+            inspect(&jars, LoaderKind::NeoForge, &Game::of("1.21.1", None), None)
+        };
+
+        // 装的那一份落在区间里：这是加载器真的会拒绝启动的组合。
+        let findings = look(vec![leaks(), ambient("6.0.9")]);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].kind, kind::INCOMPATIBLE);
+        assert_eq!(findings[0].severity, Severity::Blocking);
+        assert_eq!(findings[0].args["mod"], "All The Leaks");
+        assert_eq!(findings[0].args["other"], "AmbientSounds");
+        assert_eq!(findings[0].args["version"], "6.0.9");
+        assert_eq!(findings[0].args["range"], "(,6.1.0]");
+        // 删哪一个、还是把另一个升上去，这里判断不了，所以不给按钮。
+        assert!(findings[0].action.is_none());
+
+        // 已经升上去了就没有话说——这才是绝大多数整合包的样子。
+        assert!(look(vec![leaks(), ambient("6.2.0")]).is_empty());
+        // 根本没装那个模组，更没有话说。
+        assert!(look(vec![leaks()]).is_empty());
+        // 版本号读不出来，判断不了它落不落在区间里，不猜。
+        let mut nameless = ambient("6.0.9");
+        nameless.version = None;
+        assert!(look(vec![leaks(), nameless]).is_empty());
+    }
+
+    /// 区间看不懂时不许报，这一条和别处的兜底方向正好相反。
+    #[test]
+    fn an_unreadable_range_never_becomes_a_conflict() {
+        let mut ambient = jar("AmbientSounds", "ambientsounds", LoaderKind::NeoForge);
+        ambient.version = Some("6.0.9".to_owned());
+        let leaks = related(
+            jar("All The Leaks", "alltheleaks", LoaderKind::NeoForge),
+            0,
+            "ambientsounds",
+            "谁知道这是什么",
+            Relation::Incompatible,
+        );
+        assert!(
+            inspect(
+                &[leaks, ambient],
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
                 None

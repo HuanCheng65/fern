@@ -33,6 +33,7 @@ export const BACKEND_MESSAGES = [
   'integrity.silent-rewrite',
   'preflight.disabled-dependency',
   'preflight.duplicate',
+  'preflight.incompatible',
   'preflight.missing-dependency',
   'preflight.no-loader',
   'preflight.wrong-game-version',

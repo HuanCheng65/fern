@@ -167,6 +167,11 @@ const backend = {
     title: '缺少前置模组：{dependency}',
     detail: '{mod} 需要 {dependency}，当前实例中没有安装。',
   },
+  'preflight.incompatible': {
+    title: '{mod} 与 {other} 不兼容',
+    detail:
+      '{mod} 声明不兼容 {range} 的 {other}，当前安装的是 {version}。升级 {other}，或移除其中一个。',
+  },
   'preflight.disabled-dependency': {
     title: '{dependency} 已被禁用',
     detail: '{mod} 需要它。在模组列表中重新启用即可。',
