@@ -49,11 +49,19 @@
     presences: Presence[]
     /** 钉住展开。不给就只有悬停会展开。 */
     pinned?: boolean
+    /**
+     * 0–1，按外部给的进度展开。给了它，`pinned` 和悬停都不再插手，那条过渡也关掉。
+     *
+     * 为滚动准备的。滚动里进度**就是**位置：再让宽高各自花 340ms 追过去，手停了动画
+     * 还在走，往回滚更是两个方向打架。所以驱动的一方要么是时间，要么是位置，不能都是。
+     * 变形本身一个字没改——动的还是那两个长度，只是这次谁在推它由调用方说了算。
+     */
+    unfold?: number
     /** 点表头。产品那边接的是导航里的浮层开关。 */
     ontoggle?: () => void
   }
 
-  let { presences, pinned = false, ontoggle }: Props = $props()
+  let { presences, pinned = false, unfold, ontoggle }: Props = $props()
 
   /** 展开后的宽度。够放下一行「补全游戏文件 · 412 MB / 1.1 GB · 8.2 MB/s」。 */
   const PANEL = 320
@@ -75,8 +83,7 @@
    * 看得见的那份却少一个字，正是这个尾数。
    *
    * 换 `getBoundingClientRect()` 能拿到小数，但那是**变换之后**的尺寸：谁把这座岛
-   * 缩放着搬走，放大量就被喂回宽度里，一帧比一帧宽。所以就地补一像素——代价是右边
-   * 多出不到一像素的留白，换任何长度的标签都不平白少一个字。
+   * 缩放着搬走，放大量就被喂回宽度里，一帧比一帧宽。所以就地补一像素——代价是右边多出不到一像素的留白，换任何长度的标签都不平白少一个字。
    */
   const SLACK = 1
 
@@ -88,13 +95,24 @@
   let hovering = $state(false)
   let timer: ReturnType<typeof setTimeout> | undefined
 
-  const open = $derived(pinned || hovering)
+  const driven = $derived(unfold !== undefined)
+  /** 展开到几成。自己开合时只有 0 和 1，剩下的路交给过渡；被驱动时是连续的。 */
+  const t = $derived(driven ? Math.max(0, Math.min(1, unfold as number)) : pinned || hovering ? 1 : 0)
+  const open = $derived(t > 0.5)
 
   /** 胶囊自己的宽（占位副本撑出来的）和面板的自然高。表面照这两个数定尺寸。 */
   let pillWidth = $state(0)
   let bodyHeight = $state(0)
 
+  /* 表面的两个长度。两头的值和以前一模一样，中间多了一条可以停下来的路。 */
+  const shut = $derived(pillWidth + SLACK)
+  const wide = $derived(shut + (PANEL - shut) * t)
+  const tall = $derived(HEAD + bodyHeight * t)
+  /* 内容比表面晚一点：同时出现会显得它是「贴」上去的，那正是自己开合时那 90ms 延迟的意思。 */
+  const reveal = $derived(Math.max(0, Math.min(1, (t - 0.35) / 0.5)))
+
   function hover(next: boolean) {
+    if (driven) return
     clearTimeout(timer)
     timer = setTimeout(() => (hovering = next), next ? 180 : 320)
   }
@@ -167,8 +185,9 @@
       {#if pillWidth > 0}
         <div
           class="surface tone-{main.tone}"
-          style:width={`${open ? PANEL : pillWidth + SLACK}px`}
-          style:height={`${open ? HEAD + bodyHeight : HEAD}px`}
+          class:driven
+          style:width={`${wide}px`}
+          style:height={`${tall}px`}
         >
           <button
             class="head"
@@ -191,7 +210,7 @@
             ></span>
           {/if}
 
-          <div class="body">
+          <div class="body" style:opacity={driven ? reveal : undefined}>
             <!-- offsetHeight 而不是 clientHeight：那些分隔线也得算进去。 -->
             <div class="inner" bind:offsetHeight={bodyHeight}>
               <!--
@@ -356,6 +375,15 @@
       width var(--t-slow) var(--spring),
       height var(--t-slow) var(--spring),
       box-shadow var(--t-base) var(--ease);
+  }
+
+  /*
+   * 由外部按进度驱动时，两个长度不再自己走——它们每一帧都已经是对的了。留着过渡
+   * 就是让宽高追着一个本来就到位的目标跑，手停下来动画还在滑，往回滚更是两头拽。
+   * 阴影不在此列：它只有开和关两个样子，淡入淡出仍然该由时间管。
+   */
+  .surface.driven {
+    transition: box-shadow var(--t-base) var(--ease);
   }
 
   .pill.open .surface {

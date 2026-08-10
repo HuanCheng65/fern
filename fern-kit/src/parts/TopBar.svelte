@@ -42,6 +42,8 @@
     mac?: boolean
     presences?: Presence[]
     islandPinned?: boolean
+    /** 0–1，按外部进度展开那座岛。见 Island 的 `unfold`。 */
+    islandUnfold?: number
     onisland?: () => void
     /** 有新版本时在设置键上点一个点。 */
     updateAvailable?: boolean
@@ -60,6 +62,7 @@
     mac = false,
     presences = [],
     islandPinned = false,
+    islandUnfold,
     onisland,
     updateAvailable = false,
     onbrand,
@@ -153,7 +156,12 @@
       是——切到任何场景，你都知道游戏还开着、东西还在下。顶栏不认识作业也不
       认识游戏，那是岛的事。
     -->
-    <Island {presences} pinned={islandPinned} ontoggle={() => onisland?.()} />
+    <Island
+      {presences}
+      pinned={islandPinned}
+      unfold={islandUnfold}
+      ontoggle={() => onisland?.()}
+    />
 
     <!--
       有新版本时在这里点一个点。不弹窗、不横幅、不加一行文字——更新是启动器
