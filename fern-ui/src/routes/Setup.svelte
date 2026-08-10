@@ -54,6 +54,10 @@
    */
   let nearby = $state('')
 
+  /** 那一屏里的导入组件，这一步的主按钮按下时由它提交。 */
+  let adopt = $state<{ commit: () => Promise<void> } | null>(null)
+  let adoptStatus = $state({ chosen: 0, busy: false })
+
   /** unknown：还没查过。missing：查过了，系统里没有可用的 Java。 */
   let java = $state<'unknown' | 'ok' | 'missing'>('unknown')
   let javaChecking = $state(false)
@@ -135,6 +139,17 @@
     } catch {
       nearby = ''
     }
+  }
+
+  /**
+   * 把选中的版本真的添加进来，然后往下走。
+   *
+   * 这一步的主按钮就是「添加」本身。之前它只是「继续」，而添加按钮长在下面那个
+   * 组件里——勾好了复选框按下最显眼的那颗，得到的是一个什么都没导入的启动器。
+   */
+  async function adoptAndContinue() {
+    await adopt?.commit()
+    go(1)
   }
 
   function finish(create: boolean) {
@@ -273,16 +288,32 @@
       {:else if step === 'existing'}
         <h1 class="title">发现了一个游戏目录。</h1>
         <p class="lede">
-          Fern 旁边有一个 .minecraft 目录。可以直接把其中的版本添加为实例，游戏文件保留在原位置。
+          Fern 旁边有一个 .minecraft 目录。可以直接把其中的版本添加为实例，游戏文件保留在原位置，不会移动或复制。
         </p>
         <div class="found">
-          <AdoptDirectory initial={nearby} />
+          <AdoptDirectory
+            bind:this={adopt}
+            initial={nearby}
+            standalone={false}
+            onstatus={(status) => (adoptStatus = status)}
+          />
         </div>
         <div class="actions">
           <div class="back">
             <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
           </div>
-          <Button variant="primary" onclick={() => go(1)}>继续<ArrowRight size={15} /></Button>
+          <Button
+            variant="primary"
+            disabled={adoptStatus.busy}
+            onclick={() => void adoptAndContinue()}>
+            {adoptStatus.chosen > 0 ? `添加 ${adoptStatus.chosen} 个版本` : '继续'}
+            <ArrowRight size={15} />
+          </Button>
+          {#if adoptStatus.chosen > 0}
+            <Button variant="link" tone="quiet" disabled={adoptStatus.busy} onclick={() => go(1)}>
+              暂不添加
+            </Button>
+          {/if}
         </div>
       {:else}
         <h1 class="title">准备好了。</h1>

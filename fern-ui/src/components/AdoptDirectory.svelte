@@ -52,9 +52,19 @@
   interface Props {
     /** 一开始就指向某个目录（首次启动时发现的那一个）。 */
     initial?: string
+    /**
+     * 自带那颗提交按钮。
+     *
+     * 向导里要关掉：那一屏本来就有一颗主按钮，两颗并排的结果是用户按了更显眼
+     * 的那一颗「继续」，然后带着一个什么都没导入的启动器走完向导——他以为勾上
+     * 复选框就已经选好了。关掉之后由调用方用 `commit()` 提交。
+     */
+    standalone?: boolean
+    /** 现在选了几个、忙不忙。自己提交的调用方要照着它写按钮上的字。 */
+    onstatus?: (status: { chosen: number; busy: boolean }) => void
   }
 
-  let { initial = '' }: Props = $props()
+  let { initial = '', standalone = true, onstatus }: Props = $props()
 
   let directory = $state('')
   let versions = $state<ExternalVersion[] | null>(null)
@@ -178,12 +188,23 @@
   $effect(() => {
     if (initial && !directory && inTauri()) void scan(initial)
   })
+
+  $effect(() => {
+    onstatus?.({ chosen: chosen.length, busy: busy !== '' })
+  })
+
+  /** 由调用方按下的提交。没勾中任何一个时什么都不做。 */
+  export async function commit() {
+    if (chosen.length > 0) await add()
+  }
 </script>
 
 <div class="adopt">
-  <p class="lead">
-    选择一个 <code class="t-mono">.minecraft</code> 目录，Fern 会列出其中的版本并默认全部添加。添加后可以照常补全文件、安装模组与启动；游戏文件保留在原位置，不会移动或复制，该目录仍可由原启动器使用。
-  </p>
+  {#if standalone}
+    <p class="lead">
+      选择一个 <code class="t-mono">.minecraft</code> 目录，Fern 会列出其中的版本并默认全部添加。添加后可以照常补全文件、安装模组与启动；游戏文件保留在原位置，不会移动或复制，该目录仍可由原启动器使用。
+    </p>
+  {/if}
 
   <div class="picker">
     <Button variant="ghost" disabled={busy !== ''} onclick={() => void choose()}>
@@ -253,14 +274,16 @@
         </span>
       </label>
 
-      <div class="commit">
-        <Button
-          variant="primary"
-          disabled={chosen.length === 0 || busy !== ''}
-          onclick={() => void add()}>
-          {busy === 'add' ? `正在添加 ${done}/${chosen.length}` : `添加 ${chosen.length} 个版本`}
-        </Button>
-      </div>
+      {#if standalone}
+        <div class="commit">
+          <Button
+            variant="primary"
+            disabled={chosen.length === 0 || busy !== ''}
+            onclick={() => void add()}>
+            {busy === 'add' ? `正在添加 ${done}/${chosen.length}` : `添加 ${chosen.length} 个版本`}
+          </Button>
+        </div>
+      {/if}
 
       {#if failures.length > 0}
         <div class="alert">
