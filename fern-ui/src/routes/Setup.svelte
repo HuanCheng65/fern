@@ -431,14 +431,25 @@
           {/if}
         </div>
       {:else}
-        <h1 class="title">准备好了。</h1>
-        <p class="lede">去创建你的第一个实例吧。</p>
+        <!--
+          最后一屏是道别，不是第七个任务。这里已经没有必须做的事了——尤其是
+          刚从上一屏把一整个目录接进来的人，他的实例已经在那儿了，再被推去
+          「创建你的第一个实例」只会以为刚才那一步没生效。
+        -->
+        <h1 class="title">欢迎使用 Fern。</h1>
+        <p class="lede">
+          {instances.list.length > 0
+            ? `设置已完成，${instances.list.length} 个实例已经就绪。`
+            : '设置已完成。创建一个实例，就可以开始游戏。'}
+        </p>
         {#if javaDetail}<p class="detected t-mono">{javaDetail}</p>{/if}
         <div class="actions">
-          <Button variant="primary" onclick={() => finish(true)}>
-            <Plus size={15} />创建实例
+          <Button variant="primary" onclick={() => finish(false)}>
+            进入 Fern<ArrowRight size={15} />
           </Button>
-          <Button variant="link" onclick={() => finish(false)}>稍后创建</Button>
+          <Button variant="link" onclick={() => finish(true)}>
+            <Plus size={14} />创建实例
+          </Button>
         </div>
       {/if}
     </div>
