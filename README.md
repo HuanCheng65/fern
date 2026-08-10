@@ -64,11 +64,12 @@ building anything. What it needs configured, and why each piece is shaped the
 way it is, is in [docs/fern-update-design.md](docs/fern-update-design.md).
 
 `Deploy the site` runs when `fern-site` or `fern-kit` changes. It builds the
-site and uploads it to Cloudflare Pages. `fern-kit` is in that list because the
-site renders those components for real — a change there changes the site, and
-without it the site would quietly sit on an older version of the design system.
-It needs `CLOUDFLARE_API_TOKEN` (Account → Cloudflare Pages → Edit) and
-`CLOUDFLARE_ACCOUNT_ID` configured as repository secrets.
+site and uploads it to Cloudflare Workers, configured by
+[fern-site/wrangler.jsonc](fern-site/wrangler.jsonc). `fern-kit` is in that list
+because the site renders those components for real — a change there changes the
+site, and without it the site would quietly sit on an older version of the
+design system. It needs `CLOUDFLARE_API_TOKEN` (Account → Workers Scripts →
+Edit) and `CLOUDFLARE_ACCOUNT_ID` configured as repository secrets.
 
 ## License
 

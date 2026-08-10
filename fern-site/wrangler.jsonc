@@ -1,0 +1,29 @@
+// 官网部署到 Cloudflare Workers（静态资源模式）。推它上去的是
+// .github/workflows/site.yml，那里写着需要配哪些密钥。
+//
+// 没有 `main`：这个 Worker 一行代码都没有，只有一个目录。资源模式下 `main` 是可选
+// 的，给了才是「先跑脚本再找文件」——官网没有任何要在边缘上算的东西，多一个入口
+// 就多一段会出错的代码。
+//
+// 用 Workers 不用 Pages：Cloudflare 现在把新项目往这边引，两边对静态站的能力已经
+// 齐平。要换回去只需改这一个文件和工作流最后那一步，构建产物一个字节都不用动。
+//
+// 两个吃默认值的行为，写在这儿是因为它们决定了路径怎么解析：
+//
+//   html_handling       默认 auto-trailing-slash，`/download` 落到 `download.html`。
+//                       SvelteKit 默认 `trailingSlash: 'never'`，出的正是这种平铺
+//                       文件名，两边对得上。
+//   not_found_handling  默认 none，没匹配上的路径返回一个朴素的 404。站里现在没有
+//                       404 页；要一张有设计的，得先让 adapter-static 产出它。
+{
+  "name": "fern-site",
+
+  // 钉死。不给的话 wrangler 会拿部署当天的日期，于是同一个提交在两天部署出两种
+  // 运行时行为——正是「构建可复现」要躲开的那类事。
+  "compatibility_date": "2026-08-11",
+
+  "assets": {
+    // vite build 的产出。整站预渲染，没有服务端。
+    "directory": "./build"
+  }
+}

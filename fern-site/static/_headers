@@ -1,7 +1,7 @@
-# Cloudflare Pages 的响应头规则。这个文件不会被当成一个页面发出去，Pages 读完就
-# 把它拿掉了（见 developers.cloudflare.com/pages/configuration/headers/）。
+# Cloudflare 的响应头规则。这个文件本身不会被当成一个页面发出去，读完就拿掉了
+# （见 developers.cloudflare.com/workers/static-assets/headers/）。
 #
-# Pages 默认给所有资源发 `Cache-Control: public, max-age=0, must-revalidate`，靠
+# 默认给所有资源发的是 `Cache-Control: public, max-age=0, must-revalidate`，靠
 # ETag 换 304。对会变的东西这是对的；对 Vite 按内容哈希命名的那批不是——文件名里
 # 已经带着内容的指纹，改一个字节就是另一个文件名，却仍然每次访问都往回问一趟。
 #
