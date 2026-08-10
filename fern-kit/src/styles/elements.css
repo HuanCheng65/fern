@@ -62,6 +62,19 @@
   margin: 0;
 }
 
+/*
+ * 结构元素（section / header / footer / nav …）这里**不重置**，尽管宿主同样会
+ * 用裸标签命中它们——官网的 `section { padding: var(--pad) 0 }` 就漏进过岛的面板。
+ *
+ * 因为拦不住：`.fern :is(section)` 是 (0,1,1)，而组件里写裸 `header { padding }`
+ * 经作用域编译后同样是 (0,1,1)。两条打平，谁赢取决于样式表的先后——kit 和应用里
+ * 十来处面板、抽屉、表单的内距会随构建顺序时有时无。
+ *
+ * 所以这一类只能由组件自己站稳：**凡是这些标签上的 padding / margin，一律写完整
+ * 简写**（`padding: var(--s3) 0 0` 而不是 `padding-top: var(--s3)`）。写全了，宿主
+ * 从哪一边漏进来都盖得住；只写一边，剩下三边就是敞开的。
+ */
+
 :where(.fern) canvas {
   display: block;
   max-width: 100%;

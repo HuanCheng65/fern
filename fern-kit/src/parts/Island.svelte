@@ -67,6 +67,18 @@
    * 别的」。
    */
   const SATELLITES = 2
+  /**
+   * 表面比占位副本宽出这一像素。
+   *
+   * `clientWidth` 是整数，而一行文字的自然宽度几乎总带小数——于是表面比撑出它的
+   * 那份窄最多 1px，`text-overflow` 立刻把最后一个字换成省略号。两份内容一模一样，
+   * 看得见的那份却少一个字，正是这个尾数。
+   *
+   * 换 `getBoundingClientRect()` 能拿到小数，但那是**变换之后**的尺寸：谁把这座岛
+   * 缩放着搬走，放大量就被喂回宽度里，一帧比一帧宽。所以就地补一像素——代价是右边
+   * 多出不到一像素的留白，换任何长度的标签都不平白少一个字。
+   */
+  const SLACK = 1
 
   const all = $derived(presences)
   const main = $derived(all[0])
@@ -133,7 +145,7 @@
     -->
     {#each satellites as item (item.id)}
       <span
-        class="sat {item.tone}"
+        class="sat tone-{item.tone}"
         title={item.label}
         animate:flip={{ duration: scaled(DURATION.base) }}
       >
@@ -154,8 +166,8 @@
       -->
       {#if pillWidth > 0}
         <div
-          class="surface {main.tone}"
-          style:width={`${open ? PANEL : pillWidth}px`}
+          class="surface tone-{main.tone}"
+          style:width={`${open ? PANEL : pillWidth + SLACK}px`}
           style:height={`${open ? HEAD + bodyHeight : HEAD}px`}
         >
           <button
@@ -250,7 +262,16 @@
     color: var(--ink-3);
   }
 
-  .sat.alert {
+  /*
+   * 语气类名一律带 `tone-` 前缀。
+   *
+   * 直接把 `tone` 甩进 class 会撞上设计系统的工具类：`alert` 在 elements.css 里是
+   * 「出错了的那一块」——等宽字、危险底色、自己的内距。于是一座 alert 语气的岛，
+   * 表头会莫名其妙变成等宽；更糟的是撑宽度的那份隐藏副本在 `.surface` 之外，拿不到
+   * 这条规则，两份用不同的字量出不同的宽——胶囊按窄的那份定尺寸，看得见的那份就被
+   * 截断成省略号。而 alert 恰恰是岛最该说清楚话的时候。
+   */
+  .sat.tone-alert {
     color: var(--danger);
   }
 
@@ -365,7 +386,7 @@
     color: var(--ink);
   }
 
-  .surface.alert .head {
+  .surface.tone-alert .head {
     color: var(--danger);
   }
 
@@ -424,11 +445,17 @@
     border-top: 1px solid var(--panel-line);
   }
 
-  /* 一段一个来源。段之间只用留白分开，画线会让这个小面板变成一张表格。 */
+  /*
+   * 一段一个来源。段之间只用留白分开，画线会让这个小面板变成一张表格。
+   *
+   * 内距写成完整简写，不写 `padding-top`：这是个 `<section>`，而宿主用裸标签给
+   * section 铺整屏留白是很常见的写法。只声明上边，剩下三边就照宿主的来——一块
+   * 320px 宽的浮层底下会凭空多出一大截空白。
+   */
   .group {
     display: grid;
     gap: var(--s3);
-    padding-top: var(--s3);
+    padding: var(--s3) 0 0;
   }
 
   .row {
