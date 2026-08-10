@@ -26,9 +26,16 @@
     peer: Peer
     /** 中转路径上那个人的名字，用来说明是谁在帮忙。 */
     carrierName?: string
+    /**
+     * 钉住色温用的钟点，0–24。不给就是此刻。
+     *
+     * 产品里不给：封面跟着真实时间走，早上和深夜本来就该是两个样子。给它的是官网
+     * ——一张讲产品的页面不能每次打开都是另一个颜色，凌晨看到的那张不该比白天暗一档。
+     */
+    hour?: number
   }
 
-  let { peer, carrierName }: Props = $props()
+  let { peer, carrierName, hour }: Props = $props()
 
   const path = $derived(
     isConnected(peer) && peer.state !== 'connected' ? (peer.state as PathState) : null,
@@ -42,7 +49,7 @@
 </script>
 
 <article class="card">
-  <Cover seed={peer.id} hours={40} quality={0.6} w={48} h={48} class="avatar" />
+  <Cover seed={peer.id} hours={40} {hour} quality={0.6} w={48} h={48} class="avatar" />
 
   <div class="body">
     <div class="name">{peer.name}</div>

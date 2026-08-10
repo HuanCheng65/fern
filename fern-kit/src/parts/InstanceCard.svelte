@@ -20,18 +20,26 @@
     detail?: string
     /** 是不是当前实例。 */
     current?: boolean
+    /**
+     * 钉住色温用的钟点，0–24。不给就是此刻。
+     *
+     * 产品里不给：封面跟着真实时间走，早上和深夜本来就该是两个样子。给它的是官网
+     * ——一张讲产品的页面不能每次打开都是另一个颜色，凌晨看到的那张不该比白天暗一档。
+     */
+    hour?: number
     /** 正在启动或已占用时，启动键不出现。 */
     busy?: boolean
     onopen?: () => void
     onlaunch?: () => void
   }
 
-  let { name, cover, detail, current = false, busy = false, onopen, onlaunch }: Props = $props()
+  let { name, cover, detail, hour, current = false, busy = false, onopen, onlaunch }: Props =
+    $props()
 </script>
 
 <div class="card">
   <button class="face" onclick={() => onopen?.()} title="打开 {name}">
-    <Cover seed={cover} quality={0.55} />
+    <Cover seed={cover} {hour} quality={0.55} />
   </button>
 
   {#if onlaunch}
