@@ -86,8 +86,10 @@ jobs:
       - name: Check workflow shell syntax
         run: python3 .github/check-workflows.py
 
-      # 更新日志是界面的一部分（进更新清单的 notes），所以它的写法值得在这里挡。
-      # 只查机器查得动的：一提交最多一条、类型对不对、句号、长度、有没有空话。
+      # 更新日志是界面的一部分（进更新清单的 notes），但这里只提醒，不挡：提交信息
+      # 推上来之后就是只读的，为一个标点让 CI 变红，就是在要求 rebase 加强推。真正
+      # 的关口在 release.py——那时候查的是 CHANGELOG.md 里的条目，改它只是改文件。
+      # 写的时候还有 .githooks/commit-msg 拦一道，那时候改一条信息是免费的。
       - name: Check release notes
         run: |
           set -euo pipefail
@@ -100,7 +102,7 @@ jobs:
             echo "未找到比较基准，跳过检查。"
             exit 0
           fi
-          python3 .github/check-release-notes.py "$base..HEAD"
+          python3 .github/check-release-notes.py --warn "$base..HEAD"
 
   package:
     name: Package ${{ matrix.name }}

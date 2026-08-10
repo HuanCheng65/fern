@@ -1,41 +1,38 @@
 #!/usr/bin/env python3
-"""校验提交里的 `Release-Note:` 尾注。
+"""校验提交里的 `Release-Note:` 尾注。规范在 AGENTS.md 的「更新日志」一节。
 
-规范在 AGENTS.md 的「更新日志」一节。这里只查机器查得动的部分——一句话写得好不好
-要人看，但「写了两条」「用了 chore 类型」「结尾少个句号」这些不该靠人盯。
+**这个检查在哪儿挡，比它查什么更重要。** 提交信息推出去之后就是只读的：在 CI 里
+让它失败，等于规定「少个标点的唯一出路是 rebase 加强推」，代价和收益完全不成比例。
+所以分三处：
+
+- `commit-msg` 钩子（`.githooks/`）——写的时候就挡。这时候改一条信息是免费的，
+  所以这里是硬的。
+- CI（`--warn`）——只提醒，不挡。推上去才发现的问题，留给下面那一关。
+- 发版（`release.py`）——真正的关口。那时候要审的是 `CHANGELOG.md` 里已经汇好的
+  文字，改它只是改一个文件，而它就是要发给用户的东西。
 
 用法：
 
     check-release-notes.py <base>..<head>
-    check-release-notes.py            # 默认查最近一个 tag 到 HEAD
+    check-release-notes.py                    # 默认查最近一个 tag 到 HEAD
+    check-release-notes.py --warn <range>     # 只提醒，始终以 0 退出
+    check-release-notes.py --message-file <path>   # 查单条提交信息（钩子用）
 """
 
+import argparse
+import pathlib
 import re
 import subprocess
 import sys
 
-# 有用户可见变化的类型才该带尾注。其余类型改的是用户看不见的东西，
-# 一条属于 chore 的更新日志说明要么类型选错了，要么这条不该写。
-TYPES_WITH_NOTES = {"feat", "fix", "perf"}
-MAX_LENGTH = 60
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from release_notes import TYPES_WITH_NOTES, check_text  # noqa: E402
 
 SUBJECT = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[^)]*)\))?(?P<breaking>!)?: ")
 TRAILER = re.compile(r"^Release-Note:\s*(?P<note>.*)$", re.MULTILINE)
 
-# 没有信息量的句子。写不出具体是什么，就说明这条不该进更新日志。
-EMPTY_PHRASES = [
-    "优化了体验",
-    "优化体验",
-    "优化了使用体验",
-    "提升了稳定性",
-    "提升稳定性",
-    "修复了一些",
-    "修复一些",
-    "已知问题",
-    "若干问题",
-    "其他改进",
-    "细节优化",
-]
+# `git commit` 交给钩子的文件里还带着模板注释，verbose 模式下后面还跟着整个 diff。
+SCISSORS = "# ------------------------ >8 ------------------------"
 
 
 def commits(revision_range: str) -> list[tuple[str, str]]:
@@ -58,7 +55,19 @@ def commits(revision_range: str) -> list[tuple[str, str]]:
     return result
 
 
-def check(short: str, message: str) -> list[str]:
+def strip_comments(raw: str) -> str:
+    """去掉 git 加在提交信息文件里的注释和 diff。"""
+    lines = []
+    for line in raw.splitlines():
+        if line.rstrip() == SCISSORS:
+            break
+        if line.startswith("#"):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def check(message: str) -> list[str]:
     problems = []
     subject = message.splitlines()[0] if message.splitlines() else ""
     match = SUBJECT.match(subject)
@@ -72,9 +81,7 @@ def check(short: str, message: str) -> list[str]:
     if not notes:
         return problems
 
-    note = notes[0].strip()
     kind = match.group("type") if match else None
-
     if kind is None:
         problems.append("提交标题不符合 Conventional Commits，无法确定更新日志的分类。")
     elif kind not in TYPES_WITH_NOTES:
@@ -83,31 +90,48 @@ def check(short: str, message: str) -> list[str]:
             f"（可包含的类型：{'、'.join(sorted(TYPES_WITH_NOTES))}）"
         )
 
-    if not note:
-        problems.append("Release-Note 内容为空。")
-        return problems
-    if not note.endswith("。"):
-        problems.append(f"Release-Note 应以句号结尾：「{note}」")
-    if len(note) > MAX_LENGTH:
-        problems.append(
-            f"Release-Note 超过 {MAX_LENGTH} 个字符（当前 {len(note)} 个）：「{note}」"
+    return problems + check_text(notes[0])
+
+
+def report(problems: list[tuple[str, str]], warn_only: bool) -> int:
+    if not problems:
+        return 0
+    for label, problem in problems:
+        prefix = "::warning::" if warn_only else ""
+        print(f"{prefix}{label}{problem}", file=sys.stderr)
+    print("\n写法规范见 AGENTS.md 的「更新日志」一节。", file=sys.stderr)
+    if warn_only:
+        print(
+            "这里只提醒——提交信息已经推出去了，改它要改写历史。发版时 release.py "
+            "会拿 CHANGELOG.md 里的条目再查一遍，那时候改的是文件。",
+            file=sys.stderr,
         )
-    if not re.search(r"[一-鿿]", note):
-        problems.append(f"Release-Note 应使用中文：「{note}」")
-    for phrase in EMPTY_PHRASES:
-        if phrase in note:
-            problems.append(
-                f"「{phrase}」不具体。Release-Note 应说明具体改动，"
-                "无法说明的改动不应写入更新日志。"
-            )
-            break
-    return problems
+        return 0
+    return 1
 
 
 def main() -> int:
-    if len(sys.argv) > 1:
-        revision_range = sys.argv[1]
-    else:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("range", nargs="?", default=None)
+    parser.add_argument(
+        "--warn",
+        action="store_true",
+        help="只报告问题，始终以 0 退出（CI 用）。",
+    )
+    parser.add_argument(
+        "--message-file",
+        type=pathlib.Path,
+        default=None,
+        help="查一个提交信息文件而不是一段提交范围（commit-msg 钩子用）。",
+    )
+    args = parser.parse_args()
+
+    if args.message_file is not None:
+        message = strip_comments(args.message_file.read_text())
+        return report([("", problem) for problem in check(message)], args.warn)
+
+    revision_range = args.range
+    if revision_range is None:
         last = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0"],
             capture_output=True,
@@ -115,19 +139,15 @@ def main() -> int:
         )
         revision_range = f"{last.stdout.strip()}..HEAD" if last.returncode == 0 else "HEAD"
 
-    failed = False
+    problems = []
     checked = 0
     for short, message in commits(revision_range):
         checked += 1
-        for problem in check(short, message):
-            print(f"{short}: {problem}", file=sys.stderr)
-            failed = True
+        problems.extend((f"{short}: ", problem) for problem in check(message))
 
-    if failed:
-        print("\n写法规范见 AGENTS.md 的「更新日志」一节。", file=sys.stderr)
-        return 1
-    print(f"已检查 {checked} 个提交的 Release-Note（范围 {revision_range}），未发现问题。")
-    return 0
+    if not problems:
+        print(f"已检查 {checked} 个提交的 Release-Note（范围 {revision_range}），未发现问题。")
+    return report(problems, args.warn)
 
 
 if __name__ == "__main__":

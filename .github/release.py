@@ -34,6 +34,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from release_notes import check_text  # noqa: E402
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CARGO = ROOT / "fern-ui/src-tauri/Cargo.toml"
 CONFIG = ROOT / "fern-ui/src-tauri/tauri.conf.json"
@@ -153,6 +156,29 @@ def set_config_version(version: str) -> None:
     CONFIG.write_text(updated)
 
 
+def check_entries(body: list[str]) -> None:
+    """查「未发布」小节里的条目。
+
+    更新日志的写法只在这里是硬的。提交信息里的尾注推出去就改不动了，在那儿拦
+    等于要求改写历史；而这一节是一个文件，它又正好是要原样发给用户的东西——
+    发版前是唯一一个「发现了就能顺手改掉」的时刻。
+    """
+    problems = []
+    for line in body:
+        entry = line.strip()
+        if not entry.startswith("- "):
+            continue
+        problems.extend(check_text(entry.removeprefix("- ")))
+
+    if problems:
+        for problem in problems:
+            print(problem, file=sys.stderr)
+        fail(
+            f"\n改 {CHANGELOG} 的「未发布」小节，再重新发版。"
+            "写法规范见 AGENTS.md 的「更新日志」一节。"
+        )
+
+
 def close_changelog(version: str, today: str) -> None:
     """把「未发布」定稿成一个版本小节，并在上面留一个空的「未发布」。"""
     lines = CHANGELOG.read_text().splitlines()
@@ -180,6 +206,8 @@ def close_changelog(version: str, today: str) -> None:
             "Release-Note 并确认生成的内容；如果本次确实没有面向用户的改动，\n"
             "请手动写入一句说明。"
         )
+
+    check_entries(body)
 
     # 原小节里的空行不能原样搬过来，否则版本标题下面会多出一行空白。
     lines[start:end] = [

@@ -2,6 +2,10 @@
   "name": "fern",
   "private": true,
   "_comment": "工作区根，只为把三个包串起来；每个包各自有自己的脚本。",
+  "_scripts_comment": "prepare 在 pnpm install 时跑，把 .githooks 装上——commit-msg 会查 Release-Note 的写法。",
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"

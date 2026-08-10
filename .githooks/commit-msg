@@ -1,0 +1,14 @@
+#!/bin/sh
+# 更新日志的写法在这里挡：这时候提交信息还没定型，改一条是免费的。等推到 CI 上
+# 再报，唯一的出路就是 rebase 加强推——所以那一份只提醒（--warn）。
+#
+# 装法：`pnpm install` 会跑根目录的 prepare 脚本，把 core.hooksPath 指到这里。
+set -e
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "commit-msg: 未找到 python3，跳过 Release-Note 检查。" >&2
+  exit 0
+fi
+
+exec python3 "$(git rev-parse --show-toplevel)/.github/check-release-notes.py" \
+  --message-file "$1"

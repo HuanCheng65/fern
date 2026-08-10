@@ -8,3 +8,5 @@
 /fern-ui/src-tauri/gen/
 *.log
 corpus/
+# .github/ 下的脚本之间开始互相 import 了（release_notes.py），跑一次就会留下缓存。
+__pycache__/

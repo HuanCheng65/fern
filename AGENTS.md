@@ -111,7 +111,18 @@ feat(update): check for updates on a channel
 Release-Note: 可在设置中选择更新通道，测试版可更早获得新功能。
 ```
 
-一句话，句号结尾，60 字以内，从用户能观察到的变化写起，不出现内部名词和版本号，
-不写「优化了使用体验」这种空话。只有 `feat` / `fix` / `perf` 该有尾注。
-`.github/check-release-notes.py` 在 CI 里校验格式，`.github/draft-changelog.py`
-汇成 `CHANGELOG.md` 的「未发布」小节。
+一句话，**不带句末标点**（更新日志是一列变化，不是一段文章），60 字以内，从用户
+能观察到的变化写起，不出现内部名词和版本号，不写「优化了使用体验」这种空话。
+只有 `feat` / `fix` / `perf` 该有尾注——不是说重构一定不改变界面，而是那条变化
+值得写进更新日志的话，它就该有自己的提交。
+
+`.github/draft-changelog.py` 把尾注汇成 `CHANGELOG.md` 的「未发布」小节。写法由
+`.github/check-release-notes.py` 查，分三处，硬的只有两头：
+
+| 时机 | 怎么处理 | 为什么 |
+| --- | --- | --- |
+| `git commit` | 挡（`.githooks/commit-msg`） | 信息还没定型，改一条是免费的 |
+| CI 推送 | 只提醒 | 推出去的提交信息是只读的，在这儿挡等于要求改写历史 |
+| `release.py` 发版 | 挡 | 查的是 `CHANGELOG.md` 里的条目，改它只是改一个文件 |
+
+钩子由 `pnpm install` 装上（根目录的 `prepare` 脚本设 `core.hooksPath`）。
