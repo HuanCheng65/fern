@@ -8,9 +8,10 @@
 //! 这样点下去会不会死」。** 崩溃那边每条规则都要一条文本证据；这边一条文本都
 //! 没有，全是事实比对。两者共用同一个 [`Action`]，于是界面上那颗按钮是同一颗。
 //!
-//! **只报确定的事。** 版本区间看不懂就当满足（见 `launch::ranges`），可选依赖
-//! 缺了不报，禁用的模组不参与依赖判断但会被单独提一句。一个基于误解的警告会让
-//! 用户去动一个本来没问题的模组，比不报更糟。
+//! **只报确定的事。** 可选依赖缺了不报，禁用的模组不参与依赖判断但会被单独提
+//! 一句。一个基于误解的警告会让用户去动一个本来没问题的模组，比不报更糟。
+//!
+//! 版本区间看不懂就当满足，见 `launch::ranges`。
 //!
 //! 预检查**不阻止启动**。它给的是判断依据，不是许可——用户可能比我们更清楚。
 //!
@@ -838,6 +839,43 @@ mod tests {
             inspect(&[ready(">=1.21.6")], LoaderKind::Fabric, &snapshot, None)[0].kind,
             kind::WRONG_GAME_VERSION
         );
+    }
+
+    /// 一个模组可以写好几段区间，满足其中一段就算适配。
+    ///
+    /// LambDynamicLights 在 `fabric.mod.json` 里写的是两段：
+    /// `["~1.21.5- <1.21.6-", "=1.21.6-alpha.25.14.craftmine"]`——第一段是
+    /// 1.21.5 那一支，第二段单独把愚人节快照加回来。两段之间是「或」，拉平成
+    /// 一条按「与」去解，得出的是「一个版本都不满足」，于是这个明明为这个快照
+    /// 出过构建的模组，在这个快照上被报成可能不适配。
+    #[test]
+    fn a_mod_that_lists_several_ranges_only_has_to_match_one() {
+        let craftmine = Game::of("25w14craftmine", Some("1.21.6"));
+        assert_eq!(
+            craftmine.semantic.as_deref(),
+            Some("1.21.6-alpha.25.14.craftmine")
+        );
+        let lambda = needs(
+            jar("LambDynamicLights", "lambdynlights", LoaderKind::Fabric),
+            "minecraft",
+            "~1.21.5- <1.21.6- || =1.21.6-alpha.25.14.craftmine",
+        );
+        assert!(inspect(&[lambda], LoaderKind::Fabric, &craftmine, None).is_empty());
+
+        // 两段都不沾的版本照报，这条检查没有被架空。
+        let lambda = needs(
+            jar("LambDynamicLights", "lambdynlights", LoaderKind::Fabric),
+            "minecraft",
+            "~1.21.5- <1.21.6- || =1.21.6-alpha.25.14.craftmine",
+        );
+        let findings = inspect(
+            &[lambda],
+            LoaderKind::Fabric,
+            &Game::of("1.20.1", None),
+            None,
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
     }
 
     /// 认不出来的版本仍然不比：那时说什么都是猜的。

@@ -616,15 +616,27 @@ fn common_prefix(packages: &[String]) -> Option<String> {
     (prefix.len() >= 2).then(|| prefix.join("."))
 }
 
+/// 一条依赖写的版本区间。字符串一种写法，数组一种写法。
+///
+/// **数组是「或」，一个字符串里的空格是「与」。** 这是 fabric.mod.json 明写的
+/// 规矩，而两者一旦拉平就正好拧反：LambDynamicLights 写的是
+///
+/// ```json
+/// "minecraft": ["~1.21.5- <1.21.6-", "=1.21.6-alpha.25.14.craftmine"]
+/// ```
+///
+/// 第一段说「1.21.5 系列」，第二段单独把那个愚人节快照加回来。用空格拼成一条，
+/// 就成了「既要在 1.21.6 以下、又要正好是这个快照」——没有任何版本满足得了，
+/// 于是一个明明写着支持它的模组被报成不适配。所以拼成 `||`，由
+/// [`ranges::contains`](crate::launch::ranges::contains) 认这个分隔符。
 fn range_text(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
-        // 数组是「满足其中任意一条」，原样拼起来交给 ranges 去解。
         serde_json::Value::Array(items) => items
             .iter()
             .filter_map(serde_json::Value::as_str)
             .collect::<Vec<_>>()
-            .join(" "),
+            .join(" || "),
         _ => "*".to_owned(),
     }
 }
