@@ -17,19 +17,11 @@
 
 import { cubicOut } from 'svelte/easing'
 import type { TransitionConfig } from 'svelte/transition'
-import { theme } from './theme.svelte'
 
-/** 乘上「减弱/关闭动效」的档位。关掉时返回 0，过渡自己会退化成瞬时。 */
-export const scaled = (ms: number) => Math.round(ms * theme.motionScale)
-
-export const DURATION = {
-  /** 悬停、按下这类即时反馈。 */
-  fast: 130,
-  /** 场景横移、tab 切换。硬指标 200ms 以内。 */
-  base: 190,
-  /** 纵深展开、横幅收缩。 */
-  deep: 300,
-}
+// 档位和乘数在 kit（它读 host.motionScale，而 theme 启动时就把档位装了进去）。
+// 两边各写一份必然会分叉，而分叉的那天没人会发现。
+export { DURATION, scaled } from 'fern-kit/motion'
+import { DURATION, scaled } from 'fern-kit/motion'
 
 /**
  * 就地展开。用于「往深处走」——详情从它在列表里的位置长出来。

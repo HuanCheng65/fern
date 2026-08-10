@@ -39,11 +39,21 @@
   import { flip } from 'svelte/animate'
   import { scale } from 'svelte/transition'
   import { TriangleAlert, X } from 'lucide-svelte'
-  import Mark from 'fern-kit/ui/Mark.svelte'
-  import { island, type Presence } from '../lib/island.svelte'
-  import { DURATION, scaled } from '../lib/motion'
-  import { nav } from '../lib/nav.svelte'
-  import Button from 'fern-kit/ui/Button.svelte'
+  import Mark from '../ui/Mark.svelte'
+  import Button from '../ui/Button.svelte'
+  import { DURATION, scaled } from '../motion'
+  import type { Presence } from './island'
+
+  interface Props {
+    /** 此刻有什么可说的，已按优先级排好。空数组时整个组件不存在。 */
+    presences: Presence[]
+    /** 钉住展开。不给就只有悬停会展开。 */
+    pinned?: boolean
+    /** 点表头。产品那边接的是导航里的浮层开关。 */
+    ontoggle?: () => void
+  }
+
+  let { presences, pinned = false, ontoggle }: Props = $props()
 
   /** 展开后的宽度。够放下一行「补全游戏文件 · 412 MB / 1.1 GB · 8.2 MB/s」。 */
   const PANEL = 320
@@ -58,11 +68,10 @@
    */
   const SATELLITES = 2
 
-  const all = $derived(island.all)
+  const all = $derived(presences)
   const main = $derived(all[0])
   const satellites = $derived(all.slice(1, 1 + SATELLITES))
   const overflow = $derived(Math.max(0, all.length - 1 - SATELLITES))
-  const pinned = $derived(nav.overlay === 'island')
 
   let hovering = $state(false)
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -153,7 +162,7 @@
             class="head"
             title={main.label}
             aria-expanded={open}
-            onclick={() => nav.toggle('island')}
+            onclick={() => ontoggle?.()}
           >
             {@render compact(main)}
           </button>

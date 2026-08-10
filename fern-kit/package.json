@@ -8,6 +8,7 @@
   "exports": {
     "./host": "./src/host.svelte.ts",
     "./scope": "./src/scope.ts",
+    "./motion": "./src/motion.ts",
     "./styles": "./src/styles/index.css",
     "./ui/mark": "./src/ui/mark.ts",
     "./ui/biome": "./src/ui/biome.ts",
@@ -23,6 +24,8 @@
     "./ui/Cover.svelte": "./src/ui/Cover.svelte",
     "./ui/Dialog.svelte": "./src/ui/Dialog.svelte",
     "./parts/advice": "./src/parts/advice.ts",
+    "./parts/island": "./src/parts/island.ts",
+    "./parts/Island.svelte": "./src/parts/Island.svelte",
     "./parts/java": "./src/parts/java.ts",
     "./parts/pearl": "./src/parts/pearl.ts",
     "./parts/snapshots": "./src/parts/snapshots.ts",

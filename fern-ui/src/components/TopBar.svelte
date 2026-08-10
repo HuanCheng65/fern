@@ -17,11 +17,12 @@
    * 背景层提取的色板走；只有场景内容滚到它底下时才浮现毛玻璃。
    */
   import { ArrowLeft, Settings } from 'lucide-svelte'
-  import Island from './Island.svelte'
+  import Island from 'fern-kit/parts/Island.svelte'
   import { updates } from '../lib/update.svelte'
   import Mark from 'fern-kit/ui/Mark.svelte'
   import { platform } from '../lib/frame.svelte'
   import { nav, SCENES } from '../lib/nav.svelte'
+  import { island } from '../lib/island.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
@@ -117,7 +118,11 @@
       是——切到任何场景，你都知道游戏还开着、东西还在下。顶栏不认识作业也不
       认识游戏，那是岛的事。
     -->
-    <Island />
+    <Island
+      presences={island.all}
+      pinned={nav.overlay === 'island'}
+      ontoggle={() => nav.toggle('island')}
+    />
 
     <!--
       有新版本时在这里点一个点。不弹窗、不横幅、不加一行文字——更新是启动器
