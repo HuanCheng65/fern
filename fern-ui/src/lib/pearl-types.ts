@@ -4,19 +4,15 @@
  * 形状与 pearl-core 的 sidecar 协议（DESIGN §8）逐字段一致——UI 走进程内的
  * Tauri 命令，第三方启动器走 JSON-RPC，两边说同一套词。这样这套词汇有人天天
  * 在用，不会因为没人看而烂掉。
+ *
+ * 状态那几个类型和它们的中文说法在 `fern-kit/parts/pearl`：卡片要显示的东西
+ * 官网也要显示，而这份事件流是后端的词汇，只有产品认识。
  */
 
-export type PathState = 'lan' | 'direct_ip6' | 'mapped' | 'punched' | 'via'
+export type { PathState, PeerState, PunchStage } from 'fern-kit/parts/pearl'
+export { PATH_LABEL, PATH_QUALITY, PUNCH_STAGE_LABEL } from 'fern-kit/parts/pearl'
 
-export type PeerState =
-  | PathState
-  | 'connecting'
-  | 'connected'
-  | 'disconnected'
-  | 'failed'
-  | 'path_lost'
-
-export type PunchStage = 'direct' | 'mappings' | 'guessing' | 'waiting'
+import type { PathState, PeerState, PunchStage } from 'fern-kit/parts/pearl'
 
 export type SessionEvent =
   | { event: 'identity'; node_id: string }
@@ -61,28 +57,3 @@ export type SessionEvent =
   | { event: 'error'; code?: string; detail?: string; wrong_passwords?: number }
   /** 会话整个结束了——之后不会再有任何事件。detail 是失败原因，正常结束没有。 */
   | { event: 'ended'; detail?: string | null }
-
-/** 路径的说法。玩家不需要知道 EIM/EDM，只需要知道这条路好不好。 */
-export const PATH_LABEL: Record<PathState, string> = {
-  lan: '局域网',
-  direct_ip6: 'IPv6 直连',
-  mapped: '端口映射',
-  punched: '直连',
-  via: '中转',
-}
-
-/** 中转是能用但要花别人带宽的，值得单独标出来。 */
-export const PATH_QUALITY: Record<PathState, 'best' | 'good' | 'fallback'> = {
-  lan: 'best',
-  direct_ip6: 'best',
-  mapped: 'good',
-  punched: 'good',
-  via: 'fallback',
-}
-
-export const PUNCH_STAGE_LABEL: Record<PunchStage, string> = {
-  direct: '尝试直连',
-  mappings: '建立端口映射',
-  guessing: '探测端口',
-  waiting: '等待对方响应',
-}

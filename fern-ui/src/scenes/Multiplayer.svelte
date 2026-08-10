@@ -19,7 +19,7 @@
   import { Check, Copy, LogOut } from 'lucide-svelte'
   import Stage from '../layouts/Stage.svelte'
   import Detail from '../layouts/Detail.svelte'
-  import PeerCard from '../components/PeerCard.svelte'
+  import PeerCard from 'fern-kit/parts/PeerCard.svelte'
   import { DEFAULT_NAME, isConnected, session } from '../lib/pearl-session.svelte'
   import { PATH_LABEL, PUNCH_STAGE_LABEL, type PathState } from '../lib/pearl-types'
   import Button from 'fern-kit/ui/Button.svelte'

@@ -2,18 +2,25 @@
   /**
    * 一个人一张卡。
    *
-   * 头像用的是同一套群系生成器，种子取 NodeID——所以每个人的色块是他自己的，
-   * 换台机器还是那一张。文档里这里写的是皮肤渲染，等接了账户体系再换；在那
-   * 之前用生成图，比灰色圆圈加首字母诚实，也和整个界面同族。
+   * 头像就是一张 `Cover`，种子取 NodeID——所以每个人的色块是他自己的，换台机器
+   * 还是那一张。文档里这里写的是皮肤渲染，等接了账户体系再换；在那之前用生成图，
+   * 比灰色圆圈加首字母诚实，也和整个界面同族。
+   *
+   * 画在哪由 `Cover` 决定：产品那边装了常驻 Worker 就走离屏，官网没有就在主线程
+   * 画。这张卡不需要知道区别。
    *
    * 卡上只说三件事：谁、这条路好不好、多快。NAT 类型、候选地址、打洞轮次
    * 都不在这里——玩家要的是「能不能玩」，不是一份网络报告。
    */
-  import { onMount } from 'svelte'
-  import { paint } from 'fern-kit/ui/biome'
-  import { renderBiome, supportsBiomeWorker } from '../lib/biome-client'
-  import { isConnected, type Peer } from '../lib/pearl-session.svelte'
-  import { PATH_LABEL, PATH_QUALITY, PUNCH_STAGE_LABEL, type PathState } from '../lib/pearl-types'
+  import Cover from '../ui/Cover.svelte'
+  import {
+    isConnected,
+    PATH_LABEL,
+    PATH_QUALITY,
+    PUNCH_STAGE_LABEL,
+    type PathState,
+    type Peer,
+  } from './pearl'
 
   interface Props {
     peer: Peer
@@ -22,38 +29,6 @@
   }
 
   let { peer, carrierName }: Props = $props()
-
-  let avatar = $state<HTMLCanvasElement>()
-
-  onMount(() => {
-    if (!avatar) return
-    avatar.width = 96
-    avatar.height = 96
-    const options = { name: peer.id, hours: 40 }
-    if (!supportsBiomeWorker) {
-      paint(avatar, options, 0, 0.6)
-      return
-    }
-
-    // 画在 Worker 里,主线程只负责把回来的位图贴上去。Worker 起不来就退回
-    // 同步画——头像必须出现,慢一点好过没有。
-    const request = renderBiome(avatar.width, avatar.height, options, 0, 0.6)
-    request.promise
-      .then((bitmap) => {
-        const ctx = avatar?.getContext('2d')
-        if (!ctx || !avatar) {
-          bitmap.close()
-          return
-        }
-        ctx.clearRect(0, 0, avatar.width, avatar.height)
-        ctx.drawImage(bitmap, 0, 0, avatar.width, avatar.height)
-        bitmap.close()
-      })
-      .catch(() => {
-        if (avatar) paint(avatar, options, 0, 0.6)
-      })
-    return request.cancel
-  })
 
   const path = $derived(
     isConnected(peer) && peer.state !== 'connected' ? (peer.state as PathState) : null,
@@ -67,7 +42,7 @@
 </script>
 
 <article class="card">
-  <canvas bind:this={avatar} class="avatar" aria-hidden="true"></canvas>
+  <Cover seed={peer.id} hours={40} quality={0.6} w={48} h={48} class="avatar" />
 
   <div class="body">
     <div class="name">{peer.name}</div>
@@ -119,12 +94,11 @@
       var(--shadow-1);
   }
 
-  .avatar {
-    width: 48px;
-    height: 48px;
+  /* 类名传进了 Cover，作用域规则会被当成没用到而删掉；:global 挂在自己拥有的
+     .card 下面，范围仍然是这张卡。 */
+  .card :global(.avatar) {
     border-radius: var(--r1);
     flex: none;
-    display: block;
   }
 
   .body {

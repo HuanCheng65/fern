@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Button from 'fern-kit/ui/Button.svelte'
+  import Button from './Button.svelte'
   /**
    * 一条尺。
    *

@@ -9,8 +9,8 @@
    *
    * 名单因此可以安静下来：一行只说「Java 21 · Adoptium · 180 MB ›」。
    */
-  import { javaLabel, megabytes, type JavaGroup, type JavaRuntime } from '../lib/java'
-  import Button from 'fern-kit/ui/Button.svelte'
+  import { javaLabel, megabytes, type JavaGroup, type JavaRuntime } from './java'
+  import Button from '../ui/Button.svelte'
 
   interface Props {
     home: string

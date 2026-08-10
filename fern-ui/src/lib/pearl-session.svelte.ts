@@ -9,29 +9,17 @@
 import { contributes, PRIORITY, type Presence } from './island.svelte'
 import { nav } from './nav.svelte'
 import { backend } from './pearl-backend'
-import type { PathState, PeerState, PunchStage, SessionEvent } from './pearl-types'
+import type { PathState, PeerState, SessionEvent } from './pearl-types'
 
-export interface Peer {
-  id: string
-  name: string
-  state: PeerState
-  rttMs?: number
-  /** 谁在替这条路转发。只有 state 是 via 时有值。 */
-  via?: string
-  stage?: PunchStage
-  stageDone?: number
-  stageTotal?: number
-  detail?: string
-}
+// 折叠的结果——房间里的一个人——是 kit 的东西：`PeerCard` 要显示它，而官网也要
+// 显示。折叠这件事本身留在这里，它认识事件流。
+export { isConnected, type Peer } from 'fern-kit/parts/pearl'
+import { isConnected, type Peer } from 'fern-kit/parts/pearl'
 
 export type Mode = 'idle' | 'hosting' | 'joining'
 
 /** 没有记住过名字时用的那个。第一次打开的那一屏不能是空的。 */
 export const DEFAULT_NAME = '玩家'
-
-const PATH_STATES: PathState[] = ['lan', 'direct_ip6', 'mapped', 'punched', 'via']
-export const isConnected = (peer: Peer) =>
-  PATH_STATES.includes(peer.state as PathState) || peer.state === 'connected'
 
 class Session {
   mode = $state<Mode>('idle')
