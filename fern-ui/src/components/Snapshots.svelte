@@ -19,18 +19,10 @@
   import { formatBytes } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { notices } from '../lib/notices.svelte'
-  import {
-    backupUsage,
-    clock,
-    day,
-    dayLabel,
-    listSnapshots,
-    pinned,
-    takeSnapshot,
-    why,
-    type Snapshot,
-  } from '../lib/backup'
+  import { backupUsage, listSnapshots, pinned, takeSnapshot, why, type Snapshot } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
+  import SnapshotList from 'fern-kit/parts/SnapshotList.svelte'
+  import type { SnapshotRow } from 'fern-kit/parts/snapshots'
 
   interface Props {
     instanceId: string
@@ -48,17 +40,19 @@
   /** 游戏跑着的时候拍到的是半个存档，所以后端会直接拒绝。按钮先说清楚。 */
   const running = $derived(launch.phaseOf(instanceId) !== undefined)
 
-  /** 按天分组，新的在前。列表本身已经是从新到旧的。 */
-  const groups = $derived.by(() => {
-    const out: { key: string; label: string; items: Snapshot[] }[] = []
-    for (const item of snapshots) {
-      const key = day(item.takenAt)
-      const last = out.at(-1)
-      if (last?.key === key) last.items.push(item)
-      else out.push({ key, label: dayLabel(item.takenAt), items: [item] })
-    }
-    return out
-  })
+  /** 折成名单要显示的样子。分组和排版交给 SnapshotList，这里只负责说清每一行。 */
+  const rows = $derived<SnapshotRow[]>(
+    snapshots.map((item) => ({
+      id: item.id,
+      takenAt: item.takenAt,
+      title: item.label ?? why(item).title,
+      pinned: pinned(item),
+      inconsistent: item.inconsistent,
+      meta: `${item.saves.length > 0 ? `${item.saves.length} 个世界 · ` : ''}${formatBytes(item.bytes)}`,
+    })),
+  )
+
+  const byId = $derived(new Map(snapshots.map((item) => [item.id, item])))
 
   async function load() {
     if (!inTauri()) {
@@ -135,38 +129,7 @@
       </p>
     </div>
   {:else}
-    {#each groups as group (group.key)}
-      <div class="group">
-        <h3 class="day">{group.label}</h3>
-        <ul class="list">
-          {#each group.items as item (item.id)}
-            <li>
-              <button class="row" onclick={() => (open = item)}>
-                <span class="t-mono when">{clock(item.takenAt)}</span>
-                <span class="what">
-                  {item.label ?? why(item).title}
-                  {#if pinned(item)}
-                    <span class="pin" title="永久保留">
-                      <Pin size={11} strokeWidth={2} />
-                    </span>
-                  {/if}
-                  {#if item.inconsistent}
-                    <span class="flag" title="拍摄时文件仍在变动，内容可能不一致">
-                      <CircleAlert size={11} strokeWidth={2} />
-                    </span>
-                  {/if}
-                </span>
-                <span class="t-mono meta">
-                  {#if item.saves.length > 0}{item.saves.length} 个世界 · {/if}{formatBytes(
-                    item.bytes,
-                  )}
-                </span>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      </div>
-    {/each}
+    <SnapshotList {rows} onpick={(row) => (open = byId.get(row.id))} />
   {/if}
 
   {#if error}<div class="alert">{error}</div>{/if}
@@ -224,96 +187,7 @@
     line-height: 1.7;
   }
 
-  .group + .group {
-    margin-top: var(--s5);
-  }
-
-  /* 日期是分隔，不是标题——它不该和实例名争视觉层级。 */
-  .day {
-    margin: 0 0 var(--s1);
-    color: var(--ink-4);
-    font-size: var(--t-micro);
-    font-weight: 500;
-    letter-spacing: 0.04em;
-  }
-
-  .list {
-    display: grid;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .row {
-    display: flex;
-    align-items: baseline;
-    gap: var(--s4);
-    width: 100%;
-    /* 一屏几十行时靠伪元素向外够会互相重叠，行高自己抬到点击区下限。 */
-    min-height: var(--hit);
-    padding: var(--s2) var(--s2);
-    margin-left: calc(var(--s2) * -1);
-    border-radius: var(--r1);
-    text-align: left;
-    box-shadow: inset 0 -1px 0 var(--hairline-2);
-    transition: background var(--t-fast) var(--ease);
-  }
-
-  .row:hover {
-    background: var(--tint-1);
-    box-shadow: none;
-  }
-
-  .when {
-    flex: none;
-    width: 6ch;
-    color: var(--ink-3);
-    font-size: var(--t-micro);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .what {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    flex: 1;
-    min-width: 0;
-    color: var(--ink-2);
-    font-size: var(--t-body);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .pin,
-  .flag {
-    display: inline-grid;
-    place-items: center;
-    flex: none;
-  }
-
-  .pin {
-    color: var(--ink-4);
-  }
-
-  .flag {
-    color: var(--danger);
-  }
-
-  .meta {
-    flex: none;
-    color: var(--ink-4);
-    font-size: var(--t-micro);
-    font-variant-numeric: tabular-nums;
-  }
-
   .alert {
     margin-top: var(--s4);
-  }
-
-  @media (max-width: 640px) {
-    .meta {
-      display: none;
-    }
   }
 </style>
