@@ -15,6 +15,13 @@
 //! NeoForge  META-INF/neoforge.mods.toml  同上
 //! ```
 //!
+//! **一个 jar 可以同时是好几家的。** 多加载器打包的模组（数据包型的尤其多）
+//! 一个文件里就装着上面这三四份清单，装进哪个实例就由哪个加载器读走它认得的
+//! 那一份，其余的没有人看。所以这里读到几份就留几份（[`ModJar::manifests`]）：
+//! 只留第一份，会把一个通吃的模组判成「Fabric 的」，还会把它那份 Fabric 清单
+//! 里的 `depends: fabric-api` 当成 NeoForge 实例的缺前置——两条都是凭空造出来
+//! 的话。
+//!
 //! **读不懂不是错误。** 任何一步失败都退回「只知道文件名」，因为一个读不出
 //! 元数据的 jar 照样能被加载器加载——我们不该比加载器更挑剔。
 
@@ -39,6 +46,15 @@ pub struct Dependency {
     pub required: bool,
 }
 
+/// 一个 jar 里为某一家加载器写的那份清单。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Manifest {
+    pub loader: LoaderKind,
+    /// **这一份**清单声明的依赖。同一个 jar 的另一份可以完全不同。
+    pub depends: Vec<Dependency>,
+}
+
 /// 从一个 jar 里读到的东西。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,21 +68,75 @@ pub struct ModJar {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// 这个 jar 是给哪个加载器的。认不出来就是 `Vanilla`。
-    pub loader: LoaderKind,
+    /// 这个 jar 里读到的所有清单，按 Fabric、Quilt、NeoForge、Forge 的顺序。
+    /// 一份都读不到就是空——那是「不知道」，不是「原版」。
+    #[serde(default)]
+    pub manifests: Vec<Manifest>,
     /// 除自己之外，这个 jar 还让哪些 id 算「装了」：元数据里的 `provides`，
     /// 加上打包在它里面的那些 jar（jar-in-jar，见 `nested`）。
     #[serde(default)]
     pub provides: Vec<String>,
-    pub depends: Vec<Dependency>,
     /// 顶层包，例如 `net.caffeinemc.mods.sodium`。崩溃归因按它匹配栈帧。
     pub packages: Vec<String>,
 }
 
 impl ModJar {
+    /// 这个 jar 是写给哪几家的。读不出清单就是空——那是「不知道」。
+    pub fn loaders(&self) -> Vec<LoaderKind> {
+        self.manifests
+            .iter()
+            .map(|manifest| manifest.loader)
+            .collect()
+    }
+
+    /// 这个实例的加载器会读它吗。读不出清单时算读得了：一个我们看不懂的 jar
+    /// 照样能被加载器加载，不该因为看不懂就判它出局。
+    pub fn fits(&self, loader: LoaderKind) -> bool {
+        self.manifests.is_empty()
+            || self
+                .manifests
+                .iter()
+                .any(|manifest| accepts(loader, manifest.loader))
+    }
+
+    /// 在这个实例里真正生效的那份依赖。
+    ///
+    /// 加载器只读它认得的那一份清单，别的那些一个字都不看。Explorify 的
+    /// `fabric.mod.json` 写着 `depends: fabric-api`，同一个 jar 里的
+    /// `neoforge.mods.toml` 只写 `minecraft`——在 NeoForge 实例里按前者去报
+    /// 「缺 Fabric API」，说的是一份根本没有人读的文件。
+    ///
+    /// 一份都对不上时退回第一份，聊胜于无。**但那时候本就不该问这个问题**——
+    /// 一个不会被加载的 jar 谈不上缺前置，预检查在问依赖之前先把它们筛掉了。
+    pub fn depends(&self, loader: LoaderKind) -> &[Dependency] {
+        self.manifests
+            .iter()
+            // 先找一模一样的：Quilt 实例上，一个同时带两份清单的 jar 该读
+            // 它的 `quilt.mod.json`，而不是那份将就着也能用的 Fabric 清单。
+            .find(|manifest| manifest.loader == loader)
+            .or_else(|| {
+                self.manifests
+                    .iter()
+                    .find(|manifest| accepts(loader, manifest.loader))
+            })
+            .or_else(|| self.manifests.first())
+            .map(|manifest| manifest.depends.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// 所有清单里的依赖，不分加载器。
+    ///
+    /// 给挑 Java 那条路用：`depends: { "java": ">=25" }` 三份清单写的是同一件
+    /// 事，而那条路在实例的加载器之外还有别的调用点，宁可多看一眼。
+    pub fn every_dependency(&self) -> impl Iterator<Item = &Dependency> {
+        self.manifests
+            .iter()
+            .flat_map(|manifest| manifest.depends.iter())
+    }
+
     /// 它声明支持的 Minecraft 版本区间。没声明就是没有。
-    pub fn minecraft_range(&self) -> Option<&str> {
-        self.depends
+    pub fn minecraft_range(&self, loader: LoaderKind) -> Option<&str> {
+        self.depends(loader)
             .iter()
             .find(|dependency| dependency.mod_id == "minecraft")
             .map(|dependency| dependency.range.as_str())
@@ -76,6 +146,13 @@ impl ModJar {
     pub fn supplies(&self, mod_id: &str) -> bool {
         self.mod_id.as_deref() == Some(mod_id) || self.provides.iter().any(|id| id == mod_id)
     }
+}
+
+/// 这个实例的加载器读不读得了那一份清单。
+///
+/// Quilt 读得了 Fabric 的模组，NeoForge 读不了 Forge 的（1.20.2 之后分家了）。
+pub fn accepts(instance: LoaderKind, manifest: LoaderKind) -> bool {
+    instance == manifest || (instance == LoaderKind::Quilt && manifest == LoaderKind::Fabric)
 }
 
 /// 读一个 jar。读不动就只留文件名。
@@ -91,9 +168,8 @@ pub fn read(path: &Path) -> ModJar {
         enabled,
         mod_id: None,
         version: None,
-        loader: LoaderKind::Vanilla,
+        manifests: Vec::new(),
         provides: Vec::new(),
-        depends: Vec::new(),
         packages: Vec::new(),
     };
 
@@ -104,9 +180,7 @@ pub fn read(path: &Path) -> ModJar {
         return jar;
     };
 
-    if let Some((described, loader)) = describe(&mut archive) {
-        merge(&mut jar, described, loader);
-    }
+    merge(&mut jar, describe(&mut archive));
     let nested = nested(&mut archive, 0);
     jar.provides.extend(nested.ids);
     jar.provides.sort();
@@ -125,18 +199,23 @@ pub fn read(path: &Path) -> ModJar {
     jar
 }
 
-/// 一个 jar 自报的那一段元数据，以及它是给哪个加载器的。
+/// 一个 jar 自报的那几段元数据，各自属于哪个加载器。
+///
+/// **读到几份就返回几份。** 一个 jar 里同时躺着 `fabric.mod.json` 和
+/// `META-INF/neoforge.mods.toml` 是常事，两份都是真的，只是每次只有一份会被
+/// 读走。碰到第一份就收工，等于替加载器做了一个它不会做的选择。
 ///
 /// 单独一层，是因为**打包在里面的那些 jar 要走同一条路**：一个嵌套模块的
 /// `fabric.mod.json` 和外层那份长得一模一样。
 fn describe<R: std::io::Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
-) -> Option<(Described, LoaderKind)> {
+) -> Vec<(Described, LoaderKind)> {
+    let mut found = Vec::new();
     if let Some(described) = entry(archive, "fabric.mod.json").and_then(|t| fabric(&t)) {
-        return Some((described, LoaderKind::Fabric));
+        found.push((described, LoaderKind::Fabric));
     }
     if let Some(described) = entry(archive, "quilt.mod.json").and_then(|t| quilt(&t)) {
-        return Some((described, LoaderKind::Quilt));
+        found.push((described, LoaderKind::Quilt));
     }
     for (name, loader) in [
         ("META-INF/neoforge.mods.toml", LoaderKind::NeoForge),
@@ -157,9 +236,9 @@ fn describe<R: std::io::Read + std::io::Seek>(
             described.version = entry(archive, "META-INF/MANIFEST.MF")
                 .and_then(|manifest| manifest_value(&manifest, "Implementation-Version"));
         }
-        return Some((described, loader));
+        found.push((described, loader));
     }
-    None
+    found
 }
 
 /// 打包在一个 jar 里面的那些 jar（jar-in-jar）自报了什么。
@@ -208,7 +287,7 @@ fn nested<R: std::io::Read + std::io::Seek>(
         let Ok(mut module) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
             continue;
         };
-        if let Some((described, _)) = describe(&mut module) {
+        for (described, _) in describe(&mut module) {
             found.ids.extend(described.mod_id);
             found.ids.extend(described.provides);
         }
@@ -286,15 +365,28 @@ struct Described {
     depends: Vec<Dependency>,
 }
 
-fn merge(jar: &mut ModJar, described: Described, loader: LoaderKind) {
-    if let Some(name) = described.name {
-        jar.name = name;
+/// 把读到的几份清单并进一个 `ModJar`。
+///
+/// **名字、版本、modid 取第一份，依赖分开留着。** 前三样三家写的是同一件事——
+/// 多加载器打包的模组就是同一个模组的几副面孔，谁先谁后都一样；而依赖不是，
+/// 混在一起就等于在每个实例里都报出别家清单里的那些前置。
+fn merge(jar: &mut ModJar, manifests: Vec<(Described, LoaderKind)>) {
+    for (index, (described, loader)) in manifests.into_iter().enumerate() {
+        if index == 0 {
+            if let Some(name) = described.name {
+                jar.name = name;
+            }
+            jar.mod_id = described.mod_id;
+            jar.version = described.version;
+        }
+        // `provides` 反过来，几份并起来：多算一个 id 只会少报一条缺前置，
+        // 而漏算一个会凭空多报一条。
+        jar.provides.extend(described.provides);
+        jar.manifests.push(Manifest {
+            loader,
+            depends: described.depends,
+        });
     }
-    jar.mod_id = described.mod_id;
-    jar.version = described.version;
-    jar.provides = described.provides;
-    jar.depends = described.depends;
-    jar.loader = loader;
 }
 
 /// `provides` 两种写法都有：一串 id，或者一串带 `id` 的对象。
@@ -603,18 +695,17 @@ mod tests {
         let read = read(&path);
         assert_eq!(read.mod_id.as_deref(), Some("sodium"));
         assert_eq!(read.name, "Sodium");
-        assert_eq!(read.loader, LoaderKind::Fabric);
-        assert_eq!(read.minecraft_range(), Some("~1.21"));
-        let api = read
-            .depends
+        assert_eq!(read.loaders(), vec![LoaderKind::Fabric]);
+        assert_eq!(read.minecraft_range(LoaderKind::Fabric), Some("~1.21"));
+        let depends = read.depends(LoaderKind::Fabric);
+        let api = depends
             .iter()
             .find(|dependency| dependency.mod_id == "fabric-api")
             .expect("fabric-api");
         assert!(api.required);
         // 建议装的不是必需的，缺了不该拿去烦用户。
         assert!(
-            !read
-                .depends
+            !depends
                 .iter()
                 .find(|dependency| dependency.mod_id == "iris")
                 .expect("iris")
@@ -651,11 +742,72 @@ version = "19.0.0"
         );
         let read = read(&path);
         assert_eq!(read.mod_id.as_deref(), Some("appliedenergistics2"));
-        assert_eq!(read.loader, LoaderKind::Forge);
-        assert_eq!(read.depends.len(), 2);
-        assert!(read.depends[0].required);
-        assert_eq!(read.depends[0].range, "[19.5.0,)");
-        assert!(!read.depends[1].required);
+        assert_eq!(read.loaders(), vec![LoaderKind::Forge]);
+        let depends = read.depends(LoaderKind::Forge);
+        assert_eq!(depends.len(), 2);
+        assert!(depends[0].required);
+        assert_eq!(depends[0].range, "[19.5.0,)");
+        assert!(!depends[1].required);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 一个文件通吃三家的模组，三份清单都要读到，而且各是各的依赖。
+    ///
+    /// 照着 Explorify v1.6.5 的真实内容写：它一个 jar 里躺着
+    /// `fabric.mod.json`、`META-INF/mods.toml`、`META-INF/neoforge.mods.toml`，
+    /// 而那份 Fabric 清单要 `fabric-api`，NeoForge 那份只要 `minecraft`。碰到
+    /// 第一份就收工的读法，会把它判成「Fabric 的模组」，再在 NeoForge 实例里
+    /// 追加一条「缺 Fabric API」——两条都是关于一份没有人读的文件。
+    #[test]
+    fn a_jar_written_for_three_loaders_keeps_all_three_manifests() {
+        let root = temporary("multiloader");
+        let toml = r#"
+modLoader = "lowcodefml"
+[[mods]]
+modId = "explorify"
+displayName = "Explorify"
+version = "1.6.5"
+[[dependencies.explorify]]
+    modId = "minecraft"
+    mandatory = true
+    versionRange = "[1.20,)"
+"#;
+        let path = jar(
+            &root,
+            "Explorify v1.6.5.mod.jar",
+            &[
+                (
+                    "fabric.mod.json",
+                    r#"{"id":"explorify","name":"Explorify","version":"1.6.5",
+                        "depends":{"fabric-api":"*","minecraft":">=1.20"}}"#,
+                ),
+                ("META-INF/mods.toml", toml),
+                ("META-INF/neoforge.mods.toml", toml),
+            ],
+        );
+
+        let read = read(&path);
+        assert_eq!(
+            read.loaders(),
+            vec![LoaderKind::Fabric, LoaderKind::NeoForge, LoaderKind::Forge]
+        );
+        // 装进哪个实例，就只有那一家的依赖算数。
+        let ids = |loader| {
+            read.depends(loader)
+                .iter()
+                .map(|dependency| dependency.mod_id.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(LoaderKind::NeoForge), vec!["minecraft"]);
+        assert_eq!(ids(LoaderKind::Forge), vec!["minecraft"]);
+        assert!(ids(LoaderKind::Fabric).contains(&"fabric-api"));
+        // 版本区间同样跟着清单走：Fabric 那份写的是另一种写法。
+        assert_eq!(read.minecraft_range(LoaderKind::NeoForge), Some("[1.20,)"));
+        assert_eq!(read.minecraft_range(LoaderKind::Fabric), Some(">=1.20"));
+        // 名字、版本、modid 三家写的是同一件事，取哪一份都一样。
+        assert_eq!(read.name, "Explorify");
+        assert_eq!(read.version.as_deref(), Some("1.6.5"));
+
         std::fs::remove_dir_all(root).ok();
     }
 

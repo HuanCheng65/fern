@@ -45,6 +45,14 @@ export const ui = catalog.ui
 export const loaderName = (tag: string) =>
   catalog.loader[tag as keyof typeof catalog.loader] ?? tag
 
+/**
+ * 一串用逗号分开的加载器取值的显示名。
+ *
+ * 一个 jar 可以同时是好几家的（`fabric,neoforge`），预检查说「它是哪家的模组」
+ * 时给的就是这一串。
+ */
+const loaderNames = (tags: string) => tags.split(',').map(loaderName).join('、')
+
 /** 一串用逗号分开的能力取值的显示名。后端传 `run-program,network` 这样的值。 */
 const capabilityNames = (tags: string) =>
   tags
@@ -73,7 +81,7 @@ export function describe(id: string, args: Record<string, string> = {}): Message
   // 有几个参数的**值**本身也是术语取值，不是现成的句子，先过一遍。
   const resolved = { ...args }
   for (const key of ['instanceLoader', 'modLoader'] as const) {
-    if (resolved[key]) resolved[key] = loaderName(resolved[key])
+    if (resolved[key]) resolved[key] = loaderNames(resolved[key])
   }
   if (resolved.capability) resolved.capability = capabilityNames(resolved.capability)
   return {

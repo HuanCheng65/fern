@@ -175,10 +175,13 @@ fn java_major(paths: &DataPaths, profile: &InstanceProfile, jars: &[ModJar]) -> 
 ///
 /// **只认读得懂的下界。** `>=25`、`[25,)`、`25` 认，`<=17` 这样的上界和看不懂的
 /// 写法一律不算——把一个上界当成下界去挑 Java，比不挑更糟。
+///
+/// 不分加载器地看每一份清单：一个多加载器打包的模组要 Java 25，它三份清单里
+/// 写的是同一件事，而挑错 Java 的代价是「点了启动什么也没发生」。
 pub fn java_floor(jars: &[ModJar]) -> Option<u16> {
     jars.iter()
         .filter(|jar| jar.enabled)
-        .flat_map(|jar| jar.depends.iter())
+        .flat_map(|jar| jar.every_dependency())
         .filter(|dependency| dependency.required && dependency.mod_id == "java")
         .filter_map(|dependency| lower_bound(&dependency.range))
         .max()
@@ -247,9 +250,18 @@ pub fn inspect(
 
     findings.extend(duplicates(&enabled));
     findings.extend(wrong_loader(&enabled, loader));
-    findings.extend(wrong_game_version(&enabled, minecraft, loader));
-    findings.extend(missing_dependencies(jars, &enabled, loader));
-    findings.extend(wrong_java(&enabled, java_major));
+
+    // 加载器读不了的那些，剩下的话就不必再说了：它根本不会被加载，谈不上缺前置，
+    // 也谈不上适配哪个游戏版本。该说的那一句 `wrong_loader` 已经说了，再追一条
+    // 「缺 Fabric API」只会让用户去装一个他根本不需要的东西。
+    let loadable: Vec<&ModJar> = enabled
+        .iter()
+        .copied()
+        .filter(|jar| jar.fits(loader))
+        .collect();
+    findings.extend(wrong_game_version(&loadable, minecraft, loader));
+    findings.extend(missing_dependencies(jars, &loadable, loader));
+    findings.extend(wrong_java(&loadable, loader, java_major));
     findings.sort_by_key(|finding| finding.severity);
     findings
 }
@@ -288,30 +300,36 @@ fn duplicates(enabled: &[&ModJar]) -> Vec<Finding> {
 }
 
 /// Fabric 的模组放进 Forge 实例里不会被加载，反之亦然。
+///
+/// 但**一个 jar 可以同时是好几家的**，所以要一份清单都对不上才算数：只要有一
+/// 份是这个实例读得了的，它就是装对了地方（见 [`ModJar::fits`]）。
 fn wrong_loader(enabled: &[&ModJar], loader: LoaderKind) -> Vec<Finding> {
     enabled
         .iter()
-        .filter(|jar| jar.loader != LoaderKind::Vanilla && !accepts(loader, jar.loader))
+        .filter(|jar| !jar.fits(loader))
         .map(|jar| Finding {
             id: format!("{}:{}", kind::WRONG_LOADER, jar.file_name),
             kind: kind::WRONG_LOADER.to_owned(),
             severity: Severity::Blocking,
-            // 加载器名是个术语，交给界面去译；这里只给取值。
+            // 加载器名是个术语，交给界面去译；这里只给取值。逗号分开的一串，
+            // 因为一个 jar 可以写着好几家——只是没有一家是这个实例。
             args: args([
                 ("mod", jar.name.clone()),
                 ("instanceLoader", tag(loader).to_owned()),
-                ("modLoader", tag(jar.loader).to_owned()),
+                (
+                    "modLoader",
+                    jar.loaders()
+                        .into_iter()
+                        .map(tag)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
             ]),
             action: Some(Action::RemoveMod {
                 file: jar.file_name.clone(),
             }),
         })
         .collect()
-}
-
-/// Quilt 读得了 Fabric 的模组，NeoForge 读不了 Forge 的（1.20.2 之后分家了）。
-fn accepts(instance: LoaderKind, jar: LoaderKind) -> bool {
-    instance == jar || (instance == LoaderKind::Quilt && jar == LoaderKind::Fabric)
 }
 
 /// 模组自己声明的 MC 版本区间不含这个实例的版本。
@@ -326,7 +344,7 @@ fn wrong_game_version(enabled: &[&ModJar], minecraft: &Game, loader: LoaderKind)
     enabled
         .iter()
         .filter_map(|jar| {
-            let range = jar.minecraft_range()?;
+            let range = jar.minecraft_range(loader)?;
             (!ranges::satisfies(range, version)).then(|| Finding {
                 id: format!("{}:{}", kind::WRONG_GAME_VERSION, jar.file_name),
                 kind: kind::WRONG_GAME_VERSION.to_owned(),
@@ -357,7 +375,8 @@ fn missing_dependencies(all: &[ModJar], enabled: &[&ModJar], loader: LoaderKind)
     let mut findings = Vec::new();
     let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
     for jar in enabled {
-        for dependency in &jar.depends {
+        // 只看这个实例的加载器真会读的那一份清单。
+        for dependency in jar.depends(loader) {
             if !dependency.required || provided.contains(&dependency.mod_id) {
                 continue;
             }
@@ -402,7 +421,7 @@ fn missing_dependencies(all: &[ModJar], enabled: &[&ModJar], loader: LoaderKind)
 /// 「这个游戏版本需要 Java 几」是两回事——后者由启动时的 requirement 管。
 ///
 /// 同一个大版本只说一次：十个模组要求 Java 22，要做的仍然只有一件事。
-fn wrong_java(enabled: &[&ModJar], java_major: Option<u16>) -> Vec<Finding> {
+fn wrong_java(enabled: &[&ModJar], loader: LoaderKind, java_major: Option<u16>) -> Vec<Finding> {
     let Some(current) = java_major else {
         return Vec::new();
     };
@@ -410,7 +429,7 @@ fn wrong_java(enabled: &[&ModJar], java_major: Option<u16>) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
     for jar in enabled {
-        for dependency in &jar.depends {
+        for dependency in jar.depends(loader) {
             if !dependency.required
                 || dependency.mod_id != "java"
                 || ranges::satisfies(&dependency.range, &running)
@@ -512,7 +531,7 @@ fn tag(loader: LoaderKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instance::jar::Dependency;
+    use crate::instance::jar::{Dependency, Manifest};
 
     fn jar(name: &str, mod_id: &str, loader: LoaderKind) -> ModJar {
         ModJar {
@@ -521,15 +540,23 @@ mod tests {
             mod_id: Some(mod_id.to_owned()),
             name: name.to_owned(),
             version: Some("1.0".to_owned()),
-            loader,
+            manifests: vec![Manifest {
+                loader,
+                depends: Vec::new(),
+            }],
             provides: Vec::new(),
-            depends: Vec::new(),
             packages: Vec::new(),
         }
     }
 
-    fn needs(mut jar: ModJar, mod_id: &str, range: &str) -> ModJar {
-        jar.depends.push(Dependency {
+    /// 往第一份清单里加一条依赖。
+    fn needs(jar: ModJar, mod_id: &str, range: &str) -> ModJar {
+        declares(jar, 0, mod_id, range)
+    }
+
+    /// 往第 `index` 份清单里加一条依赖——多加载器打包的模组，各家写各家的。
+    fn declares(mut jar: ModJar, index: usize, mod_id: &str, range: &str) -> ModJar {
+        jar.manifests[index].depends.push(Dependency {
             mod_id: mod_id.to_owned(),
             range: range.to_owned(),
             required: true,
@@ -709,13 +736,11 @@ mod tests {
     #[test]
     fn mods_are_judged_against_the_snapshot_they_are_written_for() {
         let ready = |range: &str| {
-            let mut jar = jar("Sodium", "sodium", LoaderKind::Fabric);
-            jar.depends.push(Dependency {
-                mod_id: "minecraft".to_owned(),
-                range: range.to_owned(),
-                required: true,
-            });
-            jar
+            needs(
+                jar("Sodium", "sodium", LoaderKind::Fabric),
+                "minecraft",
+                range,
+            )
         };
         // 愚人节版本在 loader 的对照表里，client jar 说什么都不改变答案。
         let craftmine = Game::of("25w14craftmine", Some("1.21.6"));
@@ -751,12 +776,11 @@ mod tests {
     /// 认不出来的版本仍然不比：那时说什么都是猜的。
     #[test]
     fn a_version_we_cannot_place_reports_nothing() {
-        let mut sodium = jar("Sodium", "sodium", LoaderKind::Fabric);
-        sodium.depends.push(Dependency {
-            mod_id: "minecraft".to_owned(),
-            range: ">=1.21.6".to_owned(),
-            required: true,
-        });
+        let sodium = needs(
+            jar("Sodium", "sodium", LoaderKind::Fabric),
+            "minecraft",
+            ">=1.21.6",
+        );
         let unknown = Game::of("我的整合包", None);
         assert!(unknown.semantic.is_none());
         assert!(inspect(&[sodium], LoaderKind::Fabric, &unknown, None).is_empty());
@@ -770,17 +794,16 @@ mod tests {
     /// 又全成了不兼容。
     #[test]
     fn the_forge_side_compares_the_plain_version_number() {
-        let mut applied = jar("AE2", "ae2", LoaderKind::NeoForge);
-        applied.depends.push(Dependency {
-            mod_id: "minecraft".to_owned(),
-            range: "[1.21.6,1.22)".to_owned(),
-            required: true,
-        });
+        let applied = needs(
+            jar("AE2", "ae2", LoaderKind::NeoForge),
+            "minecraft",
+            "[1.21.6,1.22)",
+        );
 
         // 正式版照常比，两边都比得对。
         assert!(
             inspect(
-                &[applied.clone()],
+                std::slice::from_ref(&applied),
                 LoaderKind::NeoForge,
                 &Game::of("1.21.6", None),
                 None
@@ -788,7 +811,7 @@ mod tests {
             .is_empty()
         );
         let findings = inspect(
-            &[applied.clone()],
+            std::slice::from_ref(&applied),
             LoaderKind::NeoForge,
             &Game::of("1.21.1", None),
             None,
@@ -846,14 +869,70 @@ mod tests {
         );
     }
 
+    /// 一个文件通吃三家的模组，装在哪个实例里都不该被说三道四。
+    ///
+    /// Explorify 就是这样一份 jar：它自己的 `fabric.mod.json` 要 `fabric-api`，
+    /// 它自己的 `neoforge.mods.toml` 只要 `minecraft`。一度我们读到第一份就
+    /// 收工，于是一个 NeoForge 整合包里冒出两条拦路的红字——「它是 Fabric 的
+    /// 模组」和「缺 Fabric API」——而游戏点下去照常起来，因为 NeoForge 读的
+    /// 从来是另一份。
+    #[test]
+    fn a_jar_that_carries_several_loaders_manifests_fits_any_of_them() {
+        let explorify = || {
+            let mut jar = jar("Explorify", "explorify", LoaderKind::Fabric);
+            jar.manifests.push(Manifest {
+                loader: LoaderKind::NeoForge,
+                depends: Vec::new(),
+            });
+            // 各家写各家的：Fabric 那份要 Fabric API，NeoForge 那份不要。
+            declares(
+                declares(jar, 0, "fabric-api", "*"),
+                1,
+                "minecraft",
+                "[1.20,)",
+            )
+        };
+
+        // NeoForge 实例读的是那份只要 minecraft 的清单，没有话说。
+        assert!(
+            inspect(
+                &[explorify()],
+                LoaderKind::NeoForge,
+                &Game::of("1.21.1", None),
+                None
+            )
+            .is_empty()
+        );
+
+        // 同一个文件装进 Fabric 实例，那条 fabric-api 才真的算数——依赖是跟着
+        // 清单走的，不是跟着文件走的。Quilt 读的也是这一份。
+        for loader in [LoaderKind::Fabric, LoaderKind::Quilt] {
+            let findings = inspect(&[explorify()], loader, &Game::of("1.21.1", None), None);
+            assert_eq!(findings.len(), 1, "{loader:?}");
+            assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY, "{loader:?}");
+            assert_eq!(findings[0].args["dependency"], "fabric-api", "{loader:?}");
+        }
+
+        // 一家都对不上时照报，而且把它写着的那几家都说出来。只报这一条：
+        // 它不会被加载，那份 Fabric 清单里的 fabric-api 不该跟着冒出来。
+        let findings = inspect(
+            &[explorify()],
+            LoaderKind::Forge,
+            &Game::of("1.21.1", None),
+            None,
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].kind, kind::WRONG_LOADER);
+        assert_eq!(findings[0].args["modLoader"], "fabric,neoforge");
+    }
+
     #[test]
     fn a_mod_built_for_another_game_version_is_a_warning_not_a_blocker() {
-        let mut sodium = jar("Sodium", "sodium", LoaderKind::Fabric);
-        sodium.depends.push(Dependency {
-            mod_id: "minecraft".to_owned(),
-            range: "1.20.x".to_owned(),
-            required: true,
-        });
+        let sodium = needs(
+            jar("Sodium", "sodium", LoaderKind::Fabric),
+            "minecraft",
+            "1.20.x",
+        );
         let findings = inspect(
             &[sodium],
             LoaderKind::Fabric,
@@ -867,12 +946,11 @@ mod tests {
     /// 看不懂的区间一律当作满足。宁可漏报。
     #[test]
     fn an_unreadable_version_range_is_not_reported() {
-        let mut sodium = jar("Sodium", "sodium", LoaderKind::Fabric);
-        sodium.depends.push(Dependency {
-            mod_id: "minecraft".to_owned(),
-            range: "谁知道这是什么".to_owned(),
-            required: true,
-        });
+        let sodium = needs(
+            jar("Sodium", "sodium", LoaderKind::Fabric),
+            "minecraft",
+            "谁知道这是什么",
+        );
         assert!(
             inspect(
                 &[sodium],
