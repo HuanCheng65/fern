@@ -68,8 +68,10 @@ site and uploads it to Cloudflare Workers, configured by
 [fern-site/wrangler.jsonc](fern-site/wrangler.jsonc). `fern-kit` is in that list
 because the site renders those components for real — a change there changes the
 site, and without it the site would quietly sit on an older version of the
-design system. It needs `CLOUDFLARE_API_TOKEN` (Account → Workers Scripts →
-Edit) and `CLOUDFLARE_ACCOUNT_ID` configured as repository secrets.
+design system. It needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as
+repository secrets; which permissions the token needs, and why it has to be a
+user token rather than an account-owned one, is at the top of
+[the workflow](.github/workflows/site.yml).
 
 ## License
 

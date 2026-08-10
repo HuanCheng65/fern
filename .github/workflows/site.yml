@@ -11,8 +11,22 @@
 #
 # **需要的仓库配置**（缺任何一项都会在部署那一步失败，不会静悄悄发错）：
 #
-#   secrets.CLOUDFLARE_API_TOKEN   权限只要 Account → Workers Scripts → Edit
+#   secrets.CLOUDFLARE_API_TOKEN   见下
 #   secrets.CLOUDFLARE_ACCOUNT_ID  账号 id，和 release.yml 里的 R2_ACCOUNT_ID 是同一个值
+#
+# 令牌在 My Profile → API Tokens 建（**用户令牌**，不是 Manage Account 下那种账号
+# 令牌：wrangler 会去问 /memberships，而账号令牌根本没有这个作用域，报的是一句
+# 看不出所以然的 `Unable to authenticate request [code: 10001]`）。三项权限：
+#
+#   Account → Workers Scripts → Edit    部署脚本、上传静态资源
+#   Account → Account Settings → Read   wrangler 启动时要读账号信息
+#   User → Memberships → Read           同上，它认这个身份
+#
+# 别用 "Edit Cloudflare Workers" 那个模板：它顺带给了 KV、R2、Durable Objects 和
+# 路由的写权限，而这个 Worker 一个都不用——R2 里躺着的是发布出去的安装包。
+#
+# 以后要让 wrangler 自己接自定义域（wrangler.jsonc 里写 routes），再加一项
+# Zone → Workers Routes → Edit，限定在那一个域名上。在面板里手动接则不用。
 
 name: Deploy the site
 
