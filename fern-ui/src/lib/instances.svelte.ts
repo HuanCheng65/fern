@@ -39,6 +39,8 @@ export interface VersionOption {
 export interface LoaderOption {
   kind: string
   label: string
+  /** 它是叠在别人上面的一层，不是「主加载器」的候选之一。 */
+  stackable?: boolean
 }
 
 interface CoreInstance {
@@ -61,6 +63,8 @@ const LOADER_NAMES: Record<string, string> = {
   neo_forge: 'NeoForge',
   neoforge: 'NeoForge',
   quilt: 'Quilt',
+  liteloader: 'LiteLoader',
+  lite_loader: 'LiteLoader',
 }
 
 export const loaderName = (loader: string) => LOADER_NAMES[loader] ?? loader
@@ -156,14 +160,31 @@ class InstanceStore {
   }
 
   /** 装得上哪些加载器。只拉一次。 */
-  async loadLoaders(): Promise<LoaderOption[]> {
-    if (this.loaders.length > 0 || !inTauri()) return this.loaders
+  /**
+   * 这个游戏版本上装得上的加载器。
+   *
+   * **必须带上版本**：1.7.10 上没有 Fabric，1.21 上没有 LiteLoader。摆一个
+   * 装不上的选项，等于让人走到一半才被拦住。所以这一份不缓存——换一个版本
+   * 就是另一份答案。
+   */
+  async loadLoaders(gameVersion = ''): Promise<LoaderOption[]> {
+    if (!inTauri()) return this.loaders
     try {
-      this.loaders = await invoke<LoaderOption[]>('installable_loaders')
+      this.loaders = await invoke<LoaderOption[]>('installable_loaders', { gameVersion })
     } catch {
       // 拿不到就只给原版：少一个选项，好过给一个点了会失败的选项。
     }
     return this.loaders
+  }
+
+  /** 这个版本 × 这个主加载器之下还能叠哪些附加层。多数组合下是空的。 */
+  async loadAddons(gameVersion: string, loader: string): Promise<LoaderOption[]> {
+    if (!inTauri() || !gameVersion) return []
+    try {
+      return await invoke<LoaderOption[]>('loader_addons', { gameVersion, loader })
+    } catch {
+      return []
+    }
   }
 
   /**

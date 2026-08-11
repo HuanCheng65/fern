@@ -74,22 +74,27 @@ pub async fn prepare_instance(
     // 外部实例的加载器是别的启动器装好的，那份版本描述已经在磁盘上。再装一遍
     // 会按我们探到的版本号去上游取**另一份**，往用户的目录里塞一个他没要的
     // 版本；而探测本来就可能探不出版本号（老 Forge 的库坐标形状不一样）。
-    let loader_ready = profile.external.is_some()
-        && profile
-            .loader_component()
-            .map(|loader| loader.version_id.clone())
-            .filter(|id| !id.is_empty())
-            .is_some_and(|id| {
-                paths
-                    .versions
-                    .join(&id)
-                    .join(format!("{id}.json"))
-                    .is_file()
-            });
+    let already_on_disk = |component: &crate::Component| {
+        !component.version_id.is_empty()
+            && paths
+                .versions
+                .join(&component.version_id)
+                .join(format!("{}.json", component.version_id))
+                .is_file()
+    };
+    // 要装的是**每一层**，不只是最外面那一个：Forge + LiteLoader 这样的实例
+    // 有两层要装，只装一层的话另一层的 tweaker 永远不会出现在命令行上，而
+    // 游戏照样能起来——少了一半模组，界面上看不出任何异常。
+    let pending: Vec<crate::Component> = profile
+        .components
+        .iter()
+        .filter(|component| component.kind != crate::LoaderKind::Vanilla)
+        .filter(|component| !(profile.external.is_some() && already_on_disk(component)))
+        .cloned()
+        .collect();
     // 原版没有加载器要装，那一步就不该出现在分母里。装 Java 不再单占一步：
     // 它和下载游戏文件是「补全文件」这一步里并排的两条支线。
-    let needs_loader = profile.loader != crate::LoaderKind::Vanilla && !loader_ready;
-    job.expect(if needs_loader { 3 } else { 2 });
+    job.expect(if pending.is_empty() { 2 } else { 3 });
 
     let version_id = profile.game_version.clone();
     let version_id = version_id.as_str();
@@ -108,43 +113,53 @@ pub async fn prepare_instance(
     // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
     // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
     // 另一份，会出现「文件明明下好了却说缺」这种最难查的问题。
-    if needs_loader && let Some(loader) = profile.loader_component().cloned() {
-        {
-            job.step(
-                JobText::id("job.stage.install-loader")
-                    .arg("loader", crate::loader_display_name(profile.loader))
-                    .arg("version", &loader.version),
-            );
-            let events = &job.downloads();
-            // NeoForge / Forge 的 processors 要把原版 client jar 拆开重打，
-            // 所以它必须先在磁盘上。Fabric 不需要，但多验一次已经存在的文件
-            // 只是一次 sha1，不值得为它分叉。
-            if let Some(client) = vanilla
-                .downloads
-                .as_ref()
-                .and_then(|downloads| downloads.client.as_ref())
-                && matches!(
-                    profile.loader,
+    if !pending.is_empty() {
+        job.step(
+            JobText::id("job.stage.install-loader")
+                .arg("loader", crate::loader_display_name(profile.loader))
+                .arg("version", &pending[0].version),
+        );
+        let events = &job.downloads();
+        // NeoForge / Forge 的 processors 要把原版 client jar 拆开重打，
+        // 所以它必须先在磁盘上。Fabric 不需要，但多验一次已经存在的文件
+        // 只是一次 sha1，不值得为它分叉。
+        if let Some(client) = vanilla
+            .downloads
+            .as_ref()
+            .and_then(|downloads| downloads.client.as_ref())
+            && pending.iter().any(|component| {
+                matches!(
+                    component.kind,
                     crate::LoaderKind::NeoForge | crate::LoaderKind::Forge
                 )
-            {
-                let jar = task_from_info(client_jar.clone(), client)?;
-                downloader.download_all(vec![jar], events).await?;
-            }
-            let installed =
-                loader::install(paths, profile.loader, version_id, &loader.version, events).await?;
+            })
+        {
+            let jar = task_from_info(client_jar.clone(), client)?;
+            downloader.download_all(vec![jar], events).await?;
+        }
+        let mut changed = false;
+        for component in pending {
+            let installed = loader::install(
+                paths,
+                component.kind,
+                version_id,
+                &component.version,
+                events,
+            )
+            .await?;
             // 建实例时还不知道上游会给哪个 id，装完才知道；记回实例文件，
-            // 之后启动就不必再猜命名规则。
-            if loader.version_id != installed {
-                // 层表里那一层记上装完之后真正的 id，下次启动就不必再猜命名
-                // 规则。改的是那一层，不是整份实例。
-                for component in &mut profile.components {
-                    if component.kind == loader.kind && component.version == loader.version {
-                        component.version_id = installed.clone();
+            // 之后启动就不必再猜命名规则。改的是那一层，不是整份实例。
+            if component.version_id != installed {
+                for slot in &mut profile.components {
+                    if slot.kind == component.kind && slot.version == component.version {
+                        slot.version_id = installed.clone();
                     }
                 }
-                crate::write_instance_profile(paths, &profile)?;
+                changed = true;
             }
+        }
+        if changed {
+            crate::write_instance_profile(paths, &profile)?;
         }
     }
     job.step(JobText::id("job.stage.download-files"));

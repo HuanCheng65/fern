@@ -201,9 +201,9 @@ pub use storage::{
 
 pub use launch::gamelog::{LogLine, LogParser};
 pub use launch::loader::{
-    LoaderOption, LoaderVersion, display_name as loader_display_name,
-    installable as installable_loaders, latest_version as latest_loader_version,
-    list_versions as list_loader_versions,
+    LoaderOption, LoaderVersion, addons_for as loader_addons, display_name as loader_display_name,
+    installable as installable_loaders, installable_for as loaders_for_version,
+    latest_version as latest_loader_version, list_versions as list_loader_versions,
 };
 pub use launch::memory::{
     AllocationDecision, AllocationSource, ExplanationItem, GcPath, MemoryBudget, MemoryHistory,

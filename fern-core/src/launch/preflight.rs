@@ -134,9 +134,10 @@ impl Game {
     fn comparable(&self, loader: LoaderKind) -> Option<&str> {
         match loader {
             LoaderKind::Fabric | LoaderKind::Quilt => self.semantic.as_deref(),
-            LoaderKind::Forge | LoaderKind::NeoForge | LoaderKind::Vanilla => {
-                mcversion::is_release(&self.id).then_some(self.id.as_str())
-            }
+            LoaderKind::Forge
+            | LoaderKind::NeoForge
+            | LoaderKind::Vanilla
+            | LoaderKind::LiteLoader => mcversion::is_release(&self.id).then_some(self.id.as_str()),
         }
     }
 }
@@ -710,7 +711,8 @@ fn builtin(loader: LoaderKind) -> Vec<String> {
             LoaderKind::Quilt => ["quilt_loader", "quilt_base", "fabricloader"].as_slice(),
             LoaderKind::Forge => ["forge", "fml"].as_slice(),
             LoaderKind::NeoForge => ["neoforge", "forge", "fml"].as_slice(),
-            LoaderKind::Vanilla => [].as_slice(),
+            // LiteLoader 的模组不声明依赖，它没有这套东西。
+            LoaderKind::Vanilla | LoaderKind::LiteLoader => [].as_slice(),
         }
         .iter()
         .map(|name| (*name).to_owned()),
@@ -726,6 +728,7 @@ fn tag(loader: LoaderKind) -> &'static str {
         LoaderKind::Quilt => "quilt",
         LoaderKind::Forge => "forge",
         LoaderKind::NeoForge => "neoforge",
+        LoaderKind::LiteLoader => "liteloader",
     }
 }
 

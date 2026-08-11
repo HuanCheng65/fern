@@ -89,6 +89,8 @@ fn meta_root(kind: LoaderKind) -> Result<&'static str> {
         LoaderKind::Vanilla => Err(anyhow!("原版不需要安装加载器")),
         // 这两家没有 meta server，走 installer，见 forge 模块。
         LoaderKind::NeoForge | LoaderKind::Forge => Err(anyhow!("{kind:?} 不使用 meta server")),
+        // 它有自己的一份 versions.json，见 liteloader 模块。
+        LoaderKind::LiteLoader => Err(anyhow!("LiteLoader 不使用 meta server")),
     }
 }
 
@@ -200,6 +202,22 @@ fn neoforge_prefix(game_version: &str) -> Option<String> {
     }
 }
 
+/// 这个版本 × 这个主加载器之下，可以再叠哪些附加层。
+///
+/// 分成两个函数而不是一个带过滤的列表：主加载器是单选、附加项是可勾的多选，
+/// 这是两种交互，界面本来就要分开摆。绝大多数组合下它返回空——那时候界面上
+/// 不该有「附加」这一栏，而不是摆一栏灰的。
+pub fn addons_for(game_version: &str, loader: LoaderKind) -> Vec<LoaderOption> {
+    installable_for(game_version)
+        .into_iter()
+        .filter(|option| option.stackable && option.kind != loader)
+        .filter(|option| match option.kind {
+            LoaderKind::LiteLoader => super::liteloader::stacks_on(loader),
+            _ => false,
+        })
+        .collect()
+}
+
 /// 这个游戏版本上可用的加载器版本，新的在前。
 pub async fn list_versions(
     paths: &DataPaths,
@@ -208,6 +226,9 @@ pub async fn list_versions(
 ) -> Result<Vec<LoaderVersion>> {
     if matches!(kind, LoaderKind::NeoForge | LoaderKind::Forge) {
         return list_maven_versions(paths, kind, game_version).await;
+    }
+    if kind == LoaderKind::LiteLoader {
+        return super::liteloader::list_versions(paths, game_version).await;
     }
     let url = format!("{}/versions/loader/{game_version}", meta_root(kind)?);
     let client = DownloadClient::new(source_order(), 4);
@@ -282,6 +303,9 @@ pub async fn install(
     loader_version: &str,
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<String> {
+    if kind == LoaderKind::LiteLoader {
+        return super::liteloader::install(paths, game_version, loader_version, events).await;
+    }
     // NeoForge 和 Forge 要在本地跑安装器，是完全不同的一条路。
     if matches!(kind, LoaderKind::NeoForge | LoaderKind::Forge) {
         let loader_version = canonical_version(paths, kind, game_version, loader_version).await;
@@ -362,6 +386,7 @@ pub fn display_name(kind: LoaderKind) -> &'static str {
         LoaderKind::Quilt => "Quilt",
         LoaderKind::NeoForge => "NeoForge",
         LoaderKind::Forge => "Forge",
+        LoaderKind::LiteLoader => "LiteLoader",
     }
 }
 
@@ -371,23 +396,56 @@ pub fn display_name(kind: LoaderKind) -> &'static str {
 pub struct LoaderOption {
     pub kind: LoaderKind,
     pub label: String,
+    /// 它是叠在别人上面的一层，不是「主加载器」的候选。
+    ///
+    /// 界面据此分成两处：主加载器是单选，附加项是可勾的。今天只有
+    /// LiteLoader 落在这一边，而它只在 1.12.2 及更早出现——绝大多数版本上
+    /// 这一栏根本不存在，而不是灰着。
+    #[serde(default)]
+    pub stackable: bool,
 }
 
 /// 现在装得上的加载器。界面按这个决定给出哪些选项——列出一个装不上的，
 /// 等于让用户走到一半才被拦住。名字也从这里给：能装什么和它叫什么是同一件
 /// 事，分在两处，加一种加载器就要改两个地方。
 pub fn installable() -> Vec<LoaderOption> {
+    installable_for("")
+}
+
+/// **这个游戏版本上**装得上的加载器。
+///
+/// 区间是静态的，不联网：界面要在选中版本的那一刻就把选项换掉，为此打四次
+/// 网络请求既慢又会在离线时把所有选项都抹掉。代价是它只回答「上游有没有为
+/// 这一代做过」，某个具体版本还没出构建时，版本列表那一步会是空的——那时候
+/// 该说的是「这个版本还没有 Forge 构建」，不是提前把它藏起来。
+///
+/// 传空串表示「不限定版本」，给出全部——建实例还没选版本时是这个状态。
+pub fn installable_for(game_version: &str) -> Vec<LoaderOption> {
+    let ordinal = fern_meta::release_ordinal(game_version);
+    // 认不出版本号（快照、远古 id）时不做任何裁剪：宁可多给一个选项，也不要
+    // 因为读不懂一个 id 就说「这个版本没有加载器」。
+    let unknown = !game_version.is_empty() && ordinal.is_none();
+    let since = |lower: (u16, u16, u16)| {
+        game_version.is_empty() || unknown || ordinal.is_some_and(|version| version >= lower)
+    };
     [
-        LoaderKind::Vanilla,
-        LoaderKind::Fabric,
-        LoaderKind::Quilt,
-        LoaderKind::NeoForge,
-        LoaderKind::Forge,
+        (LoaderKind::Vanilla, true, false),
+        (LoaderKind::Fabric, since((1, 14, 0)), false),
+        (LoaderKind::Quilt, since((1, 14, 0)), false),
+        (LoaderKind::NeoForge, since((1, 20, 1)), false),
+        (LoaderKind::Forge, since((1, 1, 0)), false),
+        (
+            LoaderKind::LiteLoader,
+            game_version.is_empty() || super::liteloader::covers(game_version),
+            true,
+        ),
     ]
     .into_iter()
-    .map(|kind| LoaderOption {
+    .filter(|(_, available, _)| *available)
+    .map(|(kind, _, stackable)| LoaderOption {
         kind,
         label: display_name(kind).to_owned(),
+        stackable,
     })
     .collect()
 }
@@ -418,6 +476,8 @@ mod tests {
                 LoaderKind::NeoForge | LoaderKind::Forge => {
                     crate::launch::forge::installer_url(kind, "1.21.1", "1.0").is_ok()
                 }
+                // 它有自己那份 versions.json，不走 meta server 也不走安装器。
+                LoaderKind::LiteLoader => crate::launch::liteloader::covers("1.12.2"),
                 other => meta_root(other).is_ok(),
             };
             assert!(reachable, "{kind:?} 被列为可安装，却没有安装途径");
@@ -468,6 +528,70 @@ mod tests {
     /// 1.7.2 那一段最新的在最前。照单反转，1.7.2 的默认值会变成 2014 年的第
     /// 一个构建。
     /// 两代游戏版本号对应的 NeoForge 前缀是两条规则，不是一条。
+    /// 附加项只在真的叠得上去的时候才有。
+    #[test]
+    fn addons_appear_only_where_they_can_actually_stack() {
+        let names = |version: &str, loader: LoaderKind| -> Vec<LoaderKind> {
+            addons_for(version, loader)
+                .into_iter()
+                .map(|option| option.kind)
+                .collect()
+        };
+        // 那个年代 Forge + LiteLoader 一起用是常态。
+        assert_eq!(
+            names("1.7.10", LoaderKind::Forge),
+            vec![LoaderKind::LiteLoader]
+        );
+        assert_eq!(
+            names("1.7.10", LoaderKind::Vanilla),
+            vec![LoaderKind::LiteLoader]
+        );
+        // Fabric 不是 LaunchWrapper 的世界，`--tweakClass` 没人读。
+        assert!(names("1.12.2", LoaderKind::Fabric).is_empty());
+        // 现代版本上这一栏根本不存在。
+        assert!(names("1.21.1", LoaderKind::Forge).is_empty());
+        assert!(names("26.2", LoaderKind::NeoForge).is_empty());
+    }
+
+    /// 选项要跟着版本走：1.7.10 上给不出 Fabric，1.21 上给不出 LiteLoader。
+    #[test]
+    fn the_options_follow_the_game_version() {
+        let kinds = |version: &str| -> Vec<LoaderKind> {
+            installable_for(version)
+                .into_iter()
+                .map(|option| option.kind)
+                .collect()
+        };
+
+        let modern = kinds("1.21.1");
+        assert!(modern.contains(&LoaderKind::Fabric));
+        assert!(modern.contains(&LoaderKind::NeoForge));
+        assert!(!modern.contains(&LoaderKind::LiteLoader));
+
+        let legacy = kinds("1.7.10");
+        assert!(legacy.contains(&LoaderKind::Forge));
+        assert!(legacy.contains(&LoaderKind::LiteLoader));
+        // Fabric 与 NeoForge 那时候还不存在，摆出来只会让人走到一半被拦住。
+        assert!(!legacy.contains(&LoaderKind::Fabric));
+        assert!(!legacy.contains(&LoaderKind::NeoForge));
+
+        // 2026 年的新版本号照样比得动。
+        assert!(kinds("26.2").contains(&LoaderKind::NeoForge));
+        assert!(!kinds("26.2").contains(&LoaderKind::LiteLoader));
+
+        // 读不懂的 id 不做裁剪——宁可多给一个，也不要说「这个版本没有加载器」。
+        assert!(kinds("26.3-snapshot-7").contains(&LoaderKind::Fabric));
+        assert_eq!(kinds("").len(), 6);
+
+        // 附加项只有 LiteLoader，而且只有它是 stackable。
+        let stackable: Vec<LoaderKind> = installable_for("1.7.10")
+            .into_iter()
+            .filter(|option| option.stackable)
+            .map(|option| option.kind)
+            .collect();
+        assert_eq!(stackable, vec![LoaderKind::LiteLoader]);
+    }
+
     #[test]
     fn neoforge_follows_both_generations_of_version_numbers() {
         // 老形状：开头那个恒定的 1. 被丢掉。

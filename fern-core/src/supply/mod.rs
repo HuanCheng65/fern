@@ -466,7 +466,9 @@ fn loader_tags(loader: LoaderKind) -> Vec<&'static str> {
         LoaderKind::Quilt => vec!["quilt", "fabric"],
         LoaderKind::NeoForge => vec!["neoforge"],
         LoaderKind::Forge => vec!["forge"],
-        LoaderKind::Vanilla => Vec::new(),
+        // Modrinth 上有 liteloader 这个标签，但在架的模组个位数——按它过滤
+        // 得到的是一个空列表，不如不过滤，让人按游戏版本自己找。
+        LoaderKind::Vanilla | LoaderKind::LiteLoader => Vec::new(),
     }
 }
 

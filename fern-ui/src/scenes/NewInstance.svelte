@@ -202,11 +202,21 @@
   })
 
   void instances.loadVersions()
-  if (inTauri()) {
-    void instances.loadLoaders().then((list) => {
-      if (list.length > 0) loaders = list
+  // 加载器跟着选中的版本走：1.7.10 上没有 Fabric，1.21 上没有 LiteLoader。
+  // 摆一个装不上的选项，等于让人走到一半才被拦住。
+  $effect(() => {
+    const version = picked
+    if (!inTauri() || !version) return
+    void instances.loadLoaders(version).then((list) => {
+      if (list.length === 0) return
+      loaders = list
+      // 换版本之后原来选的那个可能已经不在了，退回原版而不是留一个空选择。
+      if (!list.some((option) => option.kind === loader)) {
+        loader = 'vanilla'
+        loaderVersion = ''
+      }
     })
-  }
+  })
 </script>
 
 <section class="create" class:dropping>

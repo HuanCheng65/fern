@@ -427,9 +427,18 @@ async fn list_loader_versions(
 }
 
 /// 现在装得上的加载器，给创建面板用。硬编码在界面里的话，加一种就要改两处。
+///
+/// 传了游戏版本就只给那个版本上真有的——1.7.10 上摆一个 Fabric，等于让人
+/// 走到一半才被拦住。
 #[tauri::command]
-fn installable_loaders() -> Vec<fern_core::LoaderOption> {
-    fern_core::installable_loaders()
+fn installable_loaders(game_version: Option<String>) -> Vec<fern_core::LoaderOption> {
+    fern_core::loaders_for_version(game_version.as_deref().unwrap_or_default())
+}
+
+/// 这个版本 × 这个主加载器之下还能叠哪些附加层。多数组合下是空的。
+#[tauri::command]
+fn loader_addons(game_version: String, loader: Option<String>) -> Result<Vec<fern_core::LoaderOption>, String> {
+    Ok(fern_core::loader_addons(&game_version, parse_loader(loader.as_deref())?))
 }
 
 fn parse_loader(loader: Option<&str>) -> Result<fern_core::LoaderKind, String> {
@@ -1563,6 +1572,7 @@ pub fn run() {
             create_instance,
             list_loader_versions,
             installable_loaders,
+            loader_addons,
             detect_java,
             list_accounts,
             active_account,

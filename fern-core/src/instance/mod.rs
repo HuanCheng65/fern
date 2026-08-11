@@ -98,6 +98,9 @@ pub enum LoaderKind {
     Quilt,
     NeoForge,
     Forge,
+    /// 只存在于 1.5.2–1.12.2，而且**能叠在 Forge 上**——它是第一个真正意义上
+    /// 的附加层，见 [`crate::launch::liteloader`]。
+    LiteLoader,
 }
 
 /// 叠在游戏本体上的一层。

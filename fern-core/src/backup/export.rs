@@ -308,7 +308,8 @@ fn loader_key(loader: LoaderKind) -> Option<&'static str> {
         LoaderKind::Quilt => Some("quilt-loader"),
         LoaderKind::NeoForge => Some("neoforge"),
         LoaderKind::Forge => Some("forge"),
-        LoaderKind::Vanilla => None,
+        // mrpack 的格式里没有 LiteLoader——它比这个格式早得多。
+        LoaderKind::Vanilla | LoaderKind::LiteLoader => None,
     }
 }
 

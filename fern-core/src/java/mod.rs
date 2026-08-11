@@ -251,7 +251,11 @@ pub fn requirement(
         // 旧 Forge 的 coremod 直接反射 JDK 内部类，新 Java 上必崩。
         LoaderKind::Forge => requirement.tighten_maximum(8.max(requirement.minimum)),
         LoaderKind::NeoForge => requirement.tighten_minimum(21),
-        LoaderKind::Vanilla | LoaderKind::Fabric | LoaderKind::Quilt => requirement,
+        // LiteLoader 只存在于 1.12.2 及更早，那几个版本本来就被夹在 Java 8，
+        // 它自己不再收紧什么。
+        LoaderKind::Vanilla | LoaderKind::Fabric | LoaderKind::Quilt | LoaderKind::LiteLoader => {
+            requirement
+        }
     }
 }
 
