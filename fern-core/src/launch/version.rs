@@ -106,18 +106,25 @@ pub fn resolve(paths: &DataPaths, version_id: &str) -> Result<VersionMetadata> {
 /// **同一份描述只合并一次。** 不去重的话，原版会被合两遍（一次作为第 0 层，
 /// 一次作为加载器那一层的父），而合并对参数是**追加**——命令行上每一个游戏
 /// 参数都会出现两遍。
+///
+/// **哪一层缺了才算错，看的是有没有人指着它。** 层表里的第 0 层是
+/// `game_version`，而它未必是磁盘上的一个版本 id——外部实例的版本号是认出来
+/// 的，不是目录名（见 [`walk`]）。所以「这一层没有文件」本身不是错，一份写着
+/// `inheritsFrom` 却读不到父版本的描述才是。
 pub fn resolve_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<VersionMetadata> {
     let mut merged: Option<VersionMetadata> = None;
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut broken: Option<anyhow::Error> = None;
     for layer in layers(profile) {
         // 每一层自己那条继承链要摊平，而且从根开始——根在下，子在上。
-        let mut nodes = chain(paths, &layer);
+        let (mut nodes, gap) = walk(paths, &layer);
         nodes.reverse();
+        broken = broken.or(gap);
         if nodes.is_empty() {
-            // 磁盘上没有这一份。第 0 层缺了是真的缺，别的层多半是还没装完。
-            if layer == profile.game_version {
-                return Err(anyhow!("读取 {layer} 的版本描述"));
-            }
+            // 磁盘上没有这一份。多半是还没装完的那一层，或者是一个只存在于
+            // 描述里的版本号——两种都轮不到这里报错：真缺了一块的话，指着它
+            // 的那一份会把断口交给 `broken`；一份都读不到的话，最后那一句会
+            // 说出来。
             continue;
         }
         for node in nodes {
@@ -131,6 +138,11 @@ pub fn resolve_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<V
             });
         }
     }
+    // 断口优先于合出来的东西：少了一块的那一份看上去也能合出结果，拿去启动
+    // 才发现缺库、缺主类，那时候已经看不出问题出在哪一层了。
+    if let Some(broken) = broken {
+        return Err(broken);
+    }
     merged.ok_or_else(|| anyhow!("{} 没有任何版本描述可读", profile.game_version))
 }
 
@@ -139,11 +151,31 @@ pub fn resolve_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<V
 /// 只跟磁盘上真有的那些。链断在哪里是有意义的信息——加载器还没装的时候，链
 /// 就是空的。
 pub fn chain(paths: &DataPaths, version_id: &str) -> Vec<String> {
+    walk(paths, version_id).0
+}
+
+/// 跟完这条链，并且说清楚它是**读完了**还是**断在半路**。
+///
+/// 只有一种断法值得报出来：某一份 JSON 写着 `inheritsFrom`，而它指的那一份读
+/// 不到。那是真缺了一块，合出来的东西不能拿去启动。
+///
+/// 第一步就读不到（这个 id 在磁盘上压根没有）不算断，返回的是一条空链。它太
+/// 常见了：加载器还没装完的那一层没有文件；而外部实例的 `game_version` 是从
+/// jar 或库坐标认出来的正式版号（见 `instance::external`），别人的目录里往往
+/// 只有一份合并好的 JSON 叫着别人起的名字，`versions/1.16.5/` 从来就不存在。
+fn walk(paths: &DataPaths, version_id: &str) -> (Vec<String>, Option<anyhow::Error>) {
     let mut chain: Vec<String> = Vec::new();
     let mut current = version_id.to_owned();
     for _ in 0..MAX_DEPTH {
-        let Ok(metadata) = read_one(paths, &current) else {
-            break;
+        let metadata = match read_one(paths, &current) {
+            Ok(metadata) => metadata,
+            // 读失败的原因要带出去：缺文件和文件写坏了得让人分得出来。
+            Err(error) => {
+                let broken = chain
+                    .last()
+                    .map(|child| error.context(format!("{child} 继承自 {current}")));
+                return (chain, broken);
+            }
         };
         chain.push(current.clone());
         let parent = metadata
@@ -154,7 +186,7 @@ pub fn chain(paths: &DataPaths, version_id: &str) -> Vec<String> {
             None => break,
         }
     }
-    chain
+    (chain, None)
 }
 
 /// 客户端 jar 在哪。
@@ -420,6 +452,64 @@ mod tests {
             game.iter().filter(|token| *token == "--username").count(),
             1
         );
+
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    /// 别人目录里的那份 JSON 常常已经合并好了：没有 `inheritsFrom`，自己就是
+    /// 根，而 `versions/1.16.5/` 压根不存在——那个版本号是从 jar 里认出来的，
+    /// 不是磁盘上的目录名。第 0 层没有文件不是错，照样要能启动。
+    #[test]
+    fn a_version_number_nobody_points_at_does_not_have_to_exist_on_disk() {
+        let root =
+            std::env::temp_dir().join(format!("fern-version-external-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+
+        write(
+            &paths,
+            "1.16.5-Fabric 0.14.11",
+            serde_json::json!({
+                "id": "1.16.5-Fabric 0.14.11",
+                "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+                "libraries": [{ "name": "net.fabricmc:fabric-loader:0.14.11" }]
+            }),
+        );
+
+        let mut attached = profile(LoaderKind::Fabric, Some("1.16.5-Fabric 0.14.11"));
+        attached.game_version = "1.16.5".to_owned();
+        let merged = resolve_profile(&paths, &attached).expect("外部实例应当能合出版本描述");
+        assert_eq!(
+            merged.main_class.as_deref(),
+            Some("net.fabricmc.loader.impl.launch.knot.KnotClient")
+        );
+
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    /// 但一份写着 `inheritsFrom` 却读不到父版本的，是真的缺了一块——合出来的
+    /// 东西不能拿去启动，而且报出来的话要说得出缺的是哪一份、为什么读不到。
+    #[test]
+    fn a_parent_that_someone_inherits_from_must_be_readable() {
+        let root = std::env::temp_dir().join(format!("fern-version-broken-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+
+        write(
+            &paths,
+            "fabric-loader-0.16.5-1.21.1",
+            serde_json::json!({
+                "id": "fabric-loader-0.16.5-1.21.1",
+                "inheritsFrom": "1.21.1",
+                "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient"
+            }),
+        );
+
+        let ours = profile(LoaderKind::Fabric, Some("fabric-loader-0.16.5-1.21.1"));
+        let error = resolve_profile(&paths, &ours).expect_err("父版本读不到就不能启动");
+        let report = format!("{error:#}");
+        assert!(report.contains("1.21.1"), "{report}");
+        assert!(report.contains("继承自"), "{report}");
 
         fs::remove_dir_all(root).expect("remove test root");
     }
