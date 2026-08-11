@@ -57,11 +57,11 @@ pub use backup::export::{
 pub use backup::manifest::{About as SnapshotAbout, Reason as SnapshotReason};
 pub use backup::select::{SkipReason, Skipped};
 pub use backup::{
-    InstanceUsage, Missing, Mode as RestoreMode, Restored, Scope as RestoreScope, Snapshot, Usage,
-    collect_garbage, label as label_snapshot, list as list_snapshots,
-    mod_files as snapshot_mod_files, prune as prune_snapshots, reasons as snapshot_reasons,
-    remove as remove_snapshot, restore as restore_snapshot, take as take_snapshot,
-    usage as backup_usage,
+    Diff as SnapshotDiff, InstanceUsage, Missing, Mode as RestoreMode, Restored,
+    Scope as RestoreScope, Snapshot, Usage, collect_garbage, diff as snapshot_diff,
+    label as label_snapshot, list as list_snapshots, mod_files as snapshot_mod_files,
+    prune as prune_snapshots, reasons as snapshot_reasons, remove as remove_snapshot,
+    restore as restore_snapshot, take as take_snapshot, usage as backup_usage,
 };
 pub use data::settings::{
     AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,

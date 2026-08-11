@@ -391,6 +391,114 @@ fn describe(id: &str, manifest: &Manifest) -> Snapshot {
     }
 }
 
+/// 从那一刻到现在，这个实例变了什么。
+///
+/// 详情页靠它把「恢复」的后果说具体：「会删除此后新装的 3 个模组：sodium、
+/// lithium、iris」比「之后新装的会被删除」多回答了一个「是哪几个」——而那
+/// 正是决定敢不敢按下去时要知道的事。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Diff {
+    /// 拍摄之后新装的模组。恢复模组时它们会被删除。
+    pub mods_added: Vec<String>,
+    /// 拍摄之后移除的模组。恢复模组时它们会被带回。
+    pub mods_removed: Vec<String>,
+    /// 拍摄之后新建的世界。覆盖恢复整个实例时它们会被删除。
+    pub saves_added: Vec<String>,
+    /// 拍摄之后删除的世界。恢复会把它们带回来——这是零损失的那种恢复。
+    pub saves_removed: Vec<String>,
+    /// 两边都有、内容有出入的世界。
+    pub saves_changed: Vec<String>,
+    /// 有几个配置文件与快照不同。
+    pub config_changed: usize,
+}
+
+impl Diff {
+    /// 拍摄以来什么都没变。
+    pub fn is_same(&self) -> bool {
+        self.mods_added.is_empty()
+            && self.mods_removed.is_empty()
+            && self.saves_added.is_empty()
+            && self.saves_removed.is_empty()
+            && self.saves_changed.is_empty()
+            && self.config_changed == 0
+    }
+}
+
+/// 比较一张快照和现在的游戏目录。
+///
+/// 判据与拍摄时的复用判据相同：`(大小, 修改时刻)`。它可能把「改动后又改回
+/// 原样」也算作有改动，但不会把真改过的说成没改——对一句要提醒丢失的话，
+/// 错这个方向是安全的。
+pub fn diff(paths: &DataPaths, instance_id: &str, snapshot: &str) -> Result<Diff> {
+    let (_, directory) = situate(paths, instance_id)?;
+    let backups = root(paths);
+    let manifest = manifest::read(&manifest::path(&backups, instance_id, snapshot)?)?;
+    let (candidates, _) = select::scan(&directory);
+
+    let then: HashMap<&str, (u64, u64)> = manifest
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), (file.size, file.mtime)))
+        .collect();
+    let now: HashMap<&str, (u64, u64)> = candidates
+        .iter()
+        .map(|candidate| (candidate.relative.as_str(), (candidate.size, candidate.mtime)))
+        .collect();
+
+    let mods = |side: &HashMap<&str, (u64, u64)>| -> HashSet<String> {
+        side.keys()
+            .filter(|path| select::is_mod(path))
+            .filter_map(|path| path.strip_prefix("mods/"))
+            .map(str::to_owned)
+            .collect()
+    };
+    let worlds = |side: &HashMap<&str, (u64, u64)>| -> HashSet<String> {
+        side.keys()
+            .filter_map(|path| select::save_of(path))
+            .map(str::to_owned)
+            .collect()
+    };
+    let mods_then = mods(&then);
+    let mods_now = mods(&now);
+    let worlds_then = worlds(&then);
+    let worlds_now = worlds(&now);
+
+    // 两边都有的世界，逐文件比过才知道有没有变。
+    let mut changed: HashSet<&str> = HashSet::new();
+    let mut config_changed: HashSet<&str> = HashSet::new();
+    for path in then.keys().chain(now.keys()) {
+        if then.get(path) == now.get(path) {
+            continue;
+        }
+        if let Some(world) = select::save_of(path) {
+            changed.insert(world);
+        } else if select::is_config(path) {
+            config_changed.insert(path);
+        }
+    }
+
+    let sorted = |set: HashSet<String>| -> Vec<String> {
+        let mut names: Vec<String> = set.into_iter().collect();
+        names.sort();
+        names
+    };
+    Ok(Diff {
+        mods_added: sorted(&mods_now - &mods_then),
+        mods_removed: sorted(&mods_then - &mods_now),
+        saves_added: sorted(&worlds_now - &worlds_then),
+        saves_removed: sorted(&worlds_then - &worlds_now),
+        saves_changed: sorted(
+            changed
+                .into_iter()
+                .filter(|world| worlds_then.contains(*world) && worlds_now.contains(*world))
+                .map(str::to_owned)
+                .collect(),
+        ),
+        config_changed: config_changed.len(),
+    })
+}
+
 /// 一张快照里的模组文件名单。
 ///
 /// 详情页展开「模组」那一节时才要——不随列表下发：几十张快照各带几百个

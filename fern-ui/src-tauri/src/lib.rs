@@ -685,6 +685,19 @@ async fn snapshot_mods(instance_id: String, snapshot: String) -> Result<Vec<Stri
     .await?
 }
 
+/// 快照与现在的差异。详情页打开时拉，恢复的后果句靠它说具体。
+#[tauri::command]
+async fn snapshot_diff(
+    instance_id: String,
+    snapshot: String,
+) -> Result<fern_core::SnapshotDiff, String> {
+    off_thread(move || {
+        fern_core::snapshot_diff(&paths()?, &instance_id, &snapshot)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 /// 恢复。`scope` 与 `mode` 是带标签的枚举，形状由核心那边定。
 #[tauri::command]
 async fn restore_snapshot(
@@ -1488,6 +1501,7 @@ pub fn run() {
             list_snapshots,
             take_snapshot,
             snapshot_mods,
+            snapshot_diff,
             restore_snapshot,
             delete_snapshot,
             label_snapshot,

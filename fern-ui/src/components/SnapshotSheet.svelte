@@ -24,7 +24,10 @@
     deleteSnapshot,
     labelSnapshot,
     moment,
+    nameList,
     restoreSnapshot,
+    sameAsNow,
+    snapshotDiff,
     snapshotMods,
     whySkipped,
     why,
@@ -32,6 +35,7 @@
     type RestoreMode,
     type RestoreScope,
     type Snapshot,
+    type SnapshotDiff,
   } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
@@ -71,6 +75,8 @@
   let view = $state<'info' | 'restore'>('info')
   /** 模组名单，展开那一节才拉。undefined 表示还没拉过。 */
   let modFiles = $state<string[] | undefined>(undefined)
+  /** 与现在的差异。是补充信息：拉不到就不显示，不拦着别的事。 */
+  let changes = $state<SnapshotDiff | undefined>(undefined)
 
   let part = $state<Part>(start.part)
   let save = $state(start.save)
@@ -112,17 +118,79 @@
     part === 'save' && copy ? { kind: 'copy', name: name.trim() } : { kind: 'replace' },
   )
 
-  /** 按下去会发生什么。这一行不写，「恢复」就只是个词。 */
+  /** 世界名在句子里带引号，文件名不带。 */
+  const quoted = (names: string[]) => nameList(names.map((world) => `「${world}」`))
+
+  /**
+   * 拍摄之后发生了什么，一句话。
+   *
+   * 这一行回答的是找快照的人真正的问题——「回到这一刻会退掉多少东西」。
+   * 没有差异就直说没有：那意味着恢复是零风险的。
+   */
+  const since = $derived.by(() => {
+    if (!changes) return ''
+    if (sameAsNow(changes)) return ui.snapshot.diffSame
+    const parts = [
+      changes.modsAdded.length &&
+        format(ui.snapshot.diffModsAdded, { count: String(changes.modsAdded.length) }),
+      changes.modsRemoved.length &&
+        format(ui.snapshot.diffModsRemoved, { count: String(changes.modsRemoved.length) }),
+      changes.savesAdded.length &&
+        format(ui.snapshot.diffSavesAdded, { names: quoted(changes.savesAdded) }),
+      changes.savesRemoved.length &&
+        format(ui.snapshot.diffSavesRemoved, { names: quoted(changes.savesRemoved) }),
+      changes.savesChanged.length &&
+        format(ui.snapshot.diffSavesChanged, { names: quoted(changes.savesChanged) }),
+      changes.configChanged &&
+        format(ui.snapshot.diffConfigChanged, { count: String(changes.configChanged) }),
+    ].filter((part): part is string => Boolean(part))
+    return format(ui.snapshot.diffLead, { parts: parts.join('，') })
+  })
+
+  /**
+   * 按下去会发生什么。这一行不写，「恢复」就只是个词。
+   *
+   * 差异拉到了就说具体的（删哪几个、带回哪几个）；拉不到退回笼统的那句——
+   * 笼统但不错，具体但要等，两头都不该挡住另一头。
+   */
   const consequence = $derived.by(() => {
     if (part === 'save' && copy) {
       return format(ui.snapshot.consequenceCopy, { name: name.trim() || '…' })
     }
-    if (part === 'save') return format(ui.snapshot.consequenceSave, { save })
+    if (part === 'save') {
+      if (changes?.savesRemoved.includes(save)) {
+        return format(ui.snapshot.consequenceSaveReturn, { save })
+      }
+      if (changes && !changes.savesChanged.includes(save)) {
+        return format(ui.snapshot.consequenceSaveSame, { save })
+      }
+      return format(ui.snapshot.consequenceSave, { save })
+    }
     if (part === 'config') return ui.snapshot.consequenceConfig
     if (part === 'mods') {
-      return format(ui.snapshot.consequenceMods, { count: String(snapshot.mods) })
+      if (!changes) return format(ui.snapshot.consequenceMods, { count: String(snapshot.mods) })
+      return [
+        format(ui.snapshot.consequenceModsBase, { count: String(snapshot.mods) }),
+        changes.modsAdded.length &&
+          format(ui.snapshot.consequenceModsDrop, {
+            count: String(changes.modsAdded.length),
+            names: nameList(changes.modsAdded),
+          }),
+        changes.modsRemoved.length &&
+          format(ui.snapshot.consequenceModsReturn, {
+            count: String(changes.modsRemoved.length),
+            names: nameList(changes.modsRemoved),
+          }),
+      ]
+        .filter(Boolean)
+        .join('')
     }
-    return ui.snapshot.consequenceAll
+    return [
+      ui.snapshot.consequenceAll,
+      changes?.savesAdded.length
+        ? format(ui.snapshot.consequenceAllDrop, { names: quoted(changes.savesAdded) })
+        : '',
+    ].join('')
   })
 
   const ready = $derived(
@@ -198,6 +266,21 @@
       error = String(cause)
     }
   }
+
+  /** 从清单里的一个世界直接进恢复：范围已经选好，只剩写回方式。 */
+  function restoreWorld(world: string) {
+    part = 'save'
+    save = world
+    copy = true
+    name = copyName(world, snapshot.takenAt)
+    view = 'restore'
+  }
+
+  // 差异只要一次盘面扫描，打开就拉；失败静默——它是补充，不是门槛。
+  // untrack 的理由同上面的 start：浮层按快照挂载，初值只读一次。
+  void untrack(() => snapshotDiff(instanceId, snapshot.id))
+    .then((diff) => (changes = diff))
+    .catch(() => {})
 </script>
 
 <Dialog label={ui.snapshot.dialog} width="520px" {onclose}>
@@ -260,6 +343,11 @@
     {/if}
 
     {#if view === 'info'}
+      <!-- 拍摄之后世界变了什么。「回到这一刻会退掉多少东西」的答案。 -->
+      {#if since}
+        <p class="t-quiet since">{since}</p>
+      {/if}
+
       <!-- 里面有什么。恢复的决定要看着这份清单做，所以它排在决定之前。 -->
       {#if snapshot.saves.length > 0}
         <section class="content">
@@ -268,7 +356,14 @@
           </h3>
           <ul>
             {#each snapshot.saves as world (world)}
-              <li>{world}</li>
+              <li>
+                <!-- 点一个世界直接进恢复，范围已选好——找到想回去的那个世界
+                     时，人已经做完了这一屏要做的决定。 -->
+                <button class="world" onclick={() => restoreWorld(world)}>
+                  <span class="world-name">{world}</span>
+                  <span class="t-quiet go">{ui.snapshot.enterRestore}</span>
+                </button>
+              </li>
             {/each}
           </ul>
         </section>
@@ -495,6 +590,46 @@
     list-style: none;
     color: var(--ink-2);
     font-size: var(--t-small);
+  }
+
+  .since {
+    margin: 0;
+    font-size: var(--t-small);
+    line-height: 1.7;
+  }
+
+  /* 世界行是一条通往聚焦恢复的路。安静地躺着，指过去才说自己能点。 */
+  .world {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s3);
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .world-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .world .go {
+    flex: none;
+    font-size: var(--t-micro);
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .world:hover .go,
+  .world:focus-visible .go {
+    opacity: 1;
   }
 
   .loading-note {

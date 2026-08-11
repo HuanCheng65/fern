@@ -131,6 +131,40 @@ export const labelSnapshot = (instanceId: string, snapshot: string, label?: stri
 export const snapshotMods = (instanceId: string, snapshot: string) =>
   invoke<string[]>('snapshot_mods', { instanceId, snapshot })
 
+/** 从那一刻到现在变了什么。详情页和恢复的后果句靠它说具体。 */
+export interface SnapshotDiff {
+  /** 拍摄之后新装的模组。恢复模组时会被删除。 */
+  modsAdded: string[]
+  /** 拍摄之后移除的模组。恢复模组时会被带回。 */
+  modsRemoved: string[]
+  /** 拍摄之后新建的世界。覆盖恢复整个实例时会被删除。 */
+  savesAdded: string[]
+  /** 拍摄之后删除的世界。恢复会把它们带回来。 */
+  savesRemoved: string[]
+  /** 两边都有、内容有出入的世界。 */
+  savesChanged: string[]
+  /** 有几个配置文件与快照不同。 */
+  configChanged: number
+}
+
+export const snapshotDiff = (instanceId: string, snapshot: string) =>
+  invoke<SnapshotDiff>('snapshot_diff', { instanceId, snapshot })
+
+/** 拍摄以来什么都没变。 */
+export const sameAsNow = (diff: SnapshotDiff) =>
+  diff.modsAdded.length === 0 &&
+  diff.modsRemoved.length === 0 &&
+  diff.savesAdded.length === 0 &&
+  diff.savesRemoved.length === 0 &&
+  diff.savesChanged.length === 0 &&
+  diff.configChanged === 0
+
+/** 「sodium、lithium 等 5 个」。名单太长就点到为止。 */
+export function nameList(names: string[], limit = 3): string {
+  if (names.length <= limit) return names.join('、')
+  return `${names.slice(0, limit).join('、')} 等 ${names.length} 个`
+}
+
 export const backupUsage = () => invoke<Usage>('backup_usage')
 
 export const exportWorld = (instanceId: string, save: string, destination: string) =>

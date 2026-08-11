@@ -460,6 +460,50 @@ fn the_interface_sees_the_field_names_it_expects() {
     })
     .expect("serialize");
     assert_eq!(exported["linked"], 1);
+
+    let diff = serde_json::to_value(Diff {
+        mods_added: vec!["sodium.jar".to_owned()],
+        config_changed: 2,
+        ..Diff::default()
+    })
+    .expect("serialize");
+    assert_eq!(diff["modsAdded"][0], "sodium.jar");
+    assert_eq!(diff["configChanged"], 2);
+    assert_eq!(diff["savesChanged"], serde_json::json!([]));
+}
+
+/// 差异要指名道姓——「会删除此后新装的 3 个」的那个「哪 3 个」从这里来。
+#[test]
+fn the_diff_names_what_changed_since_the_snapshot() {
+    let root = scratch("diff");
+    let paths = instance(&root);
+    put(&paths, "saves/家/level.dat", b"a world");
+    put(&paths, "saves/矿场/level.dat", b"a mine");
+    put(&paths, "mods/create.jar", b"jar");
+    put(&paths, "mods/flywheel.jar", b"jar too");
+    put(&paths, "config/create.toml", b"answer = 42");
+
+    let snapshot = take(&paths, "moss", Reason::Manual, None, None).expect("take");
+    assert!(diff(&paths, "moss", &snapshot.id).expect("diff").is_same());
+
+    // 此后：装一个模组、删一个，改一个世界、删一个、建一个，动一个配置。
+    // 改动都伴随大小变化——同一秒内 mtime 分不出先后，大小分得出。
+    put(&paths, "mods/sodium.jar", b"new jar");
+    fs::remove_file(paths.game_directory("moss").join("mods/flywheel.jar")).expect("remove mod");
+    put(&paths, "saves/家/level.dat", b"a bigger world");
+    fs::remove_dir_all(paths.game_directory("moss").join("saves/矿场")).expect("remove world");
+    put(&paths, "saves/新家/level.dat", b"fresh");
+    put(&paths, "config/create.toml", b"answer = 43!");
+
+    let changes = diff(&paths, "moss", &snapshot.id).expect("diff");
+    assert_eq!(changes.mods_added, vec!["sodium.jar"]);
+    assert_eq!(changes.mods_removed, vec!["flywheel.jar"]);
+    assert_eq!(changes.saves_added, vec!["新家"]);
+    assert_eq!(changes.saves_removed, vec!["矿场"]);
+    assert_eq!(changes.saves_changed, vec!["家"]);
+    assert_eq!(changes.config_changed, 1);
+    assert!(!changes.is_same());
+    fs::remove_dir_all(root).expect("clean up");
 }
 
 /// 保留策略要真的被执行。此前 `schedule` 写完测完却没有调用点，快照只增不减。
