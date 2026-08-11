@@ -183,13 +183,21 @@ fn forge_ordinal(version: &str) -> (Vec<u64>, &str) {
     (numeric, version)
 }
 
-/// `1.21.1` → `21.1.`，`1.21` → `21.0.`
+/// NeoForge 的版本号前两（三）段对应游戏版本。两代版本号要分开算。
+///
+/// 老形状 `1.A.B` 里开头那个 `1.` 恒定不变，NeoForge 把它丢掉：
+/// `1.21.1` → `21.1.`，`1.21` → `21.0.`。
+///
+/// 2026 年起游戏版本号改成了 `26.1` / `26.1.2` / `26.2`，没有那个恒定的开头，
+/// NeoForge 也就原样用它、补齐到三段：`26.2` → `26.2.0.`，`26.1.2` → `26.1.2.`。
+/// 照老规则算的话会得出 `2.0.`，一个都匹配不上——表现是新版本上**根本列不出
+/// NeoForge**，而报出来的是「NeoForge 不支持 26.2」，听着像上游还没跟进。
 fn neoforge_prefix(game_version: &str) -> Option<String> {
     let (major, minor, patch) = fern_meta::release_ordinal(game_version)?;
-    if major != 1 {
-        return None;
+    match major {
+        1 => Some(format!("{minor}.{patch}.")),
+        _ => Some(format!("{major}.{minor}.{patch}.")),
     }
-    Some(format!("{minor}.{patch}."))
 }
 
 /// 这个游戏版本上可用的加载器版本，新的在前。
@@ -459,6 +467,20 @@ mod tests {
     /// Forge 的 maven-metadata 不是可靠的顺序：1.12.2 那一段最新的在最后，
     /// 1.7.2 那一段最新的在最前。照单反转，1.7.2 的默认值会变成 2014 年的第
     /// 一个构建。
+    /// 两代游戏版本号对应的 NeoForge 前缀是两条规则，不是一条。
+    #[test]
+    fn neoforge_follows_both_generations_of_version_numbers() {
+        // 老形状：开头那个恒定的 1. 被丢掉。
+        assert_eq!(neoforge_prefix("1.21.1").as_deref(), Some("21.1."));
+        assert_eq!(neoforge_prefix("1.21").as_deref(), Some("21.0."));
+        // 2026 年起的新形状：原样用，补齐到三段。
+        assert_eq!(neoforge_prefix("26.2").as_deref(), Some("26.2.0."));
+        assert_eq!(neoforge_prefix("26.1.2").as_deref(), Some("26.1.2."));
+        // 比不出版本号的（快照）没有对应的 NeoForge。
+        assert_eq!(neoforge_prefix("26.3-snapshot-7"), None);
+        assert_eq!(neoforge_prefix("25w14a"), None);
+    }
+
     #[test]
     fn forge_versions_are_ordered_by_number_not_by_file_order() {
         let mut versions = vec![

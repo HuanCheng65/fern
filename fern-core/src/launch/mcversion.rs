@@ -400,3 +400,23 @@ mod tests {
         assert!(!satisfies("1.21.5", &craftmine));
     }
 }
+
+#[cfg(test)]
+mod newformat_tests {
+    /// 2026 年起版本号换了形状：`26.1` / `26.2`，快照跟着写成
+    /// `26.2-snapshot-5` / `26.2-pre-1` / `26.2-rc-2`。
+    #[test]
+    fn the_2026_numbering_still_resolves() {
+        for (id, want) in [
+            ("26.2", "26.2"),
+            ("26.1.2", "26.1.2"),
+            ("26.3-snapshot-7", "26.3-alpha.7"),
+            ("26.2-pre-1", "26.2-pre.1"),
+            ("26.2-rc-2", "26.2-rc.2"),
+        ] {
+            assert_eq!(super::semantic(id, None).as_deref(), Some(want), "{id}");
+        }
+        assert!(super::is_release("26.2"));
+        assert!(!super::is_release("26.3-snapshot-7"));
+    }
+}
