@@ -162,15 +162,17 @@ pub fn attach(
         display_name(version_id, &described),
         &described.game_version,
     );
-    profile.loader = described.loader;
-    profile.loader_profile = described
-        .loader
-        .ne(&LoaderKind::Vanilla)
-        .then(|| LoaderProfile {
-            kind: described.loader,
-            version: described.loader_version.clone().unwrap_or_default(),
-            version_id: version_id.to_owned(),
-        });
+    profile.components.extend(
+        described
+            .loader
+            .ne(&LoaderKind::Vanilla)
+            .then(|| LoaderProfile {
+                kind: described.loader,
+                version: described.loader_version.clone().unwrap_or_default(),
+                version_id: version_id.to_owned(),
+            }),
+    );
+    profile = profile.normalized();
     profile.external = Some(ExternalGame {
         root: root.clone(),
         isolation: detect_isolation(&root, version_id),

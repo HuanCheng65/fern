@@ -19,7 +19,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use fern_meta::VersionMetadata;
 
-use crate::{DataPaths, InstanceProfile, LoaderKind};
+use crate::{DataPaths, InstanceProfile};
 
 /// 继承链最多跟这么深。实际最多两级（原版 ← 加载器），留点余量，主要是防
 /// 一份写坏的（或者恶意的）JSON 指回自己让我们一直读下去。
@@ -30,13 +30,26 @@ const MAX_DEPTH: usize = 8;
 /// 原版就是版本号本身；装了加载器则是加载器生成的那个 id
 /// （`fabric-loader-0.16.5-1.21.1`），因为那才是带 mainClass 的那一份。
 pub fn effective_id(profile: &InstanceProfile) -> String {
-    match (&profile.loader, &profile.loader_profile) {
-        (LoaderKind::Vanilla, _) | (_, None) => profile.game_version.clone(),
-        // 还没装完（version_id 为空）就先按原版走：能启动一个原版，比因为
-        // 加载器没装好而完全打不开要好。
-        (_, Some(loader)) if loader.version_id.is_empty() => profile.game_version.clone(),
-        (_, Some(loader)) => loader.version_id.clone(),
+    // 最外面那一层说了算：越靠后的层越接近成品，主类由它给。还没装完
+    // （version_id 为空）就先按原版走——能启动一个原版，比因为加载器没装好而
+    // 完全打不开要好。
+    layers(profile)
+        .last()
+        .cloned()
+        .unwrap_or_else(|| profile.game_version.clone())
+}
+
+/// 这个实例要按顺序合并的那几份版本描述，从游戏本体开始。
+///
+/// 只收磁盘上真有的：还没装完的层没有 id 可读，跳过它比读一个不存在的文件好。
+pub fn layers(profile: &InstanceProfile) -> Vec<String> {
+    let mut ids = vec![profile.game_version.clone()];
+    for component in &profile.components {
+        if !component.version_id.is_empty() {
+            ids.push(component.version_id.clone());
+        }
     }
+    ids
 }
 
 /// 版本 id 能不能拿去当目录名。
@@ -82,6 +95,43 @@ pub fn read_one(paths: &DataPaths, version_id: &str) -> Result<VersionMetadata> 
 /// 读出来并把继承链合并完。
 pub fn resolve(paths: &DataPaths, version_id: &str) -> Result<VersionMetadata> {
     resolve_at(paths, version_id, 0)
+}
+
+/// 这个实例真正要启动的那一份：整摞层按顺序合并。
+///
+/// 和 [`resolve`] 的区别只在入口——那一个从一个 id 出发跟 `inheritsFrom`，这
+/// 一个从实例的层表出发。两种结构会同时出现：我们自己装的加载器写了
+/// `inheritsFrom` 指回原版，而别的启动器建的实例是一摞互不相干的 patch。
+///
+/// **同一份描述只合并一次。** 不去重的话，原版会被合两遍（一次作为第 0 层，
+/// 一次作为加载器那一层的父），而合并对参数是**追加**——命令行上每一个游戏
+/// 参数都会出现两遍。
+pub fn resolve_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<VersionMetadata> {
+    let mut merged: Option<VersionMetadata> = None;
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for layer in layers(profile) {
+        // 每一层自己那条继承链要摊平，而且从根开始——根在下，子在上。
+        let mut nodes = chain(paths, &layer);
+        nodes.reverse();
+        if nodes.is_empty() {
+            // 磁盘上没有这一份。第 0 层缺了是真的缺，别的层多半是还没装完。
+            if layer == profile.game_version {
+                return Err(anyhow!("读取 {layer} 的版本描述"));
+            }
+            continue;
+        }
+        for node in nodes {
+            if !seen.insert(node.clone()) {
+                continue;
+            }
+            let one = read_one(paths, &node)?;
+            merged = Some(match merged {
+                Some(parent) => VersionMetadata::merge(&parent, &one),
+                None => one,
+            });
+        }
+    }
+    merged.ok_or_else(|| anyhow!("{} 没有任何版本描述可读", profile.game_version))
 }
 
 /// 磁盘上这条继承链：`[自己, 父, …, 根]`。读不到的那一节及其之后不算。
@@ -167,7 +217,7 @@ fn resolve_at(paths: &DataPaths, version_id: &str, depth: usize) -> Result<Versi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CoverSeed, InstanceId, InstanceSettings, LoaderProfile};
+    use crate::{CoverSeed, InstanceId, InstanceSettings, LoaderKind, LoaderProfile};
 
     fn write(paths: &DataPaths, id: &str, json: serde_json::Value) {
         let path = metadata_path(paths, id);
@@ -182,11 +232,14 @@ mod tests {
             name: "Moss".to_owned(),
             game_version: "1.21.1".to_owned(),
             loader,
-            loader_profile: loader_version.map(|version_id| LoaderProfile {
-                kind: loader,
-                version: "0.16.5".to_owned(),
-                version_id: version_id.to_owned(),
-            }),
+            components: loader_version
+                .map(|version_id| LoaderProfile {
+                    kind: loader,
+                    version: "0.16.5".to_owned(),
+                    version_id: version_id.to_owned(),
+                })
+                .into_iter()
+                .collect(),
             cover: CoverSeed {
                 identity: "moss".to_owned(),
                 growth: 0,
@@ -261,6 +314,107 @@ mod tests {
                 "net.fabricmc:fabric-loader:0.16.5",
                 "com.mojang:brigadier:1.0.18"
             ]
+        );
+
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    /// 别的启动器建的实例是一摞互不相干的 patch：没有 `inheritsFrom`，谁在
+    /// 上谁在下只由顺序决定。按顺序合并出来的必须和「一份合并好的 JSON」
+    /// 等价。
+    #[test]
+    fn a_stack_of_patches_merges_in_order_without_saying_anything_twice() {
+        let root = std::env::temp_dir().join(format!("fern-version-stack-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+
+        write(
+            &paths,
+            "1.7.10",
+            serde_json::json!({
+                "id": "1.7.10",
+                "mainClass": "net.minecraft.client.main.Main",
+                "minecraftArguments": "--username ${auth_player_name} --gameDir ${game_directory}",
+                "libraries": [{ "name": "com.mojang:netty:1.8.8" }]
+            }),
+        );
+        write(
+            &paths,
+            "forge-10.13.4.1614",
+            serde_json::json!({
+                "id": "forge-10.13.4.1614",
+                "mainClass": "net.minecraft.launchwrapper.Launch",
+                "minecraftArguments":
+                    "--tweakClass cpw.mods.fml.common.launcher.FMLTweaker",
+                "libraries": [{ "name": "net.minecraft:launchwrapper:1.12" }]
+            }),
+        );
+        write(
+            &paths,
+            "liteloader-1.7.10",
+            serde_json::json!({
+                "id": "liteloader-1.7.10",
+                "minecraftArguments":
+                    "--tweakClass com.mumfrey.liteloader.launch.LiteLoaderTweaker",
+                "libraries": [{ "name": "com.mumfrey:liteloader:1.7.10" }]
+            }),
+        );
+
+        let mut stacked = profile(LoaderKind::Forge, None);
+        stacked.game_version = "1.7.10".to_owned();
+        stacked.components = vec![
+            LoaderProfile {
+                kind: LoaderKind::Forge,
+                version: "10.13.4.1614".to_owned(),
+                version_id: "forge-10.13.4.1614".to_owned(),
+            },
+            LoaderProfile {
+                kind: LoaderKind::Vanilla,
+                version: "1.7.10".to_owned(),
+                version_id: "liteloader-1.7.10".to_owned(),
+            },
+        ];
+
+        let merged = resolve_profile(&paths, &stacked).expect("merge the stack");
+        // 最外面那一层没写 mainClass，就该保留下面那一层的。
+        assert_eq!(
+            merged.main_class.as_deref(),
+            Some("net.minecraft.launchwrapper.Launch")
+        );
+        // 两个 tweaker 都在，而且顺序就是层的顺序。
+        assert_eq!(
+            merged.minecraft_arguments.as_deref(),
+            Some(
+                "--username ${auth_player_name} --gameDir ${game_directory} \
+                 --tweakClass cpw.mods.fml.common.launcher.FMLTweaker \
+                 --tweakClass com.mumfrey.liteloader.launch.LiteLoaderTweaker"
+            )
+        );
+        assert_eq!(merged.libraries.len(), 3);
+
+        // 我们自己装的那种（加载器写了 inheritsFrom 指回原版）不能把原版合两
+        // 遍——合并对参数是追加，合两遍就是每个参数出现两次。
+        write(
+            &paths,
+            "fabric-loader-0.16.5-1.7.10",
+            serde_json::json!({
+                "id": "fabric-loader-0.16.5-1.7.10",
+                "inheritsFrom": "1.7.10",
+                "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient"
+            }),
+        );
+        let mut ours = profile(LoaderKind::Fabric, None);
+        ours.game_version = "1.7.10".to_owned();
+        ours.components = vec![LoaderProfile {
+            kind: LoaderKind::Fabric,
+            version: "0.16.5".to_owned(),
+            version_id: "fabric-loader-0.16.5-1.7.10".to_owned(),
+        }];
+        let merged = resolve_profile(&paths, &ours).expect("merge");
+        let (_, game) = merged.resolved_arguments(&fern_meta::RuleContext::linux_x64());
+        assert_eq!(
+            game.iter().filter(|token| *token == "--username").count(),
+            1
         );
 
         fs::remove_dir_all(root).expect("remove test root");

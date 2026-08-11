@@ -99,19 +99,36 @@ pub enum LoaderKind {
     Forge,
 }
 
+/// 叠在游戏本体上的一层。
+///
+/// **一个实例是一摞有序的层，不是「一个版本 + 一个加载器」。** 这个形状不是
+/// 为了让人给一个实例装两个加载器（那只是顺带），是为了**别的启动器建出来的
+/// 实例**：Prism 的 `mmc-pack.json` 加 `patches/*.json` 本身就是一份有序的层
+/// 表。压成一份合并好的 JSON 也能启动，但从此改不动——换加载器版本、加一层、
+/// 删一层，全都做不了。
+///
+/// 一层只记「是什么、哪个版本、磁盘上那份描述叫什么」。层里到底改了什么
+/// （主类、库、tweaker、参数）写在它自己那份版本描述里，由
+/// [`crate::launch::version::resolve`] 按顺序合并——这也是 Prism 的做法，而
+/// 且免得我们再发明一套表达同一件事的结构。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LoaderProfile {
+pub struct Component {
+    /// 这一层是哪个加载器。[`LoaderKind::Vanilla`] 表示它不是加载器，只是一
+    /// 份附加的版本描述（别人的实例里常有）。
     pub kind: LoaderKind,
-    /// 加载器自己的版本号，界面上显示的那个（`0.16.5`）。
+    /// 这一层自己的版本号，界面上显示的那个（`0.16.5`）。
     pub version: String,
-    /// 加载器生成的那份版本描述的 id（`fabric-loader-0.16.5-1.21.1`）。
+    /// 这一层那份版本描述的 id（`fabric-loader-0.16.5-1.21.1`）。
     ///
     /// 和上面分开存：命名规则是上游的约定，不是我们能保证的东西，而启动时
-    /// 要读的是这个 id 对应的文件。装完之后以 profile 里写的为准。
+    /// 要读的是这个 id 对应的文件。装完之后以这里写的为准。
     #[serde(default)]
     pub version_id: String,
 }
+
+/// 旧名字。外面还这么叫的地方留着，省得一次改动横跨太多文件。
+pub type LoaderProfile = Component;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,10 +198,18 @@ pub struct InstanceProfile {
     pub id: InstanceId,
     pub name: String,
     pub game_version: String,
+    /// 主加载器。
+    ///
+    /// **这是从 [`Self::components`] 算出来的**，不是另一份事实：写盘前由
+    /// [`Self::normalized`] 重算。它留在结构里是因为界面、崩溃规则的守卫、
+    /// Java 区间都只关心「这个实例是 Forge 还是 Fabric」，而那个问题不该让
+    /// 每个调用方都自己去遍历一遍层表。
     #[serde(default)]
     pub loader: LoaderKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub loader_profile: Option<LoaderProfile>,
+    /// 叠在游戏本体上的那些层，按顺序。游戏本体自己不在表里——它是
+    /// [`Self::game_version`]，换掉它就是换一个实例。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<Component>,
     pub cover: CoverSeed,
     #[serde(default)]
     pub settings: InstanceSettings,
@@ -214,6 +239,52 @@ pub struct InstanceProfile {
 }
 
 impl InstanceProfile {
+    /// 主加载器那一层。多层叠着时是最外面那一个加载器。
+    ///
+    /// 「最外面」而不是「第一个」：Prism 的层表按依赖顺序排，越靠后越接近
+    /// 成品，而决定主类的正是最后那一层。
+    pub fn loader_component(&self) -> Option<&Component> {
+        self.components
+            .iter()
+            .rev()
+            .find(|component| component.kind != LoaderKind::Vanilla)
+    }
+
+    /// 把算得出来的那些字段算一遍。**写盘前必须过这一道。**
+    pub fn normalized(mut self) -> Self {
+        self.loader = self
+            .loader_component()
+            .map(|component| component.kind)
+            .unwrap_or(LoaderKind::Vanilla);
+        self
+    }
+
+    /// 从旧形状迁移过来：`loaderProfile` 那一个变成层表里的第一层。
+    ///
+    /// 只认「层表是空的、而旧字段有值」这一种情况——迁移过一次之后旧字段就
+    /// 不再写盘了，所以它不会反复发生。
+    pub(crate) fn migrate(raw: &mut serde_json::Value) {
+        let Some(object) = raw.as_object_mut() else {
+            return;
+        };
+        let has_components = object
+            .get("components")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|components| !components.is_empty());
+        if has_components {
+            return;
+        }
+        if let Some(legacy) = object
+            .remove("loaderProfile")
+            .filter(|value| !value.is_null())
+        {
+            object.insert(
+                "components".to_owned(),
+                serde_json::Value::Array(vec![legacy]),
+            );
+        }
+    }
+
     pub fn vanilla(
         id: InstanceId,
         name: impl Into<String>,
@@ -226,7 +297,7 @@ impl InstanceProfile {
             name: name.into(),
             game_version: game_version.into(),
             loader: LoaderKind::Vanilla,
-            loader_profile: None,
+            components: Vec::new(),
             account_id: None,
             cover: CoverSeed {
                 identity: cover_identity,
@@ -242,6 +313,77 @@ impl InstanceProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 旧实例读进来就是新形状：那一个加载器变成层表里唯一的一层。
+    ///
+    /// 迁移只发生在读这一侧，写出去的永远是新形状——所以它不会反复发生，也
+    /// 不必在磁盘上留一个「已迁移」的标记。
+    #[test]
+    fn an_instance_from_before_the_component_list_reads_as_one_layer() {
+        let mut raw = serde_json::json!({
+            "schemaVersion": 1,
+            "id": "moss",
+            "name": "Moss",
+            "gameVersion": "1.20.1",
+            "loader": "fabric",
+            "loaderProfile": {
+                "kind": "fabric",
+                "version": "0.16.5",
+                "versionId": "fabric-loader-0.16.5-1.20.1"
+            },
+            "cover": { "identity": "moss", "growth": 0 }
+        });
+        InstanceProfile::migrate(&mut raw);
+        let profile: InstanceProfile = serde_json::from_value(raw).expect("迁移之后要读得出来");
+        assert_eq!(profile.components.len(), 1);
+        assert_eq!(
+            profile.loader_component().map(|one| one.kind),
+            Some(LoaderKind::Fabric)
+        );
+        assert_eq!(
+            profile
+                .loader_component()
+                .map(|one| one.version_id.as_str()),
+            Some("fabric-loader-0.16.5-1.20.1")
+        );
+        // 旧字段不再写出去。
+        let written = serde_json::to_value(&profile).expect("serialize");
+        assert!(written.get("loaderProfile").is_none());
+
+        // 原版实例没有那个字段，迁移之后层表是空的，不该凭空多出一层。
+        let mut vanilla = serde_json::json!({
+            "schemaVersion": 1, "id": "bare", "name": "Bare", "gameVersion": "1.21.1",
+            "cover": { "identity": "bare", "growth": 0 }
+        });
+        InstanceProfile::migrate(&mut vanilla);
+        let bare: InstanceProfile = serde_json::from_value(vanilla).expect("read");
+        assert!(bare.components.is_empty());
+        assert!(bare.loader_component().is_none());
+    }
+
+    /// 主加载器是算出来的，不是另存一份。叠了两层时算的是最外面那一层。
+    #[test]
+    fn the_primary_loader_comes_from_the_outermost_layer() {
+        let mut profile =
+            InstanceProfile::vanilla(InstanceId::parse("stack").expect("id"), "Stack", "1.7.10");
+        profile.components.push(Component {
+            kind: LoaderKind::Forge,
+            version: "10.13.4.1614".to_owned(),
+            version_id: "1.7.10-Forge10.13.4.1614".to_owned(),
+        });
+        // 一份没有加载器身份的附加描述不该顶替主加载器。
+        profile.components.push(Component {
+            kind: LoaderKind::Vanilla,
+            version: "1".to_owned(),
+            version_id: "extra".to_owned(),
+        });
+        let profile = profile.normalized();
+        assert_eq!(profile.loader, LoaderKind::Forge);
+        assert_eq!(
+            profile.loader_component().map(|one| one.version.as_str()),
+            Some("10.13.4.1614")
+        );
+    }
 
     #[test]
     fn instance_profile_has_a_stable_json_shape() {

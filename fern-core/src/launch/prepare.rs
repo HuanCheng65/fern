@@ -76,8 +76,7 @@ pub async fn prepare_instance(
     // 版本；而探测本来就可能探不出版本号（老 Forge 的库坐标形状不一样）。
     let loader_ready = profile.external.is_some()
         && profile
-            .loader_profile
-            .as_ref()
+            .loader_component()
             .map(|loader| loader.version_id.clone())
             .filter(|id| !id.is_empty())
             .is_some_and(|id| {
@@ -109,7 +108,7 @@ pub async fn prepare_instance(
     // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
     // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
     // 另一份，会出现「文件明明下好了却说缺」这种最难查的问题。
-    if needs_loader && let Some(loader) = profile.loader_profile.clone() {
+    if needs_loader && let Some(loader) = profile.loader_component().cloned() {
         {
             job.step(
                 JobText::id("job.stage.install-loader")
@@ -137,16 +136,21 @@ pub async fn prepare_instance(
             // 建实例时还不知道上游会给哪个 id，装完才知道；记回实例文件，
             // 之后启动就不必再猜命名规则。
             if loader.version_id != installed {
-                let mut updated = loader.clone();
-                updated.version_id = installed;
-                profile.loader_profile = Some(updated);
+                // 层表里那一层记上装完之后真正的 id，下次启动就不必再猜命名
+                // 规则。改的是那一层，不是整份实例。
+                for component in &mut profile.components {
+                    if component.kind == loader.kind && component.version == loader.version {
+                        component.version_id = installed.clone();
+                    }
+                }
                 crate::write_instance_profile(paths, &profile)?;
             }
         }
     }
     job.step(JobText::id("job.stage.download-files"));
     let effective_id = crate::effective_version_id(&profile);
-    let metadata: VersionMetadata = version::resolve(paths, &effective_id)
+    // 补全和启动读的必须是同一份合并结果，所以这里也走层表那条路。
+    let metadata: VersionMetadata = version::resolve_profile(paths, &profile)
         .with_context(|| format!("读取 {effective_id} 的版本描述"))?;
 
     let context = rules::context(rules::Features::default());
@@ -276,8 +280,7 @@ pub async fn prepare_instance(
             &profile.game_version,
             profile.loader,
             profile
-                .loader_profile
-                .as_ref()
+                .loader_component()
                 .map(|loader| loader.version.as_str())
                 .unwrap_or_default(),
         ));

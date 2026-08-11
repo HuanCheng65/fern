@@ -216,7 +216,9 @@ pub async fn launch_instance(
             )
         });
     }
-    let metadata = version::resolve(paths, &version_id)
+    // 整摞层按顺序合并，不是只读最外面那一份——别的启动器建的实例是一摞互不
+    // 相干的 patch，没有 inheritsFrom 可跟（见 version::resolve_profile）。
+    let metadata = version::resolve_profile(paths, &profile)
         .with_context(|| format!("读取 {version_id} 的版本描述"))?;
     // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。哪一份是
     // 原版由继承链说了算，见 version::client_jar。
@@ -241,8 +243,7 @@ pub async fn launch_instance(
         &profile.game_version,
         profile.loader,
         profile
-            .loader_profile
-            .as_ref()
+            .loader_component()
             .map(|loader| loader.version.as_str())
             .unwrap_or_default(),
     );

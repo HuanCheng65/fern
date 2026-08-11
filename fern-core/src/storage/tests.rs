@@ -110,11 +110,12 @@ fn a_fully_referenced_setup_has_nothing_to_slim() {
     // 装上加载器，让链有两节。
     let mut profile = crate::read_instance(&paths, "moss").expect("read");
     profile.loader = LoaderKind::Fabric;
-    profile.loader_profile = Some(LoaderProfile {
+    profile.components.push(LoaderProfile {
         kind: LoaderKind::Fabric,
         version: "0.16.5".to_owned(),
         version_id: "fabric-loader-0.16.5-1.20.1".to_owned(),
     });
+
     crate::write_instance_profile(&paths, &profile).expect("write profile");
 
     write_version(

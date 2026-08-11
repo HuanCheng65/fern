@@ -101,8 +101,8 @@ pub use instance::paths_for as instance_paths;
 pub use instance::saves::{SaveEntry, list as list_saves, names as save_names};
 pub use instance::servers::{ServerEntry, list as list_servers};
 pub use instance::{
-    CoverSeed, GarbageCollector, InstanceId, InstanceProfile, InstanceSettings, LoaderKind,
-    LoaderProfile, ProcessPriority, Resolution,
+    Component, CoverSeed, GarbageCollector, InstanceId, InstanceProfile, InstanceSettings,
+    LoaderKind, LoaderProfile, ProcessPriority, Resolution,
 };
 pub use java::runtime::{ensure_java, install as install_java, remove as remove_runtime};
 pub use java::{

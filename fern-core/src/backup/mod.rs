@@ -198,8 +198,7 @@ fn stamp(profile: &InstanceProfile) -> GameStamp {
         minecraft: profile.game_version.clone(),
         loader: profile.loader,
         loader_version: profile
-            .loader_profile
-            .as_ref()
+            .loader_component()
             .map(|loader| loader.version.clone()),
     }
 }

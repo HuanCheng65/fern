@@ -205,8 +205,7 @@ fn refusals(profile: &InstanceProfile, runtime: Option<&crate::java::JavaRuntime
         &profile.game_version,
         profile.loader,
         profile
-            .loader_profile
-            .as_ref()
+            .loader_component()
             .map(|loader| loader.version.as_str())
             .unwrap_or_default(),
     )
@@ -242,8 +241,7 @@ fn chosen_runtime(
         &profile.game_version,
         profile.loader,
         profile
-            .loader_profile
-            .as_ref()
+            .loader_component()
             .map(|loader| loader.version.as_str())
             .unwrap_or_default(),
     );

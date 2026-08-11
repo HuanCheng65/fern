@@ -56,9 +56,13 @@ pub fn list_instances(paths: &DataPaths) -> Result<Vec<InstanceProfile>> {
             continue;
         }
         let bytes = fs::read(&config).with_context(|| format!("read {}", config.display()))?;
+        // 旧实例的形状是「一个加载器」，读进来先摊成层表（见
+        // `InstanceProfile::migrate`）。只在读这一侧做，写出去的永远是新形状。
+        let mut raw: serde_json::Value = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse {}", config.display()))?;
+        InstanceProfile::migrate(&mut raw);
         profiles.push(
-            serde_json::from_slice(&bytes)
-                .with_context(|| format!("parse {}", config.display()))?,
+            serde_json::from_value(raw).with_context(|| format!("parse {}", config.display()))?,
         );
     }
     profiles.sort_by(|left: &InstanceProfile, right: &InstanceProfile| left.name.cmp(&right.name));
@@ -112,13 +116,13 @@ pub fn create_instance_with_loader(
         let version = loader_version
             .map(str::to_owned)
             .ok_or_else(|| anyhow!("选择 {loader:?} 时必须指定加载器版本"))?;
-        profile.loader = loader;
         // version_id 留空：装完之后才知道上游给的是哪个 id，那时候再补。
-        profile.loader_profile = Some(crate::LoaderProfile {
+        profile.components.push(crate::Component {
             kind: loader,
             version,
             version_id: String::new(),
         });
+        profile = profile.normalized();
     }
     let instance_root = paths.instance_root(&id);
     fs::create_dir_all(instance_root.join(".minecraft")).context("create game directory")?;
@@ -336,9 +340,11 @@ pub fn duplicate_instance(
         name,
         &source.game_version,
         source.loader,
-        source.loader_profile.as_ref().map(|l| l.version.as_str()),
+        source.loader_component().map(|l| l.version.as_str()),
     )?;
-    copy.loader_profile = source.loader_profile.clone();
+    // 整摞层一起复制：只带主加载器那一层的话，叠着别的层的实例复制出来就少
+    // 了几层，而界面上看不出区别。
+    copy.components = source.components.clone();
     copy.settings = source.settings.clone();
     write_instance_profile(paths, &copy)?;
 
@@ -381,6 +387,9 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
 /// 把实例文件整份写回去。先写临时文件再改名——写到一半断电不该让实例
 /// 彻底打不开。
 pub fn write_instance_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<()> {
+    // 算得出来的字段在这里重算一遍。写盘只有这一个入口，所以「主加载器和层
+    // 表对不上」这件事没有别的地方能发生。
+    let profile = &profile.clone().normalized();
     let bytes = serde_json::to_vec_pretty(profile).context("serialize instance profile")?;
     let path = paths.instance_config(profile.id.as_str());
     let temporary = path.with_extension("json.part");
@@ -564,12 +573,12 @@ mod tests {
         .expect("fabric is installable");
         assert_eq!(ok.loader, crate::LoaderKind::Fabric);
         assert_eq!(
-            ok.loader_profile.as_ref().map(|p| p.version.as_str()),
+            ok.loader_component().map(|p| p.version.as_str()),
             Some("0.16.5")
         );
         // 装完才知道 id，建的时候留空。
         assert_eq!(
-            ok.loader_profile.as_ref().map(|p| p.version_id.as_str()),
+            ok.loader_component().map(|p| p.version_id.as_str()),
             Some("")
         );
 

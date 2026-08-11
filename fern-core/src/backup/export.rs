@@ -236,8 +236,7 @@ pub async fn mrpack(
     index
         .dependencies
         .insert("minecraft".to_owned(), profile.game_version.clone());
-    if let (Some(key), Some(loader)) = (loader_key(profile.loader), profile.loader_profile.as_ref())
-    {
+    if let (Some(key), Some(loader)) = (loader_key(profile.loader), profile.loader_component()) {
         index
             .dependencies
             .insert(key.to_owned(), loader.version.clone());
