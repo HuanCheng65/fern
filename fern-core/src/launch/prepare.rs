@@ -403,49 +403,27 @@ fn task_from_info(path: PathBuf, info: &DownloadInfo) -> Result<DownloadTask> {
     DownloadTask::new(path, &info.url, &info.sha1, info.size)
 }
 
-/// 这一条库要下哪些文件。rules 已经在 `effective_libraries` 里过完了，这里
-/// 只管把坐标翻译成路径。
+/// 这一条库要下哪个文件。rules、去重、classifier 都已经在 `effective_libraries`
+/// 与 `Library::file` 里定完了，这里只管把它翻译成路径。
 fn append_library_tasks(
     tasks: &mut Vec<DownloadTask>,
     root: &Path,
     library: &Library,
     context: &RuleContext,
 ) -> Result<()> {
-    let Some(downloads) = &library.downloads else {
+    if library.downloads.is_none() {
         // 第三方 Maven（Fabric、Forge）只给一个仓库前缀，路径和文件名都要
         // 从坐标推出来，也没有 sha1 可校验。
         return append_maven_task(tasks, root, library);
-    };
-    if let Some(artifact) = &downloads.artifact {
-        let relative = artifact
-            .path
-            .as_deref()
-            .ok_or_else(|| anyhow!("library {} has no artifact path", library.name))?;
-        tasks.push(task_from_info(root.join(relative), artifact)?);
     }
-    let Some(natives) = &library.natives else {
+    let Some(file) = library.file(context) else {
         return Ok(());
     };
-    let Some(classifiers) = &downloads.classifiers else {
-        return Ok(());
-    };
-    let Some(template) = natives.get(&context.os_name) else {
-        return Ok(());
-    };
-    let arch = if context.os_arch.contains("64") {
-        "64"
-    } else {
-        "32"
-    };
-    let classifier = template.replace("${arch}", arch);
-    let Some(native) = classifiers.get(&classifier) else {
-        return Ok(());
-    };
-    let relative = native
+    let relative = file
         .path
         .as_deref()
-        .ok_or_else(|| anyhow!("library {} has no native path", library.name))?;
-    tasks.push(task_from_info(root.join(relative), native)?);
+        .ok_or_else(|| anyhow!("library {} has no artifact path", library.name))?;
+    tasks.push(task_from_info(root.join(relative), file)?);
     Ok(())
 }
 
@@ -559,8 +537,10 @@ mod tests {
         assert!(tasks.is_empty());
     }
 
+    /// native 记录下的是 classifier 那一份。它那个 artifact 不下：那是同坐标
+    /// classpath 那条的同一个 jar，由那一条负责。
     #[test]
-    fn library_tasks_include_the_native_classifier() {
+    fn a_native_record_downloads_its_classifier_and_nothing_else() {
         let library = Library {
             name: "org.example:render:1.0".to_owned(),
             downloads: Some(LibraryDownloads {
@@ -584,6 +564,10 @@ mod tests {
             &RuleContext::linux_x64(),
         )
         .expect("build library tasks");
-        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].path,
+            Path::new("libraries/org/example/render/1.0/render-1.0-natives-linux-64.jar")
+        );
     }
 }

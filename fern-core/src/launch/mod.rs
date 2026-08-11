@@ -984,54 +984,37 @@ async fn collect_classpath_and_extract_natives(
     natives_directory: &Path,
 ) -> Result<Vec<PathBuf>> {
     let mut classpath = Vec::new();
-    // rules 与坐标冲突都在这一步解决：同一个 group:artifact 只留一份，否则
-    // 加载器会因为 classpath 上有两份同名类而拒绝启动（见 effective_libraries）。
+    // rules 与坐标冲突都在这一步解决：同一个库只留一份，否则加载器会因为
+    // classpath 上有两份同名类而拒绝启动（见 effective_libraries）。
     for library in metadata.effective_libraries(context) {
-        let Some(downloads) = &library.downloads else {
+        if library.downloads.is_none() {
             // 只给了仓库前缀的库（加载器的那些）——路径由坐标推出来，补全时
             // 就是按同一个坐标下的。指向不了任何文件的占位条目跳过。
             if library.url.is_some() {
-                if let Some(relative) = fern_meta::maven_path(&library.name) {
-                    classpath.push(paths.libraries.join(relative));
-                } else {
+                let Some(relative) = fern_meta::maven_path(&library.name) else {
                     return Err(anyhow!("库坐标 {} 无法推出路径", library.name));
-                }
+                };
+                classpath.push(paths.libraries.join(relative));
             }
             continue;
-        };
-        if let Some(artifact) = &downloads.artifact {
-            let relative = artifact
-                .path
-                .as_deref()
-                .ok_or_else(|| anyhow!("library {} has no artifact path", library.name))?;
-            let path = paths.libraries.join(relative);
-            if library.extract.is_some() || library.natives.is_some() {
-                extract_native_jar(&path, natives_directory, library).await?;
-            } else {
-                // Modern metadata publishes native jars as classifier-only artifacts.
-                // LWJGL loads these jars from the classpath and extracts the dylib itself.
-                classpath.push(path);
-            }
         }
-        if let (Some(natives), Some(classifiers)) = (&library.natives, &downloads.classifiers) {
-            let Some(template) = natives.get(&context.os_name) else {
-                continue;
-            };
-            let arch = if context.os_arch.contains("64") {
-                "64"
-            } else {
-                "32"
-            };
-            let classifier = template.replace("${arch}", arch);
-            if let Some(native) = classifiers.get(&classifier) {
-                let path = paths.libraries.join(
-                    native
-                        .path
-                        .as_deref()
-                        .ok_or_else(|| anyhow!("library {} has no native path", library.name))?,
-                );
-                extract_native_jar(&path, natives_directory, library).await?;
-            }
+        // 补全下的就是这一个文件，同一个函数算出来的（见 prepare）。
+        let Some(file) = library.file(context) else {
+            continue;
+        };
+        let relative = file
+            .path
+            .as_deref()
+            .ok_or_else(|| anyhow!("library {} has no artifact path", library.name))?;
+        let path = paths.libraries.join(relative);
+        // 有 `natives` 表的要解压出来，交给 -Djava.library.path 去找。1.19 之后
+        // 的元数据没有这张表，native jar 就是一条普通库（坐标带 classifier），
+        // 直接进 classpath——那个年代的 LWJGL 自己会从 classpath 上把 .dll 掏
+        // 出来。
+        if library.natives.is_some() {
+            extract_native_jar(&path, natives_directory, library).await?;
+        } else {
+            classpath.push(path);
         }
     }
     Ok(classpath)

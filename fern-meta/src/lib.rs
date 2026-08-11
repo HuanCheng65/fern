@@ -148,10 +148,46 @@ pub struct Library {
     pub url: Option<String>,
     #[serde(default)]
     pub rules: Option<Vec<Rule>>,
+    /// 「系统 → classifier」，有这张表就说明这一条是 native 载荷。
     #[serde(default)]
     pub natives: Option<HashMap<String, String>>,
+    /// 解压时不要的那些条目（`META-INF/`）。它只是解压的选项，不是「该不该
+    /// 解压」的开关——那件事由 `natives` 说了算，官方元数据里 `extract` 也
+    /// 从来只跟着 `natives` 出现。
     #[serde(default)]
     pub extract: Option<ExtractRule>,
+}
+
+impl Library {
+    /// 这一条是不是一份 native 载荷，是的话本机要取哪个 classifier。
+    ///
+    /// `natives` 是一张「系统 → classifier」的表，值里可能留着 `${arch}`
+    /// （`natives-linux-${arch}`）。表里没有本机这一项，就说明这份载荷不是
+    /// 给本机的。
+    pub fn native_classifier(&self, context: &RuleContext) -> Option<String> {
+        let template = self.natives.as_ref()?.get(&context.os_name)?;
+        let arch = if context.os_arch.contains("64") {
+            "64"
+        } else {
+            "32"
+        };
+        Some(template.replace("${arch}", arch))
+    }
+
+    /// 本机要从这一条库取的那个文件：native 载荷取 classifier 那份，其余
+    /// 取 artifact。
+    ///
+    /// **一条库只对应一个文件**，补全下的和启动用的都是它。native 记录里
+    /// 那个 artifact 不算数：它是同坐标 classpath 那条的同一个 jar（见
+    /// [`VersionMetadata::effective_libraries`] 里说的拆成两条），跟着解压
+    /// 进 natives 目录只会撒一地 `.class`。
+    pub fn file(&self, context: &RuleContext) -> Option<&DownloadInfo> {
+        let downloads = self.downloads.as_ref()?;
+        match self.native_classifier(context) {
+            Some(classifier) => downloads.classifiers.as_ref()?.get(&classifier),
+            None => downloads.artifact.as_ref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,16 +420,27 @@ impl VersionMetadata {
     /// 谁是加载器这回事，只有顺序，而顺序在不同启动器手里是相反的。版本能比，
     /// 而加载器发布得比它对应的游戏版本晚，带的库只会更新——Forge 与 NeoForge
     /// 还把库版本写死在 `-p` 的模块路径里，选中更新的那份正好是它们要的。
+    ///
+    /// native 载荷是同一个坐标下的另一条，不是重复条目——1.13 到 1.18.2 的元
+    /// 数据把一个库拆成一模一样的两条写（`org.lwjgl:lwjgl:3.2.2` 一条给
+    /// classpath，一条给 `natives-windows`），只按坐标去重会把后者当副本丢掉，
+    /// 结果是 natives 目录空着、LWJGL 找不到 .dll。身份里因此要带上
+    /// classifier，见 [`library_identity`]。
     pub fn effective_libraries(&self, context: &RuleContext) -> Vec<&Library> {
         let allowed: Vec<&Library> = self
             .libraries
             .iter()
             .filter(|library| rules_allow(library.rules.as_deref(), context))
+            // 本机没有对应 classifier 的 native 记录什么都不带，留着只会顶掉
+            // 同坐标那条真要用的。
+            .filter(|library| {
+                library.natives.is_none() || library.native_classifier(context).is_some()
+            })
             .collect();
 
         let mut best: HashMap<String, &str> = HashMap::new();
         for library in &allowed {
-            let identity = library_identity(&library.name);
+            let identity = library_identity(library, context);
             let version = library_version(&library.name).unwrap_or_default();
             match best.get(&identity) {
                 Some(current) if compare_versions(version, current).is_le() => {}
@@ -407,7 +454,7 @@ impl VersionMetadata {
         allowed
             .into_iter()
             .filter(|library| {
-                let identity = library_identity(&library.name);
+                let identity = library_identity(library, context);
                 let version = library_version(&library.name).unwrap_or_default();
                 best.get(&identity) == Some(&version) && taken.insert(identity)
             })
@@ -439,14 +486,25 @@ impl VersionMetadata {
     }
 }
 
-fn library_identity(name: &str) -> String {
-    let parts = name.split(':').collect::<Vec<_>>();
-    match parts.as_slice() {
+/// 去重时用来认「同一个库」的那个身份：坐标去掉版本号，classifier 留着。
+///
+/// classifier 的两种写法算同一回事：1.19 之后写进坐标
+/// （`org.lwjgl:lwjgl:3.3.3:natives-windows`），之前放在 `natives` 表里，坐标
+/// 与 classpath 那条一字不差。两种都归成 `org.lwjgl:lwjgl:natives-windows`，
+/// 于是「一个库的 classpath 那份和 native 那份各留一条」这件事，在新老元数据
+/// 上是同一条规则。
+fn library_identity(library: &Library, context: &RuleContext) -> String {
+    let parts = library.name.split(':').collect::<Vec<_>>();
+    let coordinate = match parts.as_slice() {
         [group, artifact, _version] => format!("{group}:{artifact}"),
         [group, artifact, _version, classifier] => {
             format!("{group}:{artifact}:{classifier}")
         }
-        _ => name.to_owned(),
+        _ => library.name.clone(),
+    };
+    match library.native_classifier(context) {
+        Some(classifier) => format!("{coordinate}:{classifier}"),
+        None => coordinate,
     }
 }
 
@@ -734,6 +792,37 @@ mod tests {
             picked[0].name,
             "org.lwjgl.lwjgl:lwjgl:2.9.2-nightly-20140822"
         );
+    }
+
+    /// 一份只给 macOS 准备的 native 记录，在 Windows 上什么都不带。它和
+    /// classpath 那条坐标一字不差，还排在前面——不把它挑出去，去重就会留下这
+    /// 个空壳，把真正要进 classpath 的那份顶掉。
+    #[test]
+    fn a_native_record_for_another_system_does_not_shadow_the_real_library() {
+        let metadata = VersionMetadata {
+            id: "1.16.5".to_owned(),
+            libraries: vec![
+                Library {
+                    name: "ca.weblite:java-objc-bridge:1.0.0".to_owned(),
+                    natives: Some(HashMap::from([(
+                        "osx".to_owned(),
+                        "natives-osx".to_owned(),
+                    )])),
+                    ..Library::default()
+                },
+                library("ca.weblite:java-objc-bridge:1.0.0"),
+            ],
+            ..VersionMetadata::default()
+        };
+        let windows = RuleContext {
+            os_name: "windows".to_owned(),
+            os_arch: "x86_64".to_owned(),
+            ..RuleContext::default()
+        };
+
+        let picked = metadata.effective_libraries(&windows);
+        assert_eq!(picked.len(), 1);
+        assert!(picked[0].natives.is_none());
     }
 
     #[test]
