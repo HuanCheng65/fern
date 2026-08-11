@@ -33,6 +33,8 @@ export interface Snapshot {
   saves: string[]
   minecraft: string
   loader: string
+  /** 拍摄时加载器的版本。原版没有。 */
+  loaderVersion?: string
   /** 拍的时候文件还在变。 */
   inconsistent: boolean
   skipped: Skipped[]
@@ -131,38 +133,6 @@ export const pinned = (snapshot: Snapshot) =>
   snapshot.label !== undefined || snapshot.reason === 'manual'
 
 const at = (seconds: number) => new Date(seconds * 1000)
-
-/** `14:32`。列表里每一行的第一列，等宽数字，所以对得齐。 */
-export const clock = (seconds: number) =>
-  at(seconds).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-
-/** 按本地日期分组的键。 */
-export const day = (seconds: number) => at(seconds).toLocaleDateString('sv-SE')
-
-/**
- * 一组的标题：今天 / 昨天 / 8月6日 / 2025年8月6日。
- *
- * 最近两天用相对说法，再往前用日期——「三天前」这种说法要用户自己换算成
- * 日期，而人记得住的是「上周六装模组之前」。跨年的补上年份。
- */
-export function dayLabel(seconds: number): string {
-  const date = at(seconds)
-  const today = new Date()
-  const midnight = (value: Date) =>
-    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime()
-  const days = Math.round((midnight(today) - midnight(date)) / 86_400_000)
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  return date.toLocaleDateString('zh-CN', {
-    year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
 
 /** 完整时刻，浮层里那一行用。 */
 export const moment = (seconds: number) =>

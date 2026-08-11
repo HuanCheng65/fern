@@ -393,6 +393,7 @@ fn the_interface_sees_the_field_names_it_expects() {
         saves: vec!["家".to_owned()],
         minecraft: "1.20.1".to_owned(),
         loader: "neoforge".to_owned(),
+        loader_version: Some("21.1.77".to_owned()),
         inconsistent: false,
         skipped: vec![Skipped {
             path: "logs/".to_owned(),
@@ -404,6 +405,7 @@ fn the_interface_sees_the_field_names_it_expects() {
     assert!(json.get("label").is_none());
     assert_eq!(json["takenAt"], 1_786_152_000_u64);
     assert_eq!(json["reason"], "before-mod-change");
+    assert_eq!(json["loaderVersion"], "21.1.77");
     assert_eq!(json["skipped"][0]["reason"], "transient");
 
     let restored = serde_json::to_value(Restored {

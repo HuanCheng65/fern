@@ -12,9 +12,10 @@
    * 拍一张」是它的退路。
    */
   import { untrack } from 'svelte'
-  import { Check, Pencil, X } from 'lucide-svelte'
+  import { Check, X } from 'lucide-svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import Dialog from 'fern-kit/ui/Dialog.svelte'
+  import { format, loaderName, ui } from '../lib/i18n'
   import { formatBytes } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { notices } from '../lib/notices.svelte'
@@ -62,23 +63,35 @@
 
   let part = $state<Part>(start.part)
   let save = $state(start.save)
-  let copy = $state(false)
+  // 另存为新世界是默认：它对原世界零风险，「就想看看昨天的基地长什么样」
+  // 也只有这条路能满足。想覆盖的人是在做一个更重的决定，多点一下应当。
+  let copy = $state(true)
   let name = $state(start.name)
   let naming = $state(false)
   let draft = $state(start.label)
+  /** 命名之后浮层不关，标题就得跟着变——本地记一份，不等列表重读。 */
+  let label = $state(start.label)
   let confirming = $state(false)
   let busy = $state('')
   let error = $state('')
   let missing = $state<Restored['missing']>([])
+  /** 恢复已经做完（哪怕有文件缺失）。做完之后这一屏只剩「关闭」。 */
+  let restored = $state(false)
 
   const running = $derived(launch.phaseOf(instanceId) !== undefined)
-  const title = $derived(snapshot.label ?? why(snapshot).title)
+  const title = $derived(label || why(snapshot).title)
+  /** 「Fabric 0.16.5」。原版没有加载器，这一段就不出现。 */
+  const loaderStamp = $derived(
+    snapshot.loader !== 'vanilla'
+      ? `${loaderName(snapshot.loader)}${snapshot.loaderVersion ? ` ${snapshot.loaderVersion}` : ''}`
+      : '',
+  )
 
   const parts = $derived([
-    { value: 'all' as const, label: '整个实例' },
-    ...(snapshot.saves.length > 0 ? [{ value: 'save' as const, label: '一个世界' }] : []),
-    { value: 'config' as const, label: '配置' },
-    ...(snapshot.mods > 0 ? [{ value: 'mods' as const, label: '模组' }] : []),
+    { value: 'all' as const, label: ui.snapshot.scopeAll },
+    ...(snapshot.saves.length > 0 ? [{ value: 'save' as const, label: ui.snapshot.scopeSave }] : []),
+    { value: 'config' as const, label: ui.snapshot.scopeConfig },
+    ...(snapshot.mods > 0 ? [{ value: 'mods' as const, label: ui.snapshot.scopeMods }] : []),
   ])
 
   const scope = $derived<RestoreScope>(
@@ -91,18 +104,14 @@
   /** 按下去会发生什么。这一行不写，「恢复」就只是个词。 */
   const consequence = $derived.by(() => {
     if (part === 'save' && copy) {
-      return `会新建一个名为「${name.trim() || '…'}」的世界，原来的世界不受影响。`
+      return format(ui.snapshot.consequenceCopy, { name: name.trim() || '…' })
     }
-    if (part === 'save') {
-      return `会把「${save}」还原到这一刻，之后新生成的区块和数据会被删除。`
-    }
-    if (part === 'config') {
-      return '会还原 config 目录和游戏目录下的设置文件，存档与模组不受影响。'
-    }
+    if (part === 'save') return format(ui.snapshot.consequenceSave, { save })
+    if (part === 'config') return ui.snapshot.consequenceConfig
     if (part === 'mods') {
-      return `会把模组还原成这一刻的 ${snapshot.mods} 个，之后新装的会被删除。`
+      return format(ui.snapshot.consequenceMods, { count: String(snapshot.mods) })
     }
-    return '会还原存档、配置和模组，之后新增的文件会被删除。'
+    return ui.snapshot.consequenceAll
   })
 
   const ready = $derived(
@@ -120,14 +129,19 @@
       onchanged()
       if (result.missing.length > 0) {
         // 这几个文件没写回去，需要人来看。留在这一屏，不做成说完就走的通知。
+        // 但恢复本身已经完成了——下面的按钮必须承认这一点（只剩「关闭」），
+        // 不能还站着一颗「恢复」。
         missing = result.missing
+        restored = true
         return
       }
       notices.say({
-        title: '已恢复',
+        title: ui.snapshot.restored,
         detail:
-          `写回 ${result.written} 个文件` +
-          (result.removed > 0 ? `，删除 ${result.removed} 个` : ''),
+          format(ui.snapshot.restoredWritten, { count: String(result.written) }) +
+          (result.removed > 0
+            ? format(ui.snapshot.restoredRemoved, { count: String(result.removed) })
+            : ''),
       })
       onclose()
     } catch (cause) {
@@ -141,10 +155,11 @@
     busy = 'label'
     try {
       await labelSnapshot(instanceId, snapshot.id, draft.trim() || undefined)
+      label = draft.trim()
       naming = false
       error = ''
+      // 名字改完人还站在这一屏——多半是顺手，接下来才是恢复。不关。
       onchanged()
-      onclose()
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -165,10 +180,9 @@
   }
 </script>
 
-<Dialog label="快照" width="520px" {onclose}>
+<Dialog label={ui.snapshot.dialog} width="520px" {onclose}>
   <header>
     {#if naming}
-      <!-- 起了名字的快照永久保留，所以命名不只是个备注。 -->
       <form
         class="rename"
         onsubmit={(event) => {
@@ -178,43 +192,55 @@
       >
         <!-- svelte-ignore a11y_autofocus -->
         <Input
-          aria-label="快照名称"
+          aria-label={ui.snapshot.nameAria}
           bind:value={draft}
-          placeholder="例如：装 Create 之前"
+          placeholder={ui.snapshot.renamePlaceholder}
           maxlength={60}
           autofocus
         />
-        <Button variant="icon" type="submit" aria-label="保存名称">
+        <Button variant="icon" type="submit" aria-label={ui.snapshot.renameSave}>
           <Check size={16} strokeWidth={2} />
         </Button>
-        <Button variant="icon" type="button" aria-label="取消" onclick={() => (naming = false)}>
+        <Button
+          variant="icon"
+          type="button"
+          aria-label={ui.snapshot.cancel}
+          onclick={() => (naming = false)}
+        >
           <X size={16} strokeWidth={2} />
         </Button>
       </form>
+      <!-- 命名不只是个备注：这句规则以前只写在代码注释里，用户无从知道。 -->
+      <p class="t-quiet hint">{ui.snapshot.renameHint}</p>
     {:else}
       <div class="titles">
         <h2>{title}</h2>
-        <div class="rename-btn">
-          <Button variant="icon" aria-label="命名" onclick={() => (naming = true)}>
-            <Pencil size={14} strokeWidth={1.9} />
-          </Button>
-        </div>
+        <Button variant="link" onclick={() => (naming = true)}>{ui.snapshot.rename}</Button>
       </div>
     {/if}
 
     <p class="t-quiet meta">
-      {moment(snapshot.takenAt)} · Minecraft {snapshot.minecraft} · {snapshot.files} 个文件 ·
-      {formatBytes(snapshot.bytes)}
+      {[
+        moment(snapshot.takenAt),
+        `Minecraft ${snapshot.minecraft}`,
+        loaderStamp,
+        format(ui.snapshots.files, { count: String(snapshot.files) }),
+        formatBytes(snapshot.bytes),
+      ]
+        .filter(Boolean)
+        .join(' · ')}
     </p>
+    <!-- 它为什么在这里。这套说明此前写好了却从没显示过。 -->
+    <p class="t-quiet reason">{why(snapshot).detail}</p>
   </header>
 
   <div class="body">
     {#if snapshot.inconsistent}
-      <p class="warn">拍摄时文件仍在变动，这张快照的内容可能不一致。</p>
+      <p class="warn">{ui.snapshot.inconsistent}</p>
     {/if}
 
     <SegmentedControl
-      label="恢复哪一部分"
+      label={ui.snapshot.scope}
       options={parts}
       value={part}
       onchange={(value) => (part = value)}
@@ -223,7 +249,7 @@
     {#if part === 'save'}
       {#if snapshot.saves.length > 1}
         <Select
-          label="世界"
+          label={ui.snapshot.world}
           options={snapshot.saves.map((world) => ({ value: world, label: world }))}
           bind:value={save}
           onchange={() => (name = copyName(save, snapshot.takenAt))}
@@ -231,30 +257,30 @@
       {/if}
 
       <SegmentedControl
-        label="写回方式"
+        label={ui.snapshot.mode}
         options={[
-          { value: 'replace' as const, label: '覆盖原世界' },
-          { value: 'copy' as const, label: '另存为新世界' },
+          { value: 'copy' as const, label: ui.snapshot.modeCopy },
+          { value: 'replace' as const, label: ui.snapshot.modeReplace },
         ]}
         value={copy ? 'copy' : 'replace'}
         onchange={(value) => (copy = value === 'copy')}
       />
 
       {#if copy}
-        <Input label="新世界的名称" bind:value={name} maxlength={60} />
+        <Input label={ui.snapshot.copyName} bind:value={name} maxlength={60} />
       {/if}
     {/if}
 
     <p class="consequence">
       {consequence}
-      {#if !copy}
-        <span class="t-quiet">恢复前会自动拍一张，可以用它撤销这次恢复。</span>
+      {#if !(part === 'save' && copy)}
+        <span class="t-quiet">{ui.snapshot.safety}</span>
       {/if}
     </p>
 
     {#if snapshot.skipped.length > 0}
       <details class="skipped">
-        <summary>{snapshot.skipped.length} 项未纳入快照</summary>
+        <summary>{format(ui.snapshot.skipped, { count: String(snapshot.skipped.length) })}</summary>
         <ul>
           {#each snapshot.skipped as item (item.path)}
             <li>
@@ -268,35 +294,49 @@
 
     {#if missing.length > 0}
       <div class="alert">
-        以下文件的内容已不在备份中，没有写回，原文件保持不变：
+        {ui.snapshot.missingLead}
         {#each missing as item (item.path)}
-          <div>{item.path}</div>
+          <div class="missing">
+            <span>{item.path}</span>
+            {#if item.sha1}
+              <!-- 对象仓库坏掉后的唯一退路：拿这个哈希去模组站反查。 -->
+              <span class="t-mono selectable">{item.sha1}</span>
+            {/if}
+          </div>
         {/each}
       </div>
     {/if}
 
-    {#if running}
-      <p class="warn">游戏正在运行，写回的文件会被覆盖。请先退出游戏。</p>
+    {#if running && !restored}
+      <p class="warn">{ui.snapshot.running}</p>
     {/if}
 
     {#if error}<div class="alert">{error}</div>{/if}
   </div>
 
   <footer>
-    {#if confirming}
+    {#if restored}
+      <span class="t-quiet">{ui.snapshot.missingDone}</span>
+      <span class="spacer"></span>
+      <Button variant="primary" onclick={onclose}>{ui.snapshot.close}</Button>
+    {:else if confirming}
       <span class="confirm">
-        <span class="t-quiet">删除后这张快照无法找回。</span>
-        <Button variant="ghost" onclick={() => (confirming = false)}>取消</Button>
+        <span class="t-quiet">{ui.snapshot.deleteWarn}</span>
+        <Button variant="ghost" onclick={() => (confirming = false)}>
+          {ui.snapshot.cancel}
+        </Button>
         <Button tone="danger" disabled={busy !== ''} onclick={() => void remove()}>
-          确认删除
+          {ui.snapshot.deleteConfirm}
         </Button>
       </span>
     {:else}
-      <Button variant="link" tone="danger" onclick={() => (confirming = true)}>删除</Button>
+      <Button variant="link" tone="danger" onclick={() => (confirming = true)}>
+        {ui.snapshot.delete}
+      </Button>
       <span class="spacer"></span>
-      <Button variant="ghost" onclick={onclose}>取消</Button>
+      <Button variant="ghost" onclick={onclose}>{ui.snapshot.cancel}</Button>
       <Button variant="primary" disabled={!ready} onclick={() => void restore()}>
-        {busy === 'restore' ? '正在恢复' : '恢复'}
+        {busy === 'restore' ? ui.snapshot.restoring : ui.snapshot.restore}
       </Button>
     {/if}
   </footer>
@@ -310,8 +350,8 @@
 
   .titles {
     display: flex;
-    align-items: center;
-    gap: var(--s2);
+    align-items: baseline;
+    gap: var(--s3);
     min-width: 0;
   }
 
@@ -326,27 +366,27 @@
     white-space: nowrap;
   }
 
-  /* 命名不是常用动作，所以它平时几乎看不见，指过去才出现。 */
-  .titles .rename-btn {
-    opacity: 0;
-    transition: opacity var(--t-fast) var(--ease);
-  }
-
-  .titles:hover .rename-btn,
-  .titles .rename-btn:focus-within {
-    opacity: 1;
-  }
-
   .rename {
     display: flex;
     align-items: center;
     gap: var(--s2);
   }
 
+  .hint {
+    margin: var(--s2) 0 0;
+    font-size: var(--t-micro);
+  }
+
   .meta {
     margin: var(--s2) 0 0;
     font-size: var(--t-micro);
     font-variant-numeric: tabular-nums;
+  }
+
+  .reason {
+    margin: var(--s1) 0 0;
+    font-size: var(--t-micro);
+    line-height: 1.6;
   }
 
   .body {
@@ -400,6 +440,18 @@
     font-size: var(--t-micro);
   }
 
+  .missing {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s3);
+    min-width: 0;
+  }
+
+  .missing .t-mono {
+    flex: none;
+    font-size: var(--t-micro);
+  }
+
   footer {
     display: flex;
     align-items: center;
@@ -423,5 +475,4 @@
   .confirm .t-quiet {
     flex: 1;
   }
-
 </style>

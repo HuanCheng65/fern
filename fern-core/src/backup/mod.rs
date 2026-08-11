@@ -77,6 +77,10 @@ pub struct Snapshot {
     pub saves: Vec<String>,
     pub minecraft: String,
     pub loader: String,
+    /// 拍摄时加载器的版本。「更新加载器之后世界打不开」正是快照要接住的
+    /// 场景之一，这个数字是「回到哪一刻」的一半答案。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loader_version: Option<String>,
     /// 拍的时候文件还在变。恢复它之前用户有权知道这件事。
     pub inconsistent: bool,
     pub skipped: Vec<Skipped>,
@@ -374,6 +378,7 @@ fn describe(id: &str, manifest: &Manifest) -> Snapshot {
         saves,
         minecraft: manifest.game.minecraft.clone(),
         loader: format!("{:?}", manifest.game.loader).to_lowercase(),
+        loader_version: manifest.game.loader_version.clone(),
         inconsistent: manifest.inconsistent,
         skipped: manifest.skipped.clone(),
     }
