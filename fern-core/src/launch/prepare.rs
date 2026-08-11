@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    DataPaths, Job,
+    DataPaths, Job, JobText,
     data::{
         metacache::{self, Freshness},
         settings::source_order,
@@ -91,7 +91,6 @@ pub async fn prepare_instance(
     let needs_loader = profile.loader != crate::LoaderKind::Vanilla && !loader_ready;
     job.expect(if needs_loader { 4 } else { 3 });
 
-    let events = &job.downloads();
     let version_id = profile.game_version.clone();
     let version_id = version_id.as_str();
     if !version::is_safe_id(version_id) {
@@ -99,7 +98,7 @@ pub async fn prepare_instance(
     }
     let downloader = DownloadClient::new(source_order(), 64);
 
-    job.step("读取版本信息");
+    job.step(JobText::id("job.stage.resolve-version"));
     // 客户端 jar 该落在哪、原版那份描述是哪一份，都由继承链说了算——外部实例
     // 的「原版」可能就是那份合并好的 JSON 自己，名字和游戏版本号对不上。
     let client_jar = version::client_jar(paths, &profile);
@@ -111,11 +110,12 @@ pub async fn prepare_instance(
     // 另一份，会出现「文件明明下好了却说缺」这种最难查的问题。
     if needs_loader && let Some(loader) = profile.loader_profile.clone() {
         {
-            job.step(format!(
-                "安装 {} {}",
-                crate::loader_display_name(profile.loader),
-                loader.version
-            ));
+            job.step(
+                JobText::id("job.stage.install-loader")
+                    .arg("loader", crate::loader_display_name(profile.loader))
+                    .arg("version", &loader.version),
+            );
+            let events = &job.downloads();
             // NeoForge / Forge 的 processors 要把原版 client jar 拆开重打，
             // 所以它必须先在磁盘上。Fabric 不需要，但多验一次已经存在的文件
             // 只是一次 sha1，不值得为它分叉。
@@ -143,7 +143,8 @@ pub async fn prepare_instance(
             }
         }
     }
-    job.step("补全游戏文件");
+    job.step(JobText::id("job.stage.download-files"));
+    let events = &job.downloads();
     let effective_id = crate::effective_version_id(&profile);
     let metadata: VersionMetadata = version::resolve(paths, &effective_id)
         .with_context(|| format!("读取 {effective_id} 的版本描述"))?;
@@ -182,8 +183,12 @@ pub async fn prepare_instance(
     }
 
     if let Some(index) = &metadata.asset_index {
-        let _ = events.send(DownloadEvent::Status {
-            message: "读取资源索引".to_owned(),
+        // 只是此刻的细节：下载一开始，桥会用「检查并下载 N 个文件」换掉它。
+        // 上一版这句话被当成阶段名顶上去、再也没人撤，整批下载的几分钟里
+        // 界面一直写着「读取资源索引」。
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.asset-index".to_owned(),
+            params: Vec::new(),
         });
         // 索引 id 来自版本 JSON，也就是来自网络，而它要直接变成文件名。
         if !version::is_safe_id(&index.id) {
@@ -237,7 +242,7 @@ pub async fn prepare_instance(
         materialize_legacy_assets(paths, instance_id, &index_id, &index, events).await?;
     }
 
-    job.step("准备 Java");
+    job.step(JobText::id("job.stage.prepare-java"));
     // Java 也是这个实例缺的文件之一，补全就该把它补上。放在这里而不是启动
     // 时：启动那一步不该再有几百兆的下载，而补全本来就是「跑一遍直到齐活」。
     let requirement = java::requirement(
@@ -252,7 +257,7 @@ pub async fn prepare_instance(
         .java_version
         .as_ref()
         .map(|version| version.component.as_str());
-    runtime::ensure_java(paths, component, &requirement, events).await?;
+    runtime::ensure_java(paths, component, &requirement, &job.downloads()).await?;
 
     Ok(result)
 }
@@ -367,8 +372,9 @@ async fn materialize_legacy_assets(
         return Ok(());
     };
 
-    let _ = events.send(DownloadEvent::Status {
-        message: "整理旧版资源".to_owned(),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.legacy-assets".to_owned(),
+        params: Vec::new(),
     });
 
     for (name, object) in &index.objects {

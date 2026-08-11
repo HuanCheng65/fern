@@ -244,6 +244,34 @@ const backend = {
     title: '不在备份范围内',
     detail: '快照只包含存档、配置、模组、资源包和截图，这一项不在其中。',
   },
+
+  // ── 启动进度 ────────────────────────────────────────────────────────────
+  // 标题是进度条上那一行字。stage 是阶段名，note 是阶段下随做随换的注脚，
+  // 都不需要 detail——进度不解释自己，说完这一刻就翻篇。
+  'job.stage.resolve-version': { title: '读取版本信息', detail: '' },
+  'job.stage.install-loader': { title: '安装 {loader} {version}', detail: '' },
+  'job.stage.download-files': { title: '补全游戏文件', detail: '' },
+  'job.stage.prepare-java': { title: '准备 Java', detail: '' },
+  'job.stage.prepare-launch': { title: '准备启动', detail: '' },
+  'job.note.downloading': { title: '检查并下载 {count} 个文件', detail: '' },
+  'job.note.retry': { title: '重试 {count} 个文件', detail: '' },
+  'job.note.asset-index': { title: '读取资源索引', detail: '' },
+  'job.note.legacy-assets': { title: '整理旧版资源', detail: '' },
+  'job.note.loader-inspect': { title: '读取 {loader} {version} 的安装信息', detail: '' },
+  'job.note.loader-profile': { title: '安装 {loader} {version}', detail: '' },
+  'job.note.forge-core': { title: '摆放 Forge 的核心库', detail: '' },
+  'job.note.forge-libraries': { title: '下载安装期需要的库', detail: '' },
+  'job.note.forge-processor': { title: '安装 {index}/{count}：{name}', detail: '' },
+  'job.note.java-prepare': { title: '准备 Java 运行时（{component}）', detail: '' },
+  'job.note.java-download': { title: '下载 Java {version}', detail: '' },
+  'job.note.java-adoptium-query': { title: '向 Adoptium 查询 Java {major}', detail: '' },
+  'job.note.java-adoptium-download': { title: '下载 Temurin {name}（{size} MB）', detail: '' },
+  'job.note.java-extract': { title: '解压 Java 运行时', detail: '' },
+  'job.note.authlib': { title: '下载 authlib-injector {version}', detail: '' },
+  'job.note.snapshot': { title: '拍摄快照', detail: '' },
+  'job.note.natives': { title: '解压平台组件', detail: '' },
+  'job.note.account': { title: '刷新账户凭据', detail: '' },
+  'job.note.mods': { title: '检查模组', detail: '' },
 } satisfies Record<BackendMessage, Message>
 
 /**

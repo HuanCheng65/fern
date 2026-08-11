@@ -121,8 +121,12 @@ pub async fn install(
     let installer_url = installer_url(kind, game_version, loader_version)?;
     let downloader = DownloadClient::new(source_order(), 16);
 
-    let _ = events.send(DownloadEvent::Status {
-        message: format!("读取 {} {loader_version} 的安装信息", display(kind)),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.loader-inspect".to_owned(),
+        params: vec![
+            ("loader".to_owned(), display(kind).to_owned()),
+            ("version".to_owned(), loader_version.to_owned()),
+        ],
     });
     let installer_path = paths
         .root
@@ -260,8 +264,9 @@ fn install_legacy(
         .install
         .as_ref()
         .ok_or_else(|| anyhow!("旧版安装器缺少 install 段"))?;
-    let _ = events.send(DownloadEvent::Status {
-        message: "摆放 Forge 的核心库".to_owned(),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.forge-core".to_owned(),
+        params: Vec::new(),
     });
 
     let relative = fern_meta::maven_path(&install.path)
@@ -365,8 +370,9 @@ async fn run_processors(
     downloader: &DownloadClient,
 ) -> Result<()> {
     // 安装器自带的库要先下齐，processors 的 classpath 全指向它们。
-    let _ = events.send(DownloadEvent::Status {
-        message: "下载安装期需要的库".to_owned(),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.forge-libraries".to_owned(),
+        params: Vec::new(),
     });
     let mut tasks = Vec::new();
     for library in &profile.libraries {
@@ -424,13 +430,13 @@ async fn run_processors(
         .collect();
 
     for (index, processor) in client_side.iter().enumerate() {
-        let _ = events.send(DownloadEvent::Status {
-            message: format!(
-                "安装 {}/{}：{}",
-                index + 1,
-                client_side.len(),
-                short(&processor.jar)
-            ),
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.forge-processor".to_owned(),
+            params: vec![
+                ("index".to_owned(), (index + 1).to_string()),
+                ("count".to_owned(), client_side.len().to_string()),
+                ("name".to_owned(), short(&processor.jar).to_owned()),
+            ],
         });
         run_one(paths, processor, &data, &runtime.path).await?;
     }

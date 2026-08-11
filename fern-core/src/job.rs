@@ -9,16 +9,27 @@
 //!
 //! **进度分两轴，不压成一个百分比。** 一次补全里，装 Forge 那一步要在本地跑
 //! 一个第三方安装器，它根本没有百分比可言；硬给它编一个就是骗人。所以纵轴是
-//! 「第几步 / 共几步」，横轴才是这一步内部的字节数——没有字节数的步骤就老实
-//! 说不知道。
+//! 「第几步 / 共几步」，横轴才是字节数——没有字节数的步骤就老实说不知道。
+//!
+//! **步是阶段，细节是注脚。** 上一版把下载器的每一句话（「读取资源索引」）都
+//! 当成阶段名顶上去，而且顶上去就不撤——整批下载的几分钟里界面一直写着一件
+//! 早就做完的事。现在阶段名只由 `step()` 改，细节走 `Note`，说完就撤。
+//!
+//! **字节是一本账，不是最后一批的读数。** 一次作业里可以有好几条下载流（补全
+//! 一条、装加载器一条、刷新账户一条），每条流在账本上有自己的一页，界面看到
+//! 的是合计。上一版谁最后开工谁说了算，分母来回跳。
 //!
 //! 什么该是作业，判据三条，缺一不可：生命周期比发起它的界面长；有中间状态
 //! 可说；失败了需要被接住。搜索、读详情、改个设置都不满足——那些是 async 加
 //! 一个局部的加载状态就够了的事。
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +38,88 @@ use tokio::sync::mpsc::UnboundedSender;
 use fern_download::DownloadEvent;
 
 use crate::LauncherEvent;
+
+/// 一句给用户看的话：要么是文案 id 加参数（句子在界面的文案表里），要么是
+/// 一段现成的文本。
+///
+/// 后者是搬迁期的退路，不是常态——面向用户的新文案不写在 Rust 里（见
+/// AGENTS.md）。启动链路已经全部走 id；还没搬的调用点传字符串，编译不拦，
+/// 界面原样显示。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JobText {
+    Message {
+        id: String,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        params: BTreeMap<String, String>,
+    },
+    Plain(String),
+}
+
+impl JobText {
+    pub fn id(id: impl Into<String>) -> Self {
+        Self::Message {
+            id: id.into(),
+            params: BTreeMap::new(),
+        }
+    }
+
+    pub fn arg(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        if let Self::Message { params, .. } = &mut self {
+            params.insert(key.into(), value.into());
+        }
+        self
+    }
+
+    /// 撤下细节用的空文本。
+    fn empty() -> Self {
+        Self::Plain(String::new())
+    }
+}
+
+impl From<&str> for JobText {
+    fn from(text: &str) -> Self {
+        Self::Plain(text.to_owned())
+    }
+}
+
+impl From<String> for JobText {
+    fn from(text: String) -> Self {
+        Self::Plain(text)
+    }
+}
+
+/// Job 事件里会用到的全部文案 id。
+///
+/// 这份清单进 `message_ids()`（见 lib.rs），也就是进了与界面的契约：文案表里
+/// 少一条是编译错误。新用一个 id 必须同时写进这里——否则界面只能把 id 本身
+/// 显示出来。
+pub(crate) const TEXT_IDS: &[&str] = &[
+    "job.note.account",
+    "job.note.asset-index",
+    "job.note.authlib",
+    "job.note.downloading",
+    "job.note.forge-core",
+    "job.note.forge-libraries",
+    "job.note.forge-processor",
+    "job.note.java-adoptium-download",
+    "job.note.java-adoptium-query",
+    "job.note.java-download",
+    "job.note.java-extract",
+    "job.note.java-prepare",
+    "job.note.legacy-assets",
+    "job.note.loader-inspect",
+    "job.note.loader-profile",
+    "job.note.mods",
+    "job.note.natives",
+    "job.note.retry",
+    "job.note.snapshot",
+    "job.stage.download-files",
+    "job.stage.install-loader",
+    "job.stage.prepare-java",
+    "job.stage.prepare-launch",
+    "job.stage.resolve-version",
+];
 
 /// 作业的一生。类型标签 snake_case、数据字段 camelCase，和别的事件同一条规则。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,11 +140,27 @@ pub enum JobEvent {
     /// 到第几步了。`of` 为 0 表示总步数还不知道。
     Stage {
         id: String,
-        label: String,
+        label: JobText,
         index: u8,
         of: u8,
     },
-    /// 这一步内部的字节进度。`total` 为 0 表示不定量。
+    /// 阶段内的一条并行支线开始了。支线各自有名字，完成后从界面上消失；
+    /// 阶段在所有支线汇合后才推进。
+    Track {
+        id: String,
+        track: u32,
+        label: JobText,
+    },
+    /// 此刻的细节，说完就撤（空文本表示撤下）。它只是注脚，永远不改阶段名。
+    Note {
+        id: String,
+        track: u32,
+        message: JobText,
+    },
+    /// 一条支线收工。
+    TrackDone { id: String, track: u32 },
+    /// 字节账本的合计：这次作业到现在一共下了多少、还知道要下多少。
+    /// `total` 为 0 表示不定量。
     Bytes {
         id: String,
         done: u64,
@@ -68,14 +177,107 @@ fn next_id() -> String {
     format!("job-{}", NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
+/// 进度事件的最小间隔。几条下载流同时记账时，不限流会把 IPC 打满。
+const BYTES_INTERVAL_MS: u64 = 100;
+
+/// Job 与它的支线共享的那部分：身份、事件口、字节账本。
+struct Shared {
+    id: String,
+    events: UnboundedSender<LauncherEvent>,
+    /// 每条支线在账本上的一页：(已下载, 已知总量)。支线完成后这一页留着，
+    /// 所以合计在整个作业里单调向上，不会因为一批下完就往回跳。
+    ledger: Mutex<Vec<(u64, u64)>>,
+    started: Instant,
+    last_emit_ms: AtomicU64,
+    last_done: AtomicU64,
+    speed: AtomicU64,
+    next_track: AtomicU32,
+}
+
+impl Shared {
+    fn send(&self, event: JobEvent) {
+        let _ = self.events.send(LauncherEvent::Job(event));
+    }
+
+    fn note(&self, track: u32, message: JobText) {
+        self.send(JobEvent::Note {
+            id: self.id.clone(),
+            track,
+            message,
+        });
+    }
+
+    /// 记一页账，并把合计发出去。
+    fn record(&self, track: u32, done: u64, total: u64, force: bool) {
+        {
+            let Ok(mut ledger) = self.ledger.lock() else {
+                return;
+            };
+            if let Some(slot) = ledger.get_mut(track as usize) {
+                *slot = (done, total);
+            }
+        }
+        self.emit_bytes(force);
+    }
+
+    fn emit_bytes(&self, force: bool) {
+        let now = self.started.elapsed().as_millis() as u64;
+        let previous = self.last_emit_ms.load(Ordering::Relaxed);
+        if !force {
+            if now.saturating_sub(previous) < BYTES_INTERVAL_MS {
+                return;
+            }
+            if self
+                .last_emit_ms
+                .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
+        } else {
+            self.last_emit_ms.store(now, Ordering::Relaxed);
+        }
+
+        let (done, total) = {
+            let Ok(ledger) = self.ledger.lock() else {
+                return;
+            };
+            ledger.iter().fold((0u64, 0u64), |(done, total), page| {
+                (done + page.0, total + page.1)
+            })
+        };
+
+        // 速度从合计的增量算，平滑一下。全程平均不行：开头一批本地命中的
+        // 文件会把速度顶到几 GB/s。回退（重试退账）不是速度，跳过那一窗。
+        let elapsed = now.saturating_sub(previous);
+        let last = self.last_done.swap(done, Ordering::Relaxed);
+        if done >= last && elapsed >= BYTES_INTERVAL_MS {
+            let instant = (done - last).saturating_mul(1000) / elapsed.max(1);
+            let previous_speed = self.speed.load(Ordering::Relaxed);
+            let smoothed = if previous_speed == 0 {
+                instant
+            } else {
+                (previous_speed.saturating_mul(7) + instant.saturating_mul(3)) / 10
+            };
+            self.speed.store(smoothed, Ordering::Relaxed);
+        }
+
+        self.send(JobEvent::Bytes {
+            id: self.id.clone(),
+            done,
+            total,
+            speed: self.speed.load(Ordering::Relaxed),
+        });
+    }
+}
+
 /// 一个正在进行的作业。
 ///
 /// 拿着它的那一方负责推进度；它被丢掉的时候如果还没收工，会自己发一条失败的
 /// `Done`。界面是纯投影，没有超时也没有心跳——所以「开了工却没有下文」的作业
 /// 必须由这一侧兜住，否则岛上会永远挂着一个不动的东西。
 pub struct Job {
-    id: String,
-    events: UnboundedSender<LauncherEvent>,
+    shared: Arc<Shared>,
     /// 总步数。开工时未必知道（补全要读完实例配置才知道用不用装加载器），
     /// 所以是跑起来之后才填的。
     of: Arc<AtomicU8>,
@@ -91,13 +293,21 @@ impl Job {
     ) -> Self {
         let id = next_id();
         let job = Self {
-            id: id.clone(),
-            events: events.clone(),
+            shared: Arc::new(Shared {
+                id: id.clone(),
+                events: events.clone(),
+                ledger: Mutex::new(Vec::new()),
+                started: Instant::now(),
+                last_emit_ms: AtomicU64::new(0),
+                last_done: AtomicU64::new(0),
+                speed: AtomicU64::new(0),
+                next_track: AtomicU32::new(0),
+            }),
             of: Arc::new(AtomicU8::new(0)),
             index: Arc::new(AtomicU8::new(0)),
             finished: AtomicBool::new(false),
         };
-        job.send(JobEvent::Started {
+        job.shared.send(JobEvent::Started {
             id,
             title: title.into(),
             subjects,
@@ -106,7 +316,7 @@ impl Job {
     }
 
     pub fn id(&self) -> &str {
-        &self.id
+        &self.shared.id
     }
 
     /// 往总步数里添上自己这一段。
@@ -122,14 +332,49 @@ impl Job {
     }
 
     /// 进入下一步。
-    pub fn step(&self, label: impl Into<String>) {
+    pub fn step(&self, label: impl Into<JobText>) {
         let index = self.index.fetch_add(1, Ordering::Relaxed) + 1;
-        self.send(JobEvent::Stage {
-            id: self.id.clone(),
+        self.shared.send(JobEvent::Stage {
+            id: self.shared.id.clone(),
             label: label.into(),
             index,
             of: self.of.load(Ordering::Relaxed),
         });
+    }
+
+    /// 开一条有名字的支线。它出现在界面上，完成后消失；并行的几件事各开
+    /// 各的，互不覆盖。
+    pub fn track(&self, label: impl Into<JobText>) -> Track {
+        self.open_track(Some(label.into()))
+    }
+
+    /// 只在此刻的细节。走当前作业的匿名支线，不新增一行。
+    pub fn note(&self, message: impl Into<JobText>) {
+        self.shared.note(u32::MAX, message.into());
+    }
+
+    fn open_track(&self, label: Option<JobText>) -> Track {
+        let index = self.shared.next_track.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut ledger) = self.shared.ledger.lock() {
+            // 并行开线时拿号和拿锁的先后可能错开，只许把账本变长。
+            if ledger.len() <= index as usize {
+                ledger.resize((index as usize) + 1, (0, 0));
+            }
+        }
+        let announced = label.is_some();
+        if let Some(label) = label {
+            self.shared.send(JobEvent::Track {
+                id: self.shared.id.clone(),
+                track: index,
+                label,
+            });
+        }
+        Track {
+            shared: self.shared.clone(),
+            index,
+            announced,
+            finished: AtomicBool::new(false),
+        }
     }
 
     /// 收工。成功传 `None`，失败传原因。
@@ -137,8 +382,8 @@ impl Job {
         if self.finished.swap(true, Ordering::Relaxed) {
             return;
         }
-        self.send(JobEvent::Done {
-            id: self.id.clone(),
+        self.shared.send(JobEvent::Done {
+            id: self.shared.id.clone(),
             error,
         });
     }
@@ -148,61 +393,137 @@ impl Job {
         self.done(outcome.as_ref().err().map(|error| error.to_string()));
     }
 
-    /// 一条把下载事件贴上这个作业 id 的通道。
+    /// 一条把下载事件记到这个作业账上的通道（匿名支线）。
     ///
-    /// 下载器只认得 [`DownloadEvent`]，也不该去认识作业——桥搭在这里一次，
-    /// 比让下载器知道自己在为谁干活好。翻译规则：
-    ///
-    /// - `Status` 是这一步内部的细节，所以沿用当前步号，只换说法；
-    /// - `TaskStarted` 只是记下总字节数，本身没什么可说的；
-    /// - `FileDone` 太碎，`TaskFinished` 由作业自己的 `Done` 交代。
+    /// 界面上不多一行，字节照记。给并行的、值得有名字的下载流用
+    /// [`Job::track`] 加 [`Track::downloads`]。
     pub fn downloads(&self) -> UnboundedSender<DownloadEvent> {
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-        let events = self.events.clone();
-        let id = self.id.clone();
-        let of = self.of.clone();
-        let index = self.index.clone();
-        let total = Arc::new(AtomicU64::new(0));
-        tokio::spawn(async move {
-            while let Some(event) = receiver.recv().await {
-                let translated = match event {
-                    DownloadEvent::Status { message } => JobEvent::Stage {
-                        id: id.clone(),
-                        label: message,
-                        index: index.load(Ordering::Relaxed).max(1),
-                        of: of.load(Ordering::Relaxed),
-                    },
-                    DownloadEvent::TaskStarted { total_bytes, .. } => {
-                        total.store(total_bytes, Ordering::Relaxed);
-                        continue;
-                    }
-                    DownloadEvent::Progress {
-                        done_bytes,
-                        speed_bps,
-                    } => JobEvent::Bytes {
-                        id: id.clone(),
-                        done: done_bytes,
-                        total: total.load(Ordering::Relaxed),
-                        speed: speed_bps,
-                    },
-                    DownloadEvent::FileDone { .. } | DownloadEvent::TaskFinished { .. } => continue,
-                };
-                if events.send(LauncherEvent::Job(translated)).is_err() {
-                    break;
-                }
-            }
-        });
-        sender
-    }
-
-    fn send(&self, event: JobEvent) {
-        let _ = self.events.send(LauncherEvent::Job(event));
+        self.open_track(None).into_downloads()
     }
 }
 
 impl Drop for Job {
     fn drop(&mut self) {
         self.done(Some("任务没有正常结束".to_owned()));
+    }
+}
+
+/// 阶段里的一条支线。
+///
+/// 丢掉即收工——支线的失败不单独上报，该失败的是作业本身；这里只负责让
+/// 界面上那一行消失。
+pub struct Track {
+    shared: Arc<Shared>,
+    index: u32,
+    announced: bool,
+    finished: AtomicBool,
+}
+
+impl Track {
+    /// 这条支线此刻的细节。
+    pub fn note(&self, message: impl Into<JobText>) {
+        self.shared.note(self.index, message.into());
+    }
+
+    /// 收工。之后这条支线从界面上消失，但它的账留在合计里。
+    pub fn done(&self) {
+        if self.finished.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        if self.announced {
+            self.shared.send(JobEvent::TrackDone {
+                id: self.shared.id.clone(),
+                track: self.index,
+            });
+        }
+    }
+
+    /// 一条把下载事件记到这条支线账上的通道。
+    ///
+    /// 下载器只认得 [`DownloadEvent`]，也不该去认识作业——桥搭在这里一次，
+    /// 比让下载器知道自己在为谁干活好。翻译规则：
+    ///
+    /// - `Status` / `StatusId` / `Retrying` 是细节，翻成 `Note`，永不碰阶段名；
+    /// - `TaskStarted` 开一批新账（同一条通道可以连着跑好几批，账目累加），
+    ///   并把「检查并下载 N 个文件」写成细节；
+    /// - `TaskFinished` 把这批的细节撤下来；
+    /// - `Progress` 记账；`FileDone` 太碎，不理。
+    pub fn downloads(&self) -> UnboundedSender<DownloadEvent> {
+        Track {
+            shared: self.shared.clone(),
+            index: self.index,
+            announced: false,
+            finished: AtomicBool::new(false),
+        }
+        .into_downloads()
+    }
+
+    fn into_downloads(self) -> UnboundedSender<DownloadEvent> {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let shared = self.shared.clone();
+        let track = self.index;
+        tokio::spawn(async move {
+            // 同一条通道跑好几批时（补全流程里至少两批），前几批的读数折进
+            // 底账，当前这批的读数摞在上面——合计永远不回跳。
+            let mut done_base = 0u64;
+            let mut total_base = 0u64;
+            let mut current = (0u64, 0u64);
+            let mut opened = false;
+            while let Some(event) = receiver.recv().await {
+                match event {
+                    DownloadEvent::Status { message } => shared.note(track, JobText::from(message)),
+                    DownloadEvent::StatusId { id, params } => shared.note(
+                        track,
+                        JobText::Message {
+                            id,
+                            params: params.into_iter().collect(),
+                        },
+                    ),
+                    DownloadEvent::Retrying { files } => shared.note(
+                        track,
+                        JobText::id("job.note.retry").arg("count", files.to_string()),
+                    ),
+                    DownloadEvent::TaskStarted {
+                        total_files,
+                        total_bytes,
+                    } => {
+                        if opened {
+                            done_base += current.0;
+                            total_base += current.1;
+                        }
+                        opened = true;
+                        current = (0, total_bytes);
+                        shared.record(track, done_base, total_base + current.1, true);
+                        shared.note(
+                            track,
+                            JobText::id("job.note.downloading")
+                                .arg("count", total_files.to_string()),
+                        );
+                    }
+                    DownloadEvent::Progress {
+                        done_bytes,
+                        total_bytes,
+                        ..
+                    } => {
+                        current = (done_bytes, total_bytes);
+                        shared.record(track, done_base + current.0, total_base + current.1, false);
+                    }
+                    DownloadEvent::TaskFinished { .. } => {
+                        shared.record(track, done_base + current.0, total_base + current.1, true);
+                        // 这批说的话已经过时了。
+                        shared.note(track, JobText::empty());
+                    }
+                    DownloadEvent::FileDone { .. } => {}
+                }
+            }
+        });
+        sender
+    }
+}
+
+impl Drop for Track {
+    fn drop(&mut self) {
+        self.done();
     }
 }
 
@@ -222,11 +543,11 @@ mod tests {
     fn steps_count_up_and_carry_the_total_once_it_is_known() {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let job = Job::begin(&sender, "准备 Sundial", vec!["abc".to_owned()]);
-        job.step("读取版本信息");
+        job.step(JobText::id("job.stage.resolve-version"));
         // 每一段各报各的，加起来才是总数。
         job.expect(1);
         job.expect(2);
-        job.step("补全游戏文件");
+        job.step(JobText::id("job.stage.download-files"));
         job.done(None);
 
         let events = drain(&mut receiver);
@@ -291,6 +612,24 @@ mod tests {
         assert!(done["payload"]["payload"]["error"].is_null());
     }
 
+    /// 文案有两种形状：id 加参数序列化成对象，现成的句子序列化成字符串。
+    /// 界面按 `typeof` 区分，两边的形状都在这里钉死。
+    #[test]
+    fn job_text_serializes_ids_as_objects_and_plain_text_as_strings() {
+        let message =
+            serde_json::to_value(JobText::id("job.stage.install-loader").arg("loader", "Fabric"))
+                .expect("serialize");
+        assert_eq!(message["id"], "job.stage.install-loader");
+        assert_eq!(message["params"]["loader"], "Fabric");
+
+        let plain = serde_json::to_value(JobText::from("解析依赖")).expect("serialize");
+        assert_eq!(plain, "解析依赖");
+
+        // 没有参数时不带空的 params 字段。
+        let bare = serde_json::to_value(JobText::id("job.note.asset-index")).expect("serialize");
+        assert!(bare.get("params").is_none());
+    }
+
     #[test]
     fn finishing_twice_only_says_so_once() {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -322,11 +661,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn download_progress_arrives_stamped_with_the_job_and_its_step() {
+    async fn download_details_become_notes_and_never_touch_the_stage() {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let job = Job::begin(&sender, "准备 Sundial", Vec::new());
         job.expect(2);
-        job.step("补全游戏文件");
+        job.step(JobText::id("job.stage.download-files"));
 
         let downloads = job.downloads();
         let _ = downloads.send(DownloadEvent::TaskStarted {
@@ -335,8 +674,11 @@ mod tests {
         });
         let _ = downloads.send(DownloadEvent::Progress {
             done_bytes: 300,
+            total_bytes: 900,
             speed_bps: 100,
         });
+        // 批次收尾是必须看得见的时刻，不受限流影响。
+        let _ = downloads.send(DownloadEvent::TaskFinished { failed: Vec::new() });
         let _ = downloads.send(DownloadEvent::Status {
             message: "读取资源索引".to_owned(),
         });
@@ -346,30 +688,116 @@ mod tests {
         let events = drain(&mut receiver);
         let bytes = events
             .iter()
-            .find(|event| matches!(event, JobEvent::Bytes { .. }))
+            .rfind(|event| matches!(event, JobEvent::Bytes { .. }))
             .expect("progress becomes bytes");
-        assert_eq!(
+        assert!(matches!(
             bytes,
-            &JobEvent::Bytes {
-                id: job.id().to_owned(),
+            JobEvent::Bytes {
                 done: 300,
                 total: 900,
-                speed: 100,
+                ..
             }
+        ));
+        // 下载器说的细节是注脚，不是阶段名——阶段名只有 step() 能改。
+        // 上一版这里断言的是相反的行为，正是「下载半天还写着读取资源索引」
+        // 的病根。
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, JobEvent::Stage { .. }))
+                .count(),
+            1
         );
-        // 下载器报的细节是这一步内部的，不该让步号往前跳。
         let note = events
             .iter()
-            .rfind(|event| matches!(event, JobEvent::Stage { .. }))
-            .expect("status becomes a stage note");
+            .rfind(|event| matches!(event, JobEvent::Note { .. }))
+            .expect("status becomes a note");
         assert!(matches!(
             note,
-            JobEvent::Stage {
-                index: 1,
-                of: 2,
-                label,
-                ..
-            } if label == "读取资源索引"
+            JobEvent::Note { message: JobText::Plain(text), .. } if text == "读取资源索引"
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_ledger_adds_up_across_streams_and_batches() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let job = Job::begin(&sender, "准备 Sundial", Vec::new());
+        job.expect(2);
+        job.step(JobText::id("job.stage.download-files"));
+
+        // 同一条通道连着两批：第二批开始后，第一批的读数折进底账。
+        let first = job.downloads();
+        let _ = first.send(DownloadEvent::TaskStarted {
+            total_files: 2,
+            total_bytes: 600,
+        });
+        let _ = first.send(DownloadEvent::Progress {
+            done_bytes: 600,
+            total_bytes: 600,
+            speed_bps: 0,
+        });
+        let _ = first.send(DownloadEvent::TaskFinished { failed: Vec::new() });
+        let _ = first.send(DownloadEvent::TaskStarted {
+            total_files: 1,
+            total_bytes: 100,
+        });
+        let _ = first.send(DownloadEvent::Progress {
+            done_bytes: 40,
+            total_bytes: 100,
+            speed_bps: 0,
+        });
+        tokio::task::yield_now().await;
+
+        // 另一条流（比如刷新账户）在自己的页上记账，合计包含两边。
+        let second = job.downloads();
+        let _ = second.send(DownloadEvent::TaskStarted {
+            total_files: 1,
+            total_bytes: 50,
+        });
+        let _ = second.send(DownloadEvent::Progress {
+            done_bytes: 50,
+            total_bytes: 50,
+            speed_bps: 0,
+        });
+        let _ = second.send(DownloadEvent::TaskFinished { failed: Vec::new() });
+        tokio::task::yield_now().await;
+
+        let events = drain(&mut receiver);
+        let last = events
+            .iter()
+            .filter_map(|event| match event {
+                JobEvent::Bytes { done, total, .. } => Some((*done, *total)),
+                _ => None,
+            })
+            .next_back()
+            .expect("bytes were reported");
+        assert_eq!(last, (600 + 40 + 50, 600 + 100 + 50));
+    }
+
+    #[tokio::test]
+    async fn named_tracks_announce_themselves_and_their_exit() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let job = Job::begin(&sender, "准备 Sundial", Vec::new());
+        {
+            let track = job.track(JobText::id("job.note.snapshot"));
+            track.note(JobText::from("正在读取存档"));
+            // 离开作用域即收工——支线的一生比它承载的那件事短不了。
+        }
+        let events = drain(&mut receiver);
+        let track_started = events
+            .iter()
+            .find_map(|event| match event {
+                JobEvent::Track { track, .. } => Some(*track),
+                _ => None,
+            })
+            .expect("track announced");
+        assert!(
+            events.iter().any(
+                |event| matches!(event, JobEvent::Note { track, .. } if *track == track_started)
+            )
+        );
+        assert!(events.iter().any(
+            |event| matches!(event, JobEvent::TrackDone { track, .. } if *track == track_started)
         ));
     }
 }

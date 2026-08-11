@@ -6,9 +6,14 @@
  * `started` 一到卡片就出现。这样就不存在第二个真相来源：作业结束了而界面还挂
  * 着、游戏退了而绿点还在，那类 bug 全是从「界面自己也记一份」来的。
  *
- * 进度是两轴的，这里原样保留：`index/of` 是第几步，`done/total` 是这一步内部
- * 的字节数。装加载器那一步根本没有字节数可报——把两轴压成一个百分比就只能靠
- * 编。要单个数字的地方用 `fraction()`，它是从两轴算出来的，不是另编的。
+ * 进度是两轴的，这里原样保留：`index/of` 是第几步，字节数是横轴。字节是整个
+ * 作业的一本账（几条下载流的合计，单调向上），当前这步内部走了多少用
+ * `stageDone/stageTotal` 存的基线做差算出来——`fraction()` 靠它，不必假设
+ * 一步一条流。
+ *
+ * 阶段名（`stage`）只随 `stage` 事件变；`note` 是随做随换的注脚（「读取资源
+ * 索引」「拍摄快照」），说完就撤。上一版把注脚当阶段名顶上去、再也不撤，
+ * 「下载了三分钟还写着读取资源索引」就是那么来的。
  *
  * 成功的作业直接消失：新实例出现在曲库里、模组出现在列表里，本身就是最好的
  * 完成通知。**只有失败留下**，留到有人处理为止——上一版失败是彻底静默的，
@@ -16,33 +21,58 @@
  */
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { describe } from './i18n'
 import { inTauri } from './instances.svelte'
 import { contributes, PRIORITY, type Presence } from './island.svelte'
+
+/** 阶段内一条并行支线：有名字、有此刻的注脚，完成后消失。 */
+export interface JobTrack {
+  track: number
+  label: string
+  note: string
+}
 
 export interface Job {
   id: string
   title: string
   /** 这件事干在谁身上：实例 id、项目 id，可以都有。 */
   subjects: string[]
-  /** 这一步在做什么。 */
+  /** 这一步在做什么。只有后端的 step() 能改它。 */
   stage: string
+  /** 此刻的注脚。空字符串表示没什么可补充的。 */
+  note: string
   index: number
   /** 共几步。0 表示后端还没说——那就别显示分母，不要编一个。 */
   of: number
+  /** 整个作业的字节合计（单调向上）。 */
   done: number
   total: number
   speed: number
+  /** 进入当前步时合计停在哪，步内进度按增量算。 */
+  stageDone: number
+  stageTotal: number
+  /** 并行支线。顺序执行的作业没有。 */
+  tracks: JobTrack[]
   /** 有值就是失败了。失败的作业不会自己消失。 */
   error: string
 }
 
+/** 后端的文案：要么是 id 加参数（句子在文案表里），要么是一段现成的文本。 */
+type JobText = string | { id: string; params?: Record<string, string> }
+
 type JobEvent =
   | { type: 'started'; payload: { id: string; title: string; subjects: string[] } }
-  | { type: 'stage'; payload: { id: string; label: string; index: number; of: number } }
+  | { type: 'stage'; payload: { id: string; label: JobText; index: number; of: number } }
+  | { type: 'track'; payload: { id: string; track: number; label: JobText } }
+  | { type: 'note'; payload: { id: string; track: number; message: JobText } }
+  | { type: 'track_done'; payload: { id: string; track: number } }
   | { type: 'bytes'; payload: { id: string; done: number; total: number; speed: number } }
   | { type: 'done'; payload: { id: string; error: string | null } }
 
 type LauncherEvent = { type: 'job'; payload: JobEvent } | { type: string; payload: unknown }
+
+const textOf = (text: JobText) =>
+  typeof text === 'string' ? text : describe(text.id, text.params ?? {}).title
 
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -54,23 +84,37 @@ export function formatBytes(bytes: number) {
 /**
  * 两轴合成一个数，给只放得下一个进度条的地方用。
  *
- * 每一步平摊 `1/of`，走完的步数记满，当前这步按字节数补一段。没有字节数的步
- * （装加载器）在它自己跑完之前就停在原地不动——这是诚实的：那一步内部确实没有
- * 任何可报的进度，假装它在走才是骗人。
+ * 每一步平摊 `1/of`，走完的步数记满，当前这步按**这一步内新增的字节**补一段
+ * ——合计是整个作业的账，直接用它会把上一步下完的字节又算一遍。没有字节数的
+ * 步（装加载器）在它自己跑完之前就停在原地不动——这是诚实的：那一步内部确实
+ * 没有任何可报的进度，假装它在走才是骗人。
  *
  * 后端还没说总步数时返回 undefined，让调用方画不定量的样子。
  */
 export function fraction(job: Job): number | undefined {
   if (job.of <= 0) return undefined
-  const within = job.total > 0 ? Math.min(1, job.done / job.total) : 0
+  const stageSpan = job.total - job.stageTotal
+  const stageGain = Math.max(0, job.done - job.stageDone)
+  const within = stageSpan > 0 ? Math.min(1, stageGain / stageSpan) : 0
   return Math.min(1, (job.index - 1 + within) / job.of)
 }
 
-/** 这一步的机器数：多少字节、多快。没有就没有。 */
+/** 机器数：一共多少字节、多快。没有就没有。 */
 export function measure(job: Job): string {
   if (job.total <= 0) return ''
   const speed = job.speed > 0 ? ` · ${formatBytes(job.speed)}/s` : ''
   return `${formatBytes(job.done)} / ${formatBytes(job.total)}${speed}`
+}
+
+/**
+ * 阶段名旁边那一小行该说什么：这一步有字节在动就报数，没有就说注脚。
+ *
+ * 只做二选一。下载时字节比「检查并下载 N 个文件」有信息量；下载完之后字节
+ * 停住了，还挂着一行不动的数字，等于把「卡住没反馈」又演一遍——那时该说话
+ * 的是「拍摄快照」「检查模组」这些注脚。
+ */
+export function aside(job: Job): string {
+  return job.done > job.stageDone ? measure(job) : job.note || measure(job)
 }
 
 let rehearsals = 0
@@ -124,23 +168,23 @@ class JobStore {
     this.#onJob({ type: 'started', payload: { id, title, subjects } })
     return new Promise((resolve) => {
       let step = 0
+      // 字节是一本账：跨步单调向上，和真后端一个口径。
       let done = 0
-      const total = 900 * 1024 * 1024
+      const perStage = 300 * 1024 * 1024
       const timer = setInterval(() => {
-        if (done === 0) {
+        if (done % perStage === 0) {
           step += 1
           this.#onJob({
             type: 'stage',
             payload: { id, label: stages[step - 1], index: step, of: stages.length },
           })
         }
-        done += total / 6
+        done += perStage / 6
         this.#onJob({
           type: 'bytes',
-          payload: { id, done: Math.min(done, total), total, speed: 12 * 1024 * 1024 },
+          payload: { id, done, total: perStage * step, speed: 12 * 1024 * 1024 },
         })
-        if (done < total) return
-        done = 0
+        if (done < perStage * step) return
         if (step < stages.length) return
         clearInterval(timer)
         this.#onJob({ type: 'done', payload: { id, error: null } })
@@ -163,25 +207,63 @@ class JobStore {
           title: event.payload.title,
           subjects: event.payload.subjects,
           stage: '',
+          note: '',
           index: 0,
           of: 0,
           done: 0,
           total: 0,
           speed: 0,
+          stageDone: 0,
+          stageTotal: 0,
+          tracks: [],
           error: '',
         })
         break
-      case 'stage':
-        // 换一步就把上一步的字节数清掉，否则新的一步会顶着旧的数字开始。
+      case 'stage': {
+        const job = this.live.find((item) => item.id === event.payload.id)
+        // 换一步就记下基线，这一步的进度从零算起；上一步的注脚也说完了。
         this.#patch(event.payload.id, {
-          stage: event.payload.label,
+          stage: textOf(event.payload.label),
           index: event.payload.index,
           of: event.payload.of,
-          done: 0,
-          total: 0,
-          speed: 0,
+          note: '',
+          stageDone: job?.done ?? 0,
+          stageTotal: job?.total ?? 0,
         })
         break
+      }
+      case 'track': {
+        const job = this.live.find((item) => item.id === event.payload.id)
+        if (!job) break
+        this.#patch(event.payload.id, {
+          tracks: [
+            ...job.tracks,
+            { track: event.payload.track, label: textOf(event.payload.label), note: '' },
+          ],
+        })
+        break
+      }
+      case 'note': {
+        const job = this.live.find((item) => item.id === event.payload.id)
+        if (!job) break
+        const message = textOf(event.payload.message)
+        this.#patch(event.payload.id, {
+          note: message,
+          tracks: job.tracks.map((track) =>
+            track.track === event.payload.track ? { ...track, note: message } : track,
+          ),
+        })
+        break
+      }
+      case 'track_done': {
+        const job = this.live.find((item) => item.id === event.payload.id)
+        if (!job) break
+        // 完成的支线消失，和「成功的作业直接消失」同一条纪律。
+        this.#patch(event.payload.id, {
+          tracks: job.tracks.filter((track) => track.track !== event.payload.track),
+        })
+        break
+      }
       case 'bytes':
         this.#patch(event.payload.id, {
           done: event.payload.done,
@@ -216,13 +298,23 @@ void jobs.connect()
 /** 「第 3 步 / 共 4 步」。总步数还不知道时就不说——分母不该是编的。 */
 const steps = (job: Job) => (job.of > 0 ? `第 ${job.index} 步 / 共 ${job.of} 步` : '')
 
-const row = (job: Job) => ({
-  id: job.id,
-  label: job.title,
-  detail: [steps(job), job.stage].filter(Boolean).join(' · '),
-  meta: measure(job),
-  fraction: fraction(job),
-})
+const rows = (job: Job) => [
+  {
+    id: job.id,
+    label: job.title,
+    detail: [steps(job), job.stage, job.tracks.length > 0 ? '' : job.note]
+      .filter(Boolean)
+      .join(' · '),
+    meta: measure(job),
+    fraction: fraction(job),
+  },
+  // 并行的支线各占一行：谁在跑、各自到哪一步，一眼看得清。
+  ...job.tracks.map((track) => ({
+    id: `${job.id}·${track.track}`,
+    label: track.label,
+    detail: track.note,
+  })),
+]
 
 /**
  * 岛上关于作业的两句话。
@@ -264,7 +356,7 @@ contributes((): Presence[] => {
       tone: 'work',
       label: single ? single.stage || single.title : `${jobs.live.length} 项`,
       fraction: overall,
-      rows: jobs.live.map(row),
+      rows: jobs.live.flatMap(rows),
       actions: [],
     })
   }

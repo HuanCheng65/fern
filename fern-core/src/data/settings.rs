@@ -217,6 +217,8 @@ pub fn save(paths: &DataPaths, settings: &Settings) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(settings).context("serialize settings")?;
     fs::write(paths.settings_path(), bytes).context("write settings")?;
     *CACHE.write().expect("settings cache poisoned") = Some(settings.clone());
+    // 手动登记的 Java 路径存在设置里，改了设置就可能改了发现结果。
+    crate::java::invalidate_discovery();
     Ok(())
 }
 

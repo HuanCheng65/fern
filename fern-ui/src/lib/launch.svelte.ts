@@ -384,7 +384,7 @@ contributes((): Presence[] => {
           {
             id: `game:${instanceId}`,
             label: name,
-            detail: starting ? '正在启动' : pressure ? `内存 ${pressure}` : '运行中',
+            detail: starting ? '等待游戏窗口' : pressure ? `内存 ${pressure}` : '运行中',
           },
         ],
         actions: [

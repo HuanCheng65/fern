@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{Account, DataPaths, LaunchStage, LauncherEvent, java};
+use crate::{Account, DataPaths, JobText, LaunchStage, LauncherEvent, java};
 
 use gamelog::LogParser;
 
@@ -178,8 +178,9 @@ pub async fn launch_instance(
     };
     // 补全之后还剩这一步：刷新登录、组装命令、把进程拉起来。它自己没有几个
     // 字节可下（外置登录第一次要取一份 injector），但它是这次点击的最后一段，
-    // 该算进「共几步」里。
-    job.step("准备启动");
+    // 该算进「共几步」里。这一步内部的几件事（快照、解压、扫模组）都是注脚，
+    // 不是步——上一版把快照当成一步，步数就成了「第 6 步 / 共 5 步」。
+    job.step(JobText::id("job.stage.prepare-launch"));
     stage(LaunchStage::ResolvingVersion);
     paths.ensure_exists()?;
     let profile = crate::read_instance(paths, instance_id)?;
@@ -211,7 +212,7 @@ pub async fn launch_instance(
     // 别人正开着这个游戏目录的时候，拍到的是他正在写的文件。
     if crate::backup::due_before_launch(launcher_paths, instance_id) {
         // 第一次可能要读完整个存档，界面上不该是一段没有说明的停顿。
-        job.step("拍摄快照");
+        job.note(JobText::id("job.note.snapshot"));
         crate::backup::quietly(
             launcher_paths,
             instance_id,
@@ -245,6 +246,8 @@ pub async fn launch_instance(
     });
     let natives_directory = paths.game_directory(instance_id).join("natives");
     tokio::fs::create_dir_all(&natives_directory).await?;
+    // 逐个解 zip，几十个 jar 要一两秒；说一声，别让上一句注脚挂在这段上。
+    job.note(JobText::id("job.note.natives"));
     let classpath =
         collect_classpath_and_extract_natives(paths, &metadata, &context, &natives_directory)
             .await?;
@@ -260,6 +263,8 @@ pub async fn launch_instance(
     let record = crate::account_for_instance(paths, &profile)
         .ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
     let mut account = Account::load(&record)?;
+    // 一次网络往返，慢网络上能到几秒。
+    job.note(JobText::id("job.note.account"));
     account.ensure_fresh(paths, &job.downloads()).await?;
     let credentials = account.launch_credentials()?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
@@ -375,6 +380,8 @@ pub async fn launch_instance(
     // 模组那条 `depends: { "java": ">=25" }` 也算数。它不改下限（游戏本身跑得
     // 动），但手上同时有 21 和 25 时，该挑的是 25——否则加载器会因为这一条拒绝
     // 加载，而预检查早就说过同一句话。两边算的必须是同一件事。
+    // 大整合包这里要开几百个 zip，是下载结束后「卡住没反馈」的主要一段。
+    job.note(JobText::id("job.note.mods"));
     let mods_floor = preflight::java_floor(&crate::instance::jar::read_all(
         &crate::instance::jar::directory(paths, instance_id),
     ));
@@ -459,6 +466,8 @@ pub async fn launch_instance(
         &plan.working_directory,
     )?;
     stage(LaunchStage::StartingProcess);
+    // 命令行拼好了，注脚说完了。
+    job.note("");
     let started_at = std::time::SystemTime::now();
     let mut command = Command::new(&java_binary);
     command

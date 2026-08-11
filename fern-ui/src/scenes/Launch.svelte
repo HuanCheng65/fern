@@ -27,7 +27,7 @@
   import Stage from '../layouts/Stage.svelte'
   import { accounts, launchIdentity, originOf, switchAction } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
-  import { fraction, jobs, measure } from '../lib/jobs.svelte'
+  import { aside, fraction, jobs } from '../lib/jobs.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
@@ -120,7 +120,7 @@
       jobLabel={job ? job.stage || job.title : undefined}
       {done}
       {working}
-      measure={job ? measure(job) : undefined}
+      measure={job ? aside(job) : undefined}
       warn={blocking.length === 1
         ? blocking[0].title
         : blocking.length > 1

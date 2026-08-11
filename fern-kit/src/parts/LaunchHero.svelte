@@ -126,7 +126,7 @@
       {#if phase === 'running'}
         游戏运行中
       {:else if phase === 'starting'}
-        正在启动
+        等待游戏窗口
       {:else if jobLabel}
         {jobLabel}
       {:else if working}

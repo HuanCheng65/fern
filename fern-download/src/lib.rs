@@ -26,11 +26,38 @@ use tokio::sync::Semaphore;
     rename_all_fields = "camelCase"
 )]
 pub enum DownloadEvent {
-    Status { message: String },
-    TaskStarted { total_files: u64, total_bytes: u64 },
-    FileDone { path: String, bytes: u64 },
-    Progress { done_bytes: u64, speed_bps: u64 },
-    TaskFinished { failed: Vec<String> },
+    /// 一句自由文本的细节。措辞该归界面管，新代码用 `StatusId`；这条留给
+    /// 还没搬迁的调用点。
+    Status {
+        message: String,
+    },
+    /// 一条文案 id 加参数。下载器只是传输，句子在界面的文案表里。
+    StatusId {
+        id: String,
+        params: Vec<(String, String)>,
+    },
+    /// 整批重来。上一版是一句拼好的中文，句子搬去了文案表。
+    Retrying {
+        files: u64,
+    },
+    TaskStarted {
+        total_files: u64,
+        total_bytes: u64,
+    },
+    FileDone {
+        path: String,
+        bytes: u64,
+    },
+    /// `total_bytes` 会在批次进行中变大：没有已知大小的文件（第三方 Maven）
+    /// 边下边把实际字节同时计入分子和分母，所以「已下载」永远不会超过它。
+    Progress {
+        done_bytes: u64,
+        total_bytes: u64,
+        speed_bps: u64,
+    },
+    TaskFinished {
+        failed: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +211,83 @@ const RESUME_THRESHOLD: u64 = 4 * 1024 * 1024;
 /// 进度事件的最小间隔。不限流的话每个 chunk 一条，几百个并发文件能把 IPC
 /// 打满，而界面上一秒钟刷十次和刷一百次看起来完全一样。
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(80);
+
+/// 一个批次的进度账本。
+///
+/// `total` 不是常量：开工时先记上所有已知大小之和，没有已知大小的文件
+/// （第三方 Maven 的库）在下载中把实际字节**同时**计入 `done` 和 `total`。
+/// 这条纪律保证「已下载 ≤ 总量」在任何时刻成立——上一版把未知大小的文件排除
+/// 在分母外、字节却照计进分子，批次一结束分子必然超过分母。
+struct BatchProgress {
+    done: AtomicU64,
+    total: AtomicU64,
+    started: Instant,
+    last_emit_ms: AtomicU64,
+    /// 上次发事件时的 `done`，用来算窗口速度。
+    last_done: AtomicU64,
+    /// 平滑后的速度。全程平均值不行：批次开头一批本地命中会把速度顶到
+    /// 几 GB/s，之后又一路虚高。
+    speed: AtomicU64,
+}
+
+impl BatchProgress {
+    fn new(known_total: u64) -> Self {
+        Self {
+            done: AtomicU64::new(0),
+            total: AtomicU64::new(known_total),
+            started: Instant::now(),
+            last_emit_ms: AtomicU64::new(0),
+            last_done: AtomicU64::new(0),
+            speed: AtomicU64::new(0),
+        }
+    }
+
+    /// 限流后的进度事件。`force` 用在文件收尾这种「这一下必须看得见」的时刻。
+    fn emit(&self, events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>, force: bool) {
+        let now = self.started.elapsed().as_millis() as u64;
+        let previous = self.last_emit_ms.load(Ordering::Relaxed);
+        if !force {
+            if now.saturating_sub(previous) < PROGRESS_INTERVAL.as_millis() as u64 {
+                return;
+            }
+            // 输的那些线程这一轮就不发了，不必重试——下一个 chunk 马上还会来。
+            if self
+                .last_emit_ms
+                .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
+        } else {
+            self.last_emit_ms.store(now, Ordering::Relaxed);
+        }
+
+        let done = self.done.load(Ordering::Relaxed);
+        let elapsed = now.saturating_sub(previous);
+        // 回退（重试）会让 done 变小，那不是速度，跳过这一窗。窗口太窄时
+        // 算出来的数抖得没法看，也跳过。
+        let last = self.last_done.swap(done, Ordering::Relaxed);
+        if done >= last && elapsed >= PROGRESS_INTERVAL.as_millis() as u64 {
+            let instant = (done - last).saturating_mul(1000) / elapsed.max(1);
+            let smoothed = |previous: u64| {
+                if previous == 0 {
+                    instant
+                } else {
+                    (previous.saturating_mul(7) + instant.saturating_mul(3)) / 10
+                }
+            };
+            let previous_speed = self.speed.load(Ordering::Relaxed);
+            self.speed
+                .store(smoothed(previous_speed), Ordering::Relaxed);
+        }
+
+        let _ = events.send(DownloadEvent::Progress {
+            done_bytes: done,
+            total_bytes: self.total.load(Ordering::Relaxed),
+            speed_bps: self.speed.load(Ordering::Relaxed),
+        });
+    }
+}
 
 /// 按域名记的近期成败，用来决定下次先试谁（文档 §2.4）。
 ///
@@ -426,14 +530,14 @@ impl DownloadClient {
         tasks: Vec<DownloadTask>,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<()> {
-        let total_bytes = tasks.iter().filter_map(|task| task.size).sum();
+        // 分母先记已知的部分。没有已知大小的任务在下载中把实际字节同时计入
+        // 分子和分母（见 BatchProgress），所以这个数只会往上长。
+        let known_total = tasks.iter().filter_map(|task| task.size).sum();
         let _ = events.send(DownloadEvent::TaskStarted {
             total_files: tasks.len() as u64,
-            total_bytes,
+            total_bytes: known_total,
         });
-        let started = Instant::now();
-        let downloaded_bytes = Arc::new(AtomicU64::new(0));
-        let last_emit = Arc::new(AtomicU64::new(0));
+        let progress = Arc::new(BatchProgress::new(known_total));
 
         let mut pending = tasks;
         let mut failures = Vec::new();
@@ -441,15 +545,13 @@ impl DownloadClient {
             if round > 0 {
                 // 说出来。上一版这一段是完全静默的，用户看到的是进度条卡了
                 // 几秒然后蹦出一句「12 个文件下载失败」。
-                let _ = events.send(DownloadEvent::Status {
-                    message: format!("重试 {} 个文件", pending.len()),
+                let _ = events.send(DownloadEvent::Retrying {
+                    files: pending.len() as u64,
                 });
                 // 成片的失败多半来自一次短暂的断网，等一下比立刻重试有用。
                 tokio::time::sleep(Duration::from_millis(800u64 << round.min(3))).await;
             }
-            failures = self
-                .run_round(pending, &downloaded_bytes, started, &last_emit, events)
-                .await;
+            failures = self.run_round(pending, &progress, events).await;
             // 上游明确说没有的东西，重试多少次都还是没有。
             if failures.is_empty() || failures.iter().all(|failure| !failure.retryable) {
                 break;
@@ -477,21 +579,16 @@ impl DownloadClient {
     async fn run_round(
         &self,
         tasks: Vec<DownloadTask>,
-        downloaded_bytes: &Arc<AtomicU64>,
-        started: Instant,
-        last_emit: &Arc<AtomicU64>,
+        progress: &Arc<BatchProgress>,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> Vec<Failure> {
         let mut jobs = tokio::task::JoinSet::new();
         for task in tasks {
             let client = self.clone();
             let events = events.clone();
-            let downloaded_bytes = downloaded_bytes.clone();
-            let last_emit = last_emit.clone();
+            let progress = progress.clone();
             jobs.spawn(async move {
-                let result = client
-                    .download_one(&task, &downloaded_bytes, started, &last_emit, &events)
-                    .await;
+                let result = client.download_one(&task, &progress, &events).await;
                 (task, result)
             });
         }
@@ -530,9 +627,7 @@ impl DownloadClient {
     async fn download_one(
         &self,
         task: &DownloadTask,
-        downloaded_bytes: &AtomicU64,
-        started: Instant,
-        last_emit: &AtomicU64,
+        progress: &BatchProgress,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> std::result::Result<(), Refusal> {
         let _permit = self
@@ -545,8 +640,12 @@ impl DownloadClient {
         // 一遍，不需要单独的一套代码。
         match task.is_satisfied().await {
             Ok(true) => {
-                downloaded_bytes.fetch_add(task.size.unwrap_or(0), Ordering::Relaxed);
-                emit_progress(downloaded_bytes, started, last_emit, events, true);
+                // 大小未知的文件对分母的贡献是 0（它没被计入过），对分子也
+                // 只能是 0——两边都不动，账才是平的。
+                progress
+                    .done
+                    .fetch_add(task.size.unwrap_or(0), Ordering::Relaxed);
+                progress.emit(events, true);
                 return Ok(());
             }
             Ok(false) => {}
@@ -573,15 +672,7 @@ impl DownloadClient {
                     tokio::time::sleep(backoff(attempt)).await;
                 }
                 match self
-                    .attempt_download(
-                        task,
-                        &url,
-                        &temporary,
-                        downloaded_bytes,
-                        started,
-                        last_emit,
-                        events,
-                    )
+                    .attempt_download(task, &url, &temporary, progress, events)
                     .await
                 {
                     Ok(true) => {
@@ -612,17 +703,46 @@ impl DownloadClient {
     }
 
     /// 试一次。`Ok(false)` 表示这个源上没有（4xx），换源；`Err` 表示值得再试。
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// 账目纪律：这一次尝试往进度里加过的每一个字节，只要文件最终没落成，
+    /// 就必须原样退回去。上一版只在两条失败路径上退（流断、校验不过），写盘
+    /// 失败、rename 失败那些 `?` 直接带着账跑了——重试一次，同一批字节就被
+    /// 计了两遍，进度条最后停在一个大于总量的数上。所以这里把整个过程包在
+    /// 一个内层里，**任何**失败都走同一个退账出口。
     async fn attempt_download(
         &self,
         task: &DownloadTask,
         url: &Url,
         temporary: &Path,
-        downloaded_bytes: &AtomicU64,
-        started: Instant,
-        last_emit: &AtomicU64,
+        progress: &BatchProgress,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> Result<bool> {
+        // 这一次尝试往账本里计了多少。大小未知的文件同时计进分母，退账时
+        // 也要从分母退——见 BatchProgress。
+        let mut counted = 0u64;
+        let unsized_task = task.size.is_none();
+        let outcome = self
+            .attempt_inner(task, url, temporary, progress, events, &mut counted)
+            .await;
+        if !matches!(outcome, Ok(true)) {
+            progress.done.fetch_sub(counted, Ordering::Relaxed);
+            if unsized_task {
+                progress.total.fetch_sub(counted, Ordering::Relaxed);
+            }
+        }
+        outcome
+    }
+
+    async fn attempt_inner(
+        &self,
+        task: &DownloadTask,
+        url: &Url,
+        temporary: &Path,
+        progress: &BatchProgress,
+        events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+        counted: &mut u64,
+    ) -> Result<bool> {
+        let unsized_task = task.size.is_none();
         // 断点续传：大文件断在半路时，已经落盘的那几十兆没有理由重下。
         // sha1 是整个文件的，所以续传时要先把已有的字节喂进 hasher。
         // 不知道总大小就没法判断落盘的那截是「断了一半」还是「已经下完」，
@@ -660,32 +780,34 @@ impl DownloadClient {
             tokio::fs::File::create(temporary).await?
         };
 
-        // 这一次尝试往全局进度里加了多少——失败要原样退回去，否则进度条会
-        // 越走越多，最后停在一个大于总量的数上。
-        let mut counted = if resuming { resume_from } else { 0 };
-        downloaded_bytes.fetch_add(counted, Ordering::Relaxed);
+        if resuming {
+            *counted = resume_from;
+            progress.done.fetch_add(resume_from, Ordering::Relaxed);
+        }
         let mut received = if resuming { resume_from } else { 0 };
 
-        let outcome = loop {
+        loop {
             match response.chunk().await {
                 Ok(Some(chunk)) => {
                     file.write_all(&chunk).await?;
                     hasher.update(&chunk);
                     received = received.saturating_add(chunk.len() as u64);
-                    counted = counted.saturating_add(chunk.len() as u64);
-                    downloaded_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-                    emit_progress(downloaded_bytes, started, last_emit, events, false);
+                    *counted = counted.saturating_add(chunk.len() as u64);
+                    progress
+                        .done
+                        .fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                    if unsized_task {
+                        progress
+                            .total
+                            .fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                    }
+                    progress.emit(events, false);
                 }
-                Ok(None) => break Ok(()),
-                Err(error) => break Err(error),
+                Ok(None) => break,
+                Err(error) => return Err(error.into()),
             }
-        };
-        file.flush().await?;
-
-        if let Err(error) = outcome {
-            downloaded_bytes.fetch_sub(counted, Ordering::Relaxed);
-            return Err(error.into());
         }
+        file.flush().await?;
 
         let actual = hasher
             .finalize()
@@ -702,49 +824,14 @@ impl DownloadClient {
                 tokio::fs::remove_file(&task.path).await?;
             }
             tokio::fs::rename(temporary, &task.path).await?;
-            emit_progress(downloaded_bytes, started, last_emit, events, true);
+            progress.emit(events, true);
             return Ok(true);
         }
 
-        downloaded_bytes.fetch_sub(counted, Ordering::Relaxed);
         // 校验不过说明落盘的那份是脏的，续传只会一直错下去。
         let _ = tokio::fs::remove_file(temporary).await;
         Err(anyhow!("checksum or size mismatch for {}", task.url))
     }
-}
-
-/// 限流后的进度事件。`force` 用在文件收尾这种「这一下必须看得见」的时刻。
-fn emit_progress(
-    downloaded_bytes: &AtomicU64,
-    started: Instant,
-    last_emit: &AtomicU64,
-    events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
-    force: bool,
-) {
-    let elapsed = started.elapsed();
-    let now = elapsed.as_millis() as u64;
-    if !force {
-        let previous = last_emit.load(Ordering::Relaxed);
-        if now.saturating_sub(previous) < PROGRESS_INTERVAL.as_millis() as u64 {
-            return;
-        }
-        // 输的那些线程这一轮就不发了，不必重试——下一个 chunk 马上还会来。
-        if last_emit
-            .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
-            .is_err()
-        {
-            return;
-        }
-    } else {
-        last_emit.store(now, Ordering::Relaxed);
-    }
-
-    let done_bytes = downloaded_bytes.load(Ordering::Relaxed);
-    let speed_bps = (done_bytes as f64 / elapsed.as_secs_f64().max(0.001)) as u64;
-    let _ = events.send(DownloadEvent::Progress {
-        done_bytes,
-        speed_bps,
-    });
 }
 
 /// 退避：200ms、400ms、800ms。抖动通常一两百毫秒就过去了，等太久不如换源。
@@ -856,15 +943,15 @@ mod tests {
     #[test]
     fn progress_events_are_throttled_but_never_swallow_a_completion() {
         let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let done = AtomicU64::new(1024);
-        let last_emit = AtomicU64::new(0);
+        let mut progress = BatchProgress::new(4096);
         // 让「已经跑了一会儿」成立，否则首次调用的 now 和初始值都是 0，
         // 分不出「还没发过」和「刚发过」。
-        let started = Instant::now() - Duration::from_millis(500);
+        progress.started = Instant::now() - Duration::from_millis(500);
+        progress.done.store(1024, Ordering::Relaxed);
 
-        emit_progress(&done, started, &last_emit, &events, false);
-        emit_progress(&done, started, &last_emit, &events, false);
-        emit_progress(&done, started, &last_emit, &events, true);
+        progress.emit(&events, false);
+        progress.emit(&events, false);
+        progress.emit(&events, true);
         drop(events);
 
         let mut count = 0;
@@ -873,6 +960,55 @@ mod tests {
         }
         // 两条限流掉一条，加上强制的那一条。
         assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn bytes_of_unsized_files_grow_the_total_instead_of_overflowing_it() {
+        // 第三方 Maven 的库没有已知大小。上一版把它们排除在分母外、下载的
+        // 字节却计进分子，于是「已下载」跑到「总量」前面去了。
+        const BODY: &[u8] = b"maven artifact bytes";
+        let url = flaky_server(0, BODY, "200 OK").await;
+        let root = scratch("unsized");
+        let present = root.join("present.jar");
+        std::fs::write(&present, b"fern").expect("write present");
+        // 一个已经在磁盘上的已知大小文件，加一个要真下载的未知大小文件。
+        let known = DownloadTask::new(
+            &present,
+            url.as_str(),
+            "654edb122a04602f918500d59b1d6fc37b9d0c01",
+            4,
+        )
+        .expect("build known task");
+        let unsized_task =
+            DownloadTask::unverified(root.join("library.jar"), url.as_str()).expect("build task");
+
+        let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let client = DownloadClient::new(vec![Arc::new(OfficialSource)], 4);
+        client
+            .download_all(vec![known, unsized_task], &events)
+            .await
+            .expect("download");
+        drop(events);
+
+        let mut last = None;
+        while let Ok(event) = received.try_recv() {
+            if let DownloadEvent::Progress {
+                done_bytes,
+                total_bytes,
+                ..
+            } = event
+            {
+                assert!(
+                    done_bytes <= total_bytes,
+                    "已下载（{done_bytes}）超过了总量（{total_bytes}）"
+                );
+                last = Some((done_bytes, total_bytes));
+            }
+        }
+        let (done, total) = last.expect("progress was reported");
+        assert_eq!(done, total, "批次结束时两个数必须相等");
+        assert_eq!(total, 4 + BODY.len() as u64);
+        std::fs::remove_dir_all(root).ok();
     }
 
     /// 一个前 `refusals` 次连上来就直接断开、之后正常应答的服务器。

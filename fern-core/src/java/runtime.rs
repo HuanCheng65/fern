@@ -112,8 +112,9 @@ pub async fn ensure_java(
     }
     let install_root = paths.runtimes.join(&component);
 
-    let _ = events.send(DownloadEvent::Status {
-        message: format!("准备 Java 运行时（{component}）"),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.java-prepare".to_owned(),
+        params: vec![("component".to_owned(), component.clone())],
     });
 
     let downloader = DownloadClient::new(source_order(), 64);
@@ -184,8 +185,9 @@ pub async fn ensure_java(
         }
     }
 
-    let _ = events.send(DownloadEvent::Status {
-        message: format!("下载 Java {}", entry.version.name),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.java-download".to_owned(),
+        params: vec![("version".to_owned(), entry.version.name.clone())],
     });
     downloader.download_all(tasks, events).await?;
 
@@ -202,6 +204,9 @@ pub async fn ensure_java(
 
 /// 装完之后统一确认一遍：读得出来，而且真的够新。
 fn finish(install_root: &Path, requirement: &JavaRequirement, what: &str) -> Result<JavaRuntime> {
+    // 机器上多了一份 Java，发现缓存里那份名单已经过时。不作废的话，接下来
+    // 的启动会「看不见」刚装好的运行时。
+    java::invalidate_discovery();
     let mut runtime = java::probe(install_root)
         .with_context(|| format!("下载完成后仍无法识别 {} 中的 Java", install_root.display()))?;
     // 是我们下的，就该由我们管：设置页要能列出来、能删掉，选择时也优先。
@@ -286,7 +291,9 @@ pub fn remove(paths: &DataPaths, home: &Path) -> Result<()> {
     if home == runtimes || !home.starts_with(&runtimes) {
         return Err(anyhow!("{} 不是一份由 Fern 下载的运行时", home.display()));
     }
-    std::fs::remove_dir_all(&home).with_context(|| format!("删除 {}", home.display()))
+    std::fs::remove_dir_all(&home).with_context(|| format!("删除 {}", home.display()))?;
+    java::invalidate_discovery();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -442,8 +449,9 @@ mod adoptium {
              ?architecture={arch}&image_type=jre&os={os}&vendor=eclipse"
         );
 
-        let _ = events.send(DownloadEvent::Status {
-            message: format!("向 Adoptium 查询 Java {major}"),
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.java-adoptium-query".to_owned(),
+            params: vec![("major".to_owned(), major.to_string())],
         });
         // 不走 DownloadClient 的镜像重写：Adoptium 不在任何镜像上，rewrite
         // 对它是恒等的，但重试和源健康度仍然用得上。
@@ -466,12 +474,15 @@ mod adoptium {
             return Ok(install_root);
         }
 
-        let _ = events.send(DownloadEvent::Status {
-            message: format!(
-                "下载 Temurin {} （{} MB）",
-                asset.release_name,
-                asset.binary.package.size / (1024 * 1024)
-            ),
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.java-adoptium-download".to_owned(),
+            params: vec![
+                ("name".to_owned(), asset.release_name.clone()),
+                (
+                    "size".to_owned(),
+                    (asset.binary.package.size / (1024 * 1024)).to_string(),
+                ),
+            ],
         });
         let archive = downloader
             .fetch(&asset.binary.package.link)
@@ -488,8 +499,9 @@ mod adoptium {
             }
         }
 
-        let _ = events.send(DownloadEvent::Status {
-            message: "解压 Java 运行时".to_owned(),
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.java-extract".to_owned(),
+            params: Vec::new(),
         });
         let name = asset.binary.package.name.clone();
         let root = install_root.clone();

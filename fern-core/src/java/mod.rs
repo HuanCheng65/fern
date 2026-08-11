@@ -205,10 +205,55 @@ pub fn select(runtimes: &[JavaRuntime], requirement: &JavaRequirement) -> Option
         .cloned()
 }
 
+/// 发现结果的短缓存。
+///
+/// 一次点击启动会走到 `discover` 两遍（补全里的 `ensure_java` 一遍、启动里挑
+/// 运行时一遍），而每一遍都要探所有候选目录、给自管运行时遍历上万个文件算
+/// 体积——这正是下载结束后「卡住没反馈」的一段。机器上装了什么 Java 在几十秒
+/// 内不会变；会变的那几个时刻（装了、删了、登记了新路径）都在我们自己手里，
+/// 由 [`invalidate_discovery`] 主动作废。
+static DISCOVERY_CACHE: std::sync::Mutex<Option<DiscoveryCache>> = std::sync::Mutex::new(None);
+
+struct DiscoveryCache {
+    /// 扫描范围随有没有 `paths` 而不同，混在一起会把系统扫描的结果错发给
+    /// 要求带自管运行时的调用方。
+    scoped: bool,
+    taken_at: std::time::Instant,
+    runtimes: Vec<JavaRuntime>,
+}
+
+const DISCOVERY_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 机器上的 Java 变了（装了、删了、登记或注销了路径），缓存作废。
+pub(crate) fn invalidate_discovery() {
+    if let Ok(mut cache) = DISCOVERY_CACHE.lock() {
+        *cache = None;
+    }
+}
+
 /// 这台机器上所有能用的 Java，按大版本排序。
 ///
 /// `paths` 只用来把启动器自己下载的运行时也纳进来；传 `None` 就只扫系统。
 pub fn discover(paths: Option<&DataPaths>) -> Vec<JavaRuntime> {
+    if let Ok(cache) = DISCOVERY_CACHE.lock()
+        && let Some(cached) = cache.as_ref()
+        && cached.scoped == paths.is_some()
+        && cached.taken_at.elapsed() < DISCOVERY_TTL
+    {
+        return cached.runtimes.clone();
+    }
+    let runtimes = discover_uncached(paths);
+    if let Ok(mut cache) = DISCOVERY_CACHE.lock() {
+        *cache = Some(DiscoveryCache {
+            scoped: paths.is_some(),
+            taken_at: std::time::Instant::now(),
+            runtimes: runtimes.clone(),
+        });
+    }
+    runtimes
+}
+
+fn discover_uncached(paths: Option<&DataPaths>) -> Vec<JavaRuntime> {
     let mut runtimes = Vec::new();
     let mut seen = HashSet::new();
 

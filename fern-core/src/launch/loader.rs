@@ -229,8 +229,12 @@ pub async fn install(
         return Ok(expected_id);
     }
 
-    let _ = events.send(DownloadEvent::Status {
-        message: format!("安装 {} {loader_version}", display_name(kind)),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.loader-profile".to_owned(),
+        params: vec![
+            ("loader".to_owned(), display_name(kind).to_owned()),
+            ("version".to_owned(), loader_version.to_owned()),
+        ],
     });
 
     let url = format!(

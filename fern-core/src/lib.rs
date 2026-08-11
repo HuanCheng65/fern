@@ -107,7 +107,7 @@ pub use java::{
     discover as discover_java, forget_path as forget_java_path, overview as java_overview,
     requirement as java_requirement, select as select_java,
 };
-pub use job::{Job, JobEvent};
+pub use job::{Job, JobEvent, JobText, Track};
 pub use launch::crash::{
     Action as FixAction, CrashReport, Diagnosis, Level as DiagnosisLevel, Reason as SuspectReason,
     Suspect, attribute_crash, diagnose as diagnose_crash, rules::Context as CrashContext,
@@ -169,6 +169,7 @@ pub fn message_ids() -> Vec<String> {
                 .iter()
                 .map(|kind| format!("integrity.{kind}")),
         )
+        .chain(job::TEXT_IDS.iter().map(|id| (*id).to_owned()))
         .collect();
     ids.sort();
     ids

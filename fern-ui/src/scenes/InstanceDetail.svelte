@@ -113,7 +113,7 @@
           {#if phase === 'running'}
             运行中
           {:else if phase === 'starting'}
-            正在启动
+            等待游戏窗口
           {:else if job}
             {job.stage || job.title}
           {:else if phase === 'preparing'}

@@ -262,8 +262,9 @@ pub async fn ensure_injector(
         return Ok(destination);
     }
 
-    let _ = events.send(DownloadEvent::Status {
-        message: format!("下载 authlib-injector {}", manifest.version),
+    let _ = events.send(DownloadEvent::StatusId {
+        id: "job.note.authlib".to_owned(),
+        params: vec![("version".to_owned(), manifest.version.to_string())],
     });
     // 这个 jar 只有几十 KB，一次读完再校验比走下载器省事——而且它给的是
     // sha256，下载器认的是 sha1。
