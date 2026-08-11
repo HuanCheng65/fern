@@ -360,10 +360,11 @@
     if (!importError) themeCode = theme.export()
   }
 
-  async function openLogs() {
+  /** 交给系统的文件管理器。传的是名字，路径由后端自己算。 */
+  async function openDirectory(which: 'root' | 'game' | 'logs') {
     pathError = ''
     try {
-      await invoke('open_logs_directory')
+      await invoke('open_data_directory', { which })
     } catch (error) {
       pathError = String(error)
     }
@@ -964,10 +965,23 @@
           </SettingRow>
         {:else if section === 'data'}
           <SettingRow id="data/root" found={focused === 'data/root'}>
+            <!--
+              三条路径长得一样，就都能做同一件事——「打开」只挂在日志那一行
+              上，读起来像是另外两条不是真的目录。
+            -->
             <div class="paths">
               <div class="path-line">
                 <span class="path-label t-quiet">数据目录</span>
                 <span class="path t-mono selectable">{paths.root || '—'}</span>
+                <Button
+                  variant="icon"
+                  tone="quiet"
+                  aria-label="打开数据目录"
+                  title="打开数据目录"
+                  onclick={() => void openDirectory('root')}
+                >
+                  <FolderOpen size={14} strokeWidth={1.8} />
+                </Button>
               </div>
               {#if paths.portable}
                 <p class="t-quiet hint">
@@ -977,6 +991,15 @@
               <div class="path-line">
                 <span class="path-label t-quiet">游戏目录</span>
                 <span class="path t-mono selectable">{paths.game || '—'}</span>
+                <Button
+                  variant="icon"
+                  tone="quiet"
+                  aria-label="打开游戏目录"
+                  title="打开游戏目录"
+                  onclick={() => void openDirectory('game')}
+                >
+                  <FolderOpen size={14} strokeWidth={1.8} />
+                </Button>
               </div>
               <div class="path-line">
                 <span class="path-label t-quiet">日志目录</span>
@@ -985,7 +1008,8 @@
                   variant="icon"
                   tone="quiet"
                   aria-label="打开日志目录"
-                  onclick={() => void openLogs()}
+                  title="打开日志目录"
+                  onclick={() => void openDirectory('logs')}
                 >
                   <FolderOpen size={14} strokeWidth={1.8} />
                 </Button>
@@ -1522,6 +1546,12 @@
     flex: none;
     width: 4em;
     font-size: var(--t-micro);
+  }
+
+  /* 路径吃掉中间的所有空间，三个「打开」才落在同一条右边缘上。 */
+  .path-line .path {
+    flex: 1;
+    min-width: 0;
   }
 
   /* 比例条：大头在哪一眼看出来，数字是确认用的。 */

@@ -292,7 +292,8 @@ async fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
             // 先落到临时文件：self_replace 要一个磁盘上的路径，而它在 Windows 上
             // 做的是「把当前 exe 挪开腾出文件名，再把新文件放到原路径」。
             let staged = std::env::temp_dir().join(format!("fern-{version}-update.tmp"));
-            std::fs::write(&staged, &bytes).map_err(|error| format!("写入临时文件失败：{error}"))?;
+            std::fs::write(&staged, &bytes)
+                .map_err(|error| format!("写入临时文件失败：{error}"))?;
             let replaced = self_replace::self_replace(&staged).map_err(|error| error.to_string());
             // 无论成败都清掉临时文件；失败时原来的可执行文件还在原地。
             let _ = std::fs::remove_file(&staged);
@@ -463,8 +464,14 @@ async fn remove_instance_component(
 
 /// 这个版本 × 这个主加载器之下还能叠哪些附加层。多数组合下是空的。
 #[tauri::command]
-fn loader_addons(game_version: String, loader: Option<String>) -> Result<Vec<fern_core::LoaderOption>, String> {
-    Ok(fern_core::loader_addons(&game_version, parse_loader(loader.as_deref())?))
+fn loader_addons(
+    game_version: String,
+    loader: Option<String>,
+) -> Result<Vec<fern_core::LoaderOption>, String> {
+    Ok(fern_core::loader_addons(
+        &game_version,
+        parse_loader(loader.as_deref())?,
+    ))
 }
 
 fn parse_loader(loader: Option<&str>) -> Result<fern_core::LoaderKind, String> {
@@ -506,8 +513,8 @@ async fn open_instance_directory(instance_id: String, sub: Option<String>) -> Re
         let id = fern_core::InstanceId::parse(instance_id).map_err(|error| error.to_string())?;
         let paths = paths()?;
         // 外部实例的游戏目录在别人的目录树下，按 id 推导会打开一个空目录。
-        let profile = fern_core::read_instance(&paths, id.as_str())
-            .map_err(|error| format!("{error:#}"))?;
+        let profile =
+            fern_core::read_instance(&paths, id.as_str()).map_err(|error| format!("{error:#}"))?;
         let mut directory = fern_core::instance_paths(&paths, &profile).game_directory(id.as_str());
         if let Some(sub) = sub.filter(|sub| !sub.is_empty()) {
             // 子目录名来自界面，不能原样拼。
@@ -528,6 +535,26 @@ async fn open_logs_directory() -> Result<(), String> {
         let logs = paths()?.logs;
         std::fs::create_dir_all(&logs).map_err(|error| error.to_string())?;
         hand_to_system(logs.as_os_str())
+    })
+    .await?
+}
+
+/// 打开「数据」那一节里列出的某一条路径。
+///
+/// 收的是一个名字而不是一条路径：那三条路径都是后端自己算的，界面只说要哪
+/// 一条，于是这里没有一个可以被拼接的字符串。
+#[tauri::command]
+async fn open_data_directory(which: String) -> Result<(), String> {
+    off_thread(move || {
+        let paths = paths()?;
+        let directory = match which.as_str() {
+            "root" => paths.root,
+            "game" => paths.shared_game_root(),
+            "logs" => paths.logs,
+            other => return Err(format!("没有这个目录：{other}")),
+        };
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        hand_to_system(directory.as_os_str())
     })
     .await?
 }
@@ -608,8 +635,7 @@ async fn prepare_instance(
 async fn list_places() -> Result<Places, String> {
     off_thread(|| {
         let paths = paths()?;
-        let instances =
-            fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))?;
+        let instances = fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))?;
         let mut saves = Vec::new();
         let mut servers = Vec::new();
         for profile in &instances {
@@ -658,8 +684,8 @@ struct Places {
 async fn preflight(instance_id: String) -> Result<Vec<fern_core::Finding>, String> {
     off_thread(move || {
         let paths = paths()?;
-        let profile = fern_core::read_instance(&paths, &instance_id)
-            .map_err(|error| format!("{error:#}"))?;
+        let profile =
+            fern_core::read_instance(&paths, &instance_id).map_err(|error| format!("{error:#}"))?;
         Ok(fern_core::preflight_instance(&paths, &profile))
     })
     .await?
@@ -1495,8 +1521,7 @@ async fn list_java_runtimes() -> Result<Vec<fern_core::JavaRuntime>, String> {
 async fn java_overview() -> Result<Vec<fern_core::JavaGroup>, String> {
     off_thread(|| {
         let paths = paths()?;
-        let instances =
-            fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))?;
+        let instances = fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))?;
         Ok(fern_core::java_overview(&paths, &instances))
     })
     .await?
@@ -1650,6 +1675,7 @@ pub fn run() {
             save_settings,
             open_instance_directory,
             open_logs_directory,
+            open_data_directory,
             prepare_instance,
             launch_instance,
             running_games,
