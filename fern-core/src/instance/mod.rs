@@ -320,11 +320,16 @@ impl InstanceProfile {
     ///    只认「层表是空的、而旧字段有值」这一种情况。
     /// 2. 游戏本体不在层表里的年代（`schemaVersion` 1）——补上第 0 层。它那份
     ///    描述叫什么，那时候只有一个来源可用：版本号。这对我们自己建的实例是
-    ///    对的（那份 JSON 正是按版本号下下来的），对**已经添加过的外部实例**
-    ///    则不一定，所以那些一个字也不补：有加载器层的，那一层已经写着真正的
-    ///    目录名；没有加载器层的（原版目录、OptiFine 目录），目录名当初根本没
-    ///    人记，谁也猜不出来——只能靠重新添加一次。补一个猜的进去，反而会让
-    ///    「层表里的 id 都是记下来的」这句话不再成立。
+    ///    对的（那份 JSON 正是按版本号下下来的）。
+    ///
+    ///    **已经添加过的外部实例里，有加载器层的一个字也不补**：那一层写着真
+    ///    正的目录名，再补一个按版本号猜的进去，只会让一份不属于这个实例的描
+    ///    述被合进来。
+    ///
+    ///    没有加载器层的那些（原版目录、OptiFine 目录）仍然补——不是因为猜得
+    ///    准，而是因为那个猜法正是它们此前一直在用的：目录名恰好等于版本号时
+    ///    它们能启动，不等时本来就不能。不补的话，前一种会跟着一起坏掉。后一
+    ///    种只能重新添加一次，那时目录名才会被真正记下来。
     pub(crate) fn migrate(raw: &mut serde_json::Value) {
         let Some(object) = raw.as_object_mut() else {
             return;
@@ -351,8 +356,9 @@ impl InstanceProfile {
             .get("schemaVersion")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(1);
-        let external = object.get("external").is_some_and(|value| !value.is_null());
-        if schema < 2 && !external {
+        let attached_with_layers = object.get("external").is_some_and(|value| !value.is_null())
+            && !components(object).is_empty();
+        if schema < 2 && !attached_with_layers {
             let game_version = object
                 .get("gameVersion")
                 .and_then(serde_json::Value::as_str)
@@ -482,6 +488,18 @@ mod tests {
             crate::launch::version::layers(&attached),
             vec!["1.16.5-Fabric 0.14.11"]
         );
+
+        // 但没有任何一层的那些（层表建立之前添加的原版目录）还是要补上：目录
+        // 名等于版本号时它们一直是能启动的，不补就跟着一起坏掉。
+        let mut bare_attach = serde_json::json!({
+            "schemaVersion": 1, "id": "plain", "name": "1.21.1（现有目录）",
+            "gameVersion": "1.21.1",
+            "cover": { "identity": "plain", "growth": 0 },
+            "external": { "root": "/games/.minecraft", "isolation": "shared" }
+        });
+        InstanceProfile::migrate(&mut bare_attach);
+        let bare_attach: InstanceProfile = serde_json::from_value(bare_attach).expect("read");
+        assert_eq!(crate::launch::version::layers(&bare_attach), vec!["1.21.1"]);
     }
 
     /// 主加载器是算出来的，不是另存一份。叠了两层时算的是最外面那一层。

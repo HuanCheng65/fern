@@ -693,6 +693,8 @@ mod tests {
             scoped.game_directory(profile.id.as_str()),
             root.join("versions/1.16.5-Fabric 0.14.11")
         );
+        // 这一条钉的是「Java 需求从哪份描述读」：按版本号去读的话，拿到的是
+        // 毒饵那份写的 99。
         assert_eq!(crate::declared_java_major(&paths, &profile), Some(8));
 
         std::fs::remove_dir_all(&root).ok();
