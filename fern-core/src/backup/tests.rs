@@ -446,3 +446,65 @@ fn the_interface_sees_the_field_names_it_expects() {
     .expect("serialize");
     assert_eq!(exported["linked"], 1);
 }
+
+/// 保留策略要真的被执行。此前 `schedule` 写完测完却没有调用点，快照只增不减。
+#[test]
+fn an_automatic_snapshot_prunes_the_expired_ones_behind_it() {
+    let root = scratch("prune-hook");
+    let paths = instance(&root);
+    put(&paths, "saves/家/level.dat", b"a world");
+
+    // 两张旧快照，倒填到三十多天前的同一个月里：按月每桶留一张，旧的那张
+    // 该被剪掉。
+    let backups = super::root(&paths);
+    let mut backdated = Vec::new();
+    for (offset, body) in [(40u64, b"day one"), (39, b"day two")] {
+        put(&paths, "saves/家/level.dat", body);
+        let snapshot = take(&paths, "moss", Reason::AfterSession, None).expect("take");
+        let path = manifest::path(&backups, "moss", &snapshot.id).expect("path");
+        let mut manifest = manifest::read(&path).expect("read");
+        manifest.taken_at = now() - offset * 86_400;
+        manifest::write(&path, &manifest).expect("backdate");
+        // 文件名就是 id，也要跟着时间走，否则新旧排序对不上。
+        let renamed =
+            manifest::path(&backups, "moss", &manifest.taken_at.to_string()).expect("renamed path");
+        fs::rename(&path, &renamed).expect("rename");
+        backdated.push(manifest.taken_at.to_string());
+    }
+
+    // 事件驱动的那一张：拍完顺手清理。
+    put(&paths, "saves/家/level.dat", b"today");
+    quietly(&paths, "moss", Reason::AfterSession);
+
+    let remaining: Vec<String> = manifest::ids(&backups, "moss");
+    assert!(
+        !remaining.contains(&backdated[0]),
+        "旧的那张该被剪掉：{remaining:?}"
+    );
+    assert!(
+        remaining.contains(&backdated[1]),
+        "每个月桶最新的那张要留下：{remaining:?}"
+    );
+    fs::remove_dir_all(root).expect("clean up");
+}
+
+/// 删掉实例要连它的快照一起清，孤儿快照没有恢复对象，只是占盘。
+#[test]
+fn deleting_an_instance_forgets_its_snapshots() {
+    let root = scratch("forget");
+    let paths = instance(&root);
+    put(&paths, "saves/家/level.dat", b"a world");
+    take(&paths, "moss", Reason::Manual, Some("留念".to_owned())).expect("take");
+    assert_eq!(usage(&paths).expect("usage").instances.len(), 1);
+
+    crate::delete_instance(&paths, "moss").expect("delete instance");
+
+    assert!(list(&paths, "moss").expect("list").is_empty());
+    let after = usage(&paths).expect("usage");
+    assert!(
+        after.instances.is_empty(),
+        "用量页不该再列出已删除的实例：{:?}",
+        after.instances
+    );
+    fs::remove_dir_all(root).expect("clean up");
+}

@@ -286,6 +286,9 @@ pub fn delete_instance(paths: &DataPaths, instance_id: &str) -> Result<()> {
     crate::launch::memory::history::forget(paths, id.as_str());
     // 来源记录也在另一棵树下（`security/`），同理。
     crate::instance::origin::forget(paths, id.as_str());
+    // 快照没有实例就无从恢复，留着只是孤儿占盘，用量页还会列出一个已经
+    // 不存在的实例。
+    crate::backup::forget(paths, id.as_str());
     Ok(())
 }
 

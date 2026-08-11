@@ -693,6 +693,41 @@ pub(crate) fn quietly(paths: &DataPaths, instance_id: &str, reason: Reason) {
             "snapshot {} for {instance_id} skipped: {error:#}",
             reason.tag()
         ));
+        return;
+    }
+    // 新的一张落地了，顺手按保留策略剪掉过期的。放在这里而不是定时器上：
+    // 快照只在这些事件时刻增长，清理跟着同一批时刻走就够了——此前这套策略
+    // 写完测完却没有任何调用点，快照只增不减。手动拍的这里不清（它们本就
+    // 永久保留，动手的时刻也轮不到我们顺手做别的）。
+    if let Err(error) = prune(paths, instance_id) {
+        let _ = paths.append_log(&format!("prune for {instance_id} skipped: {error:#}"));
+    }
+}
+
+/// 一个实例被删掉之后，它的快照也没有存在的理由了。
+///
+/// 恢复需要实例本身（游戏目录、instance.json），实例没了这些清单只是孤儿：
+/// 永久占盘，还让用量页列出一个已不存在的实例。对象仓库是跨实例共享的，
+/// 删掉清单后回收一次，只有无人引用的内容会被清走。
+///
+/// 尽力而为：删实例这个动作本身已经完成，备份清不掉只该进日志，不该把
+/// 「删除失败」报给一个实例其实已经删掉了的用户。
+pub(crate) fn forget(paths: &DataPaths, instance_id: &str) {
+    let backups = root(paths);
+    let Ok(directory) = manifest::directory(&backups, instance_id) else {
+        return;
+    };
+    if !directory.is_dir() {
+        return;
+    }
+    if let Err(error) = std::fs::remove_dir_all(&directory) {
+        let _ = paths.append_log(&format!(
+            "snapshots of {instance_id} not removed: {error:#}"
+        ));
+        return;
+    }
+    if let Err(error) = collect_garbage(paths) {
+        let _ = paths.append_log(&format!("backup gc after delete skipped: {error:#}"));
     }
 }
 
