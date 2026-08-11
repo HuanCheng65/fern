@@ -402,7 +402,7 @@ mod tests {
         let id = profile.id.as_str().to_owned();
         let game = crate::instance::paths_for(&paths, &profile).game_directory(&id);
         jar(&game.join("mods/alpha.jar"));
-        crate::instance::integrity::adopt(&paths, &id);
+        crate::instance::integrity::adopt(&paths, &id, None);
 
         let copy = crate::duplicate_instance(&paths, &id, "副本").expect("duplicate");
         assert_eq!(

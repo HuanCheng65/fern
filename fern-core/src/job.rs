@@ -95,6 +95,7 @@ impl From<String> for JobText {
 /// 少一条是编译错误。新用一个 id 必须同时写进这里——否则界面只能把 id 本身
 /// 显示出来。
 pub(crate) const TEXT_IDS: &[&str] = &[
+    "job.note.adopt-progress",
     "job.note.asset-index",
     "job.note.authlib",
     "job.note.downloading",
@@ -110,6 +111,7 @@ pub(crate) const TEXT_IDS: &[&str] = &[
     "job.note.loader-inspect",
     "job.note.loader-profile",
     "job.note.retry",
+    "job.stage.adopt",
     "job.stage.download-files",
     "job.stage.install-loader",
     "job.stage.prepare-launch",

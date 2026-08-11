@@ -245,14 +245,23 @@
     done = 0
     let last: { id: string; name: string } | undefined
     for (const key of wanted) {
+      // 后端把清点进度报在这件作业上：一个几百个模组的目录要读一遍才算得出
+      // 哈希，慢的是那一段，而它在这里之前是完全看不见的。
+      const title = `添加 ${candidates?.find((item) => item.key === key)?.title ?? key}`
       try {
         last =
           source === 'prism'
-            ? await invoke<{ id: string; name: string }>('import_prism_instance', { path: key })
+            ? await invoke<{ id: string; name: string }>('import_prism_instance', {
+                path: key,
+                title,
+                subjects: [],
+              })
             : await invoke<{ id: string; name: string }>('attach_game_version', {
                 path: directory,
                 versionId: key,
                 sharedLibraries: shared,
+                title,
+                subjects: [],
               })
         done += 1
       } catch (cause) {

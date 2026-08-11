@@ -137,6 +137,7 @@ pub fn attach(
     root: &Path,
     version_id: &str,
     shared_libraries: bool,
+    job: Option<&crate::Job>,
 ) -> Result<InstanceProfile> {
     let root = locate(root)?;
     if !is_safe_id(version_id) {
@@ -200,7 +201,7 @@ pub fn attach(
     //
     // 要读一遍全部 jar 才算得出哈希，几百个模组是几秒钟。它不能放在别处：晚
     // 一步做，「接手时它长这样」这句话就已经不成立了。
-    crate::instance::integrity::adopt(paths, profile.id.as_str());
+    crate::instance::integrity::adopt(paths, profile.id.as_str(), job);
     Ok(profile)
 }
 
@@ -662,7 +663,7 @@ mod tests {
             .expect("create saves");
         let paths = DataPaths::new(root.join("fern-data"));
 
-        let profile = attach(&paths, &root, "1.16.5-Fabric 0.14.11", true).expect("attach");
+        let profile = attach(&paths, &root, "1.16.5-Fabric 0.14.11", true, None).expect("attach");
         let scoped = crate::instance::paths_for(&paths, &profile);
 
         // 标签仍然是标签：这个实例确实算 1.16.5。
@@ -721,7 +722,7 @@ mod tests {
             .expect("create saves");
         let paths = DataPaths::new(root.join("fern-data"));
 
-        let profile = attach(&paths, &root, "1.16.5-OptiFine_HD_U_G8", true).expect("attach");
+        let profile = attach(&paths, &root, "1.16.5-OptiFine_HD_U_G8", true, None).expect("attach");
         assert_eq!(profile.loader, LoaderKind::Vanilla);
         assert_eq!(
             crate::launch::version::layers(&profile),
@@ -820,7 +821,7 @@ mod tests {
         std::fs::create_dir_all(root.join("saves/world")).expect("create saves");
         let paths = DataPaths::new(root.join("fern-data"));
 
-        let profile = attach(&paths, &root, "1.21.1", true).expect("attach");
+        let profile = attach(&paths, &root, "1.21.1", true, None).expect("attach");
         let external = profile.external.as_ref().expect("external");
         assert_eq!(external.isolation, Isolation::Shared);
         // 实例目录里不该长出一个 .minecraft：游戏文件在别人那边。
@@ -836,7 +837,7 @@ mod tests {
         // 添加过的版本再扫一次会被标出来，而且不能添加第二次。
         let found = scan(&paths, &root).expect("rescan").versions;
         assert!(found[0].attached);
-        assert!(attach(&paths, &root, "1.21.1", true).is_err());
+        assert!(attach(&paths, &root, "1.21.1", true, None).is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -900,7 +901,7 @@ mod tests {
         );
         assert_eq!(scanned.versions.len(), 1);
         // 添加时同样解析，两边指向的是同一个目录。
-        let profile = attach(&paths, &root, "1.21.1", true).expect("attach");
+        let profile = attach(&paths, &root, "1.21.1", true, None).expect("attach");
         assert_eq!(profile.external.expect("external").root, scanned.root);
         std::fs::remove_dir_all(&root).ok();
     }
@@ -953,7 +954,7 @@ mod tests {
         let root = temporary("unsafe");
         std::fs::create_dir_all(root.join("versions")).expect("create versions");
         let paths = DataPaths::new(root.join("fern-data"));
-        assert!(attach(&paths, &root, "../escape", true).is_err());
+        assert!(attach(&paths, &root, "../escape", true, None).is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 }

@@ -171,7 +171,11 @@ pub fn read(paths: &DataPaths, directory: &Path) -> Result<PrismInstance> {
 }
 
 /// 导进来。原目录一个字节都不动，只读它、复制 jar mod。
-pub fn import(paths: &DataPaths, directory: &Path) -> Result<InstanceProfile> {
+pub fn import(
+    paths: &DataPaths,
+    directory: &Path,
+    job: Option<&crate::Job>,
+) -> Result<InstanceProfile> {
     let read = read(paths, directory)?;
     let game = game_directory(&read.directory);
     if !game.is_dir() {
@@ -226,7 +230,7 @@ pub fn import(paths: &DataPaths, directory: &Path) -> Result<InstanceProfile> {
 
     crate::write_instance_profile(paths, &profile)?;
     // 接手时它长什么样，记一笔。晚一步做，这句话就已经不成立了。
-    crate::instance::integrity::adopt(paths, profile.id.as_str());
+    crate::instance::integrity::adopt(paths, profile.id.as_str(), job);
     crate::read_instance(paths, &id)
 }
 
@@ -350,7 +354,7 @@ mod tests {
         let paths = DataPaths::new(root.join("fern"));
         let directory = prism(&root);
 
-        let profile = import(&paths, &directory).expect("import");
+        let profile = import(&paths, &directory, None).expect("import");
         assert_eq!(profile.name, "旧整合包");
         assert_eq!(profile.game_version, "1.7.10");
         assert_eq!(profile.loader, LoaderKind::Forge);
@@ -376,7 +380,7 @@ mod tests {
         assert!(!inside.contains(&"libraries".to_owned()));
 
         // 导第二次只会得到两个共用同一份存档的实例。
-        assert!(import(&paths, &directory).is_err());
+        assert!(import(&paths, &directory, None).is_err());
 
         std::fs::remove_dir_all(root).expect("remove root");
     }

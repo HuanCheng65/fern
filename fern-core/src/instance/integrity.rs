@@ -252,6 +252,20 @@ impl Compared {
 
 /// 对一次账。不写任何基线。
 pub fn compare(paths: &DataPaths, instance_id: &str, depth: Depth) -> Compared {
+    compare_reporting(paths, instance_id, depth, &|_, _| {})
+}
+
+/// 同上，但边走边报「第几个 / 共几个」。
+///
+/// 接手一个已有实例要把它的每一个文件读一遍，那是几百兆的 I/O；机械硬盘上、
+/// 或者有杀毒软件逐个扫的机器上就是几十秒。没有这条汇报，那几十秒里界面上
+/// 什么都没有。
+fn compare_reporting(
+    paths: &DataPaths,
+    instance_id: &str,
+    depth: Depth,
+    report: &dyn Fn(usize, usize),
+) -> Compared {
     let Ok(profile) = crate::read_instance(paths, instance_id) else {
         return Compared::default();
     };
@@ -261,7 +275,10 @@ pub fn compare(paths: &DataPaths, instance_id: &str, depth: Depth) -> Compared {
     let mut capabilities = capability::Known::open(paths);
 
     let mut out = Compared::default();
-    for (file, path) in present(&game) {
+    let files = present(&game);
+    let total = files.len();
+    for (done, (file, path)) in files.into_iter().enumerate() {
+        report(done, total);
         let sha1 = match depth {
             Depth::Quick => hashes.of(&file, &path),
             Depth::Full => hashes.reread(&file, &path),
@@ -291,6 +308,7 @@ pub fn compare(paths: &DataPaths, instance_id: &str, depth: Depth) -> Compared {
         }
     }
 
+    report(total, total);
     // 按文件名排序，好让两次对账的结果能直接比对。
     out.changes
         .sort_by(|left, right| left.file.cmp(&right.file));
@@ -497,8 +515,27 @@ pub(crate) fn after_session(paths: &DataPaths, instance_id: &str) {
 /// 的每一次变化都有了参照物。
 ///
 /// 返回记了几条。
-pub fn adopt(paths: &DataPaths, instance_id: &str) -> usize {
-    let compared = compare(paths, instance_id, Depth::Quick);
+///
+/// `job` 是这件事的门面：这一遍要读完实例里的每一个文件，慢得看得出来，所以
+/// 有人在等的时候必须报数。没有作业（测试、内部调用）就安静地做。
+pub fn adopt(paths: &DataPaths, instance_id: &str, job: Option<&crate::Job>) -> usize {
+    let compared = match job {
+        Some(job) => {
+            job.step(crate::JobText::id("job.stage.adopt"));
+            compare_reporting(paths, instance_id, Depth::Quick, &|done, total| {
+                // 注脚不像下载进度那样被限流，一个文件一条就是几百条 IPC。
+                // 注脚是互相覆盖的，跳过的那些本来也没人看得见。
+                if done % 25 == 0 || done == total {
+                    job.note(
+                        crate::JobText::id("job.note.adopt-progress")
+                            .arg("done", done.to_string())
+                            .arg("total", total.to_string()),
+                    );
+                }
+            })
+        }
+        None => compare(paths, instance_id, Depth::Quick),
+    };
     let count = compared.changes.len() + compared.first_seen.len();
     accept(paths, instance_id, &compared);
     count
@@ -641,7 +678,7 @@ mod tests {
         std::fs::create_dir_all(game.join("saves/世界")).expect("mkdir");
         std::fs::write(game.join("saves/世界/level.dat"), b"dat").expect("write");
 
-        assert_eq!(adopt(&paths, &id), 3);
+        assert_eq!(adopt(&paths, &id, None), 3);
         let files: Vec<String> = origin::latest(&paths, &id).into_keys().collect();
         assert_eq!(
             files,
@@ -677,7 +714,7 @@ mod tests {
         let (id, game) = instance(&paths, "被改过");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
 
         // 版本号一个字没动，内容变了——往现有 jar 里追加东西就长这样。
         jar(&path, "0.6.13", "definitely not a mod");
@@ -699,7 +736,7 @@ mod tests {
         let (id, game) = instance(&paths, "正常更新");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
 
         // 用户自己换了一个新版本，文件名没变。
         jar(&path, "0.6.14", "");
@@ -719,7 +756,7 @@ mod tests {
         std::fs::create_dir_all(game.join("resourcepacks")).expect("mkdir");
         let path = game.join("resourcepacks/pack.zip");
         std::fs::write(&path, b"one").expect("write");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         std::fs::write(&path, b"two").expect("write");
 
         let compared = compare(&paths, &id, Depth::Full);
@@ -735,7 +772,7 @@ mod tests {
         for index in 0..12 {
             jar(&game.join(format!("mods/mod{index}.jar")), "1.0", "");
         }
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         for index in 0..12 {
             jar(
                 &game.join(format!("mods/mod{index}.jar")),
@@ -760,7 +797,7 @@ mod tests {
         let (id, game) = instance(&paths, "别吃掉");
         let path = game.join("mods/a.jar");
         jar(&path, "1.0", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         jar(&path, "1.0", "changed");
 
         // 对多少次账，说的都是同一件事——直到调用方明确接受它。
@@ -778,7 +815,7 @@ mod tests {
         let (id, game) = instance(&paths, "没问过");
         let path = game.join("mods/a.jar");
         jar(&path, "1.0", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         jar(&path, "1.0", "changed");
 
         let mut compared = compare(&paths, &id, Depth::Full);
@@ -811,7 +848,7 @@ mod tests {
         let (id, game) = instance(&paths, "安静");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
 
         // 用户自己换了个版本，或者在别的启动器里更新了。这在外部实例上天天发生。
         jar(&path, "0.6.14", "");
@@ -829,7 +866,7 @@ mod tests {
         let (id, game) = instance(&paths, "一个");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         jar(&path, "0.6.13", "appended");
 
         let compared = compare(&paths, &id, Depth::Full);
@@ -846,7 +883,7 @@ mod tests {
         for index in 0..6 {
             jar(&game.join(format!("mods/mod{index}.jar")), "1.0", "");
         }
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         for index in 0..6 {
             jar(&game.join(format!("mods/mod{index}.jar")), "1.0", "payload");
         }
@@ -871,7 +908,7 @@ mod tests {
         for index in 0..20 {
             jar(&game.join(format!("mods/mod{index}.jar")), "1.0", "");
         }
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         // 二十个文件同时变，但版本号都跟着变了——那是升级，不是改写。
         for index in 0..20 {
             jar(&game.join(format!("mods/mod{index}.jar")), "2.0", "newer");
@@ -888,7 +925,7 @@ mod tests {
         let (id, game) = instance(&paths, "没有快照");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         jar(&path, "0.6.13", "appended");
 
         let compared = compare(&paths, &id, Depth::Full);
@@ -906,7 +943,7 @@ mod tests {
         let (id, game) = instance(&paths, "挑快照");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         let wanted = crate::take_snapshot(&paths, &id, crate::SnapshotReason::Manual, None, None)
             .expect("snapshot");
 
@@ -930,7 +967,7 @@ mod tests {
         let (id, game) = instance(&paths, "账本坏了");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         jar(&path, "0.6.13", "appended");
 
         // 把日志的第一行改掉，链从那里开始接不上。
@@ -953,7 +990,7 @@ mod tests {
         let (id, game) = instance(&paths, "删掉的");
         let path = game.join("mods/a.jar");
         jar(&path, "1.0", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         std::fs::remove_file(&path).expect("remove");
 
         // 用户删模组是最普通不过的操作，日历上不该留下一条告警。
@@ -991,7 +1028,7 @@ mod tests {
         let (id, game) = instance(&paths, "多出来的调用");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         // 彻底那一遍建立基线——游戏退出之后跑的就是它。
         compare(&paths, &id, Depth::Full);
 
@@ -1027,7 +1064,7 @@ mod tests {
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
         // adopt 用的是便宜那一档，它不扫。
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
 
         infected(&path, "0.6.13");
 
@@ -1048,7 +1085,7 @@ mod tests {
         let (id, game) = instance(&paths, "正常升级");
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
-        adopt(&paths, &id);
+        adopt(&paths, &id, None);
         compare(&paths, &id, Depth::Full);
 
         infected(&path, "0.6.14");

@@ -1110,20 +1110,33 @@ fn nearby_game_directory() -> Option<std::path::PathBuf> {
 }
 
 /// 把其中一个版本添加为实例。不移动、不复制任何游戏文件。
+///
+/// 是一件作业：接手要把那个目录里的每一个模组、资源包读一遍算哈希，几百兆的
+/// 盘上是几十秒，那段时间界面上必须有东西可看。
 #[tauri::command]
 async fn attach_game_version(
+    app: tauri::AppHandle,
     path: String,
     version_id: String,
     shared_libraries: bool,
+    title: String,
+    subjects: Vec<String>,
 ) -> Result<fern_core::InstanceProfile, String> {
+    let events = launcher_events(&app);
+    // 作业整个活在这条阻塞线程上：`Job` 不能复制，被丢掉时还没收工就会自己
+    // 报一次失败。
     off_thread(move || {
-        fern_core::attach_external_version(
+        let job = fern_core::Job::begin(&events, title, subjects);
+        let result = fern_core::attach_external_version(
             &paths()?,
             std::path::Path::new(&path),
             &version_id,
             shared_libraries,
+            Some(&job),
         )
-        .map_err(|error| format!("{error:#}"))
+        .map_err(|error| format!("{error:#}"));
+        job.finish(&result);
+        result
     })
     .await?
 }
@@ -1151,11 +1164,23 @@ async fn read_prism_instance(path: String) -> Result<fern_core::PrismInstance, S
 }
 
 /// 把它导进来。游戏文件留在原地，只有 jar mod 会复制一份过来。
+///
+/// 和 `attach_game_version` 一样是一件作业，慢在同一个地方。
 #[tauri::command]
-async fn import_prism_instance(path: String) -> Result<fern_core::InstanceProfile, String> {
+async fn import_prism_instance(
+    app: tauri::AppHandle,
+    path: String,
+    title: String,
+    subjects: Vec<String>,
+) -> Result<fern_core::InstanceProfile, String> {
+    let events = launcher_events(&app);
     off_thread(move || {
-        fern_core::import_prism_instance(&paths()?, std::path::Path::new(&path))
-            .map_err(|error| format!("{error:#}"))
+        let job = fern_core::Job::begin(&events, title, subjects);
+        let result =
+            fern_core::import_prism_instance(&paths()?, std::path::Path::new(&path), Some(&job))
+                .map_err(|error| format!("{error:#}"));
+        job.finish(&result);
+        result
     })
     .await?
 }

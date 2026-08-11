@@ -311,6 +311,8 @@ const backend = {
   'job.track.natives': { title: '解压平台组件', detail: '' },
   'job.track.account': { title: '刷新账户凭据', detail: '' },
   'job.track.mods': { title: '检查模组', detail: '' },
+  'job.stage.adopt': { title: '记录现有文件', detail: '' },
+  'job.note.adopt-progress': { title: '已记录 {done}/{total} 个文件', detail: '' },
   'job.note.downloading': { title: '检查并下载 {count} 个文件', detail: '' },
   'job.note.retry': { title: '重试 {count} 个文件', detail: '' },
   'job.note.asset-index': { title: '读取资源索引', detail: '' },
