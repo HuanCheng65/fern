@@ -13,6 +13,7 @@
 pub(crate) mod capability;
 pub(crate) mod catalog;
 pub(crate) mod class;
+pub(crate) mod discover;
 pub(crate) mod external;
 pub(crate) mod hashes;
 pub(crate) mod integrity;

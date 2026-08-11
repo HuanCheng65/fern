@@ -1057,16 +1057,6 @@ fn nearby_game_directory() -> Option<std::path::PathBuf> {
     fern_core::nearby_game_directory()
 }
 
-/// 看一眼一个外部 `.minecraft` 里有哪些版本。什么都不改。
-#[tauri::command]
-async fn scan_game_directory(path: String) -> Result<fern_core::ExternalScan, String> {
-    off_thread(move || {
-        fern_core::scan_external_directory(&paths()?, std::path::Path::new(&path))
-            .map_err(|error| format!("{error:#}"))
-    })
-    .await?
-}
-
 /// 把其中一个版本添加为实例。不移动、不复制任何游戏文件。
 #[tauri::command]
 async fn attach_game_version(
@@ -1082,6 +1072,18 @@ async fn attach_game_version(
             shared_libraries,
         )
         .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 看一眼用户选的那个目录里有什么——官方那一系、Prism 那一系，还是都不是。
+///
+/// 只有这一个入口：用户手上只有一个目录，不该由他来告诉我们它是哪一种。
+#[tauri::command]
+async fn inspect_directory(path: String) -> Result<fern_core::Discovery, String> {
+    off_thread(move || {
+        fern_core::inspect_directory(&paths()?, std::path::Path::new(&path))
+            .map_err(|error| format!("{error:#}"))
     })
     .await?
 }
@@ -1597,8 +1599,8 @@ pub fn run() {
             project_detail,
             open_external,
             nearby_game_directory,
-            scan_game_directory,
             attach_game_version,
+            inspect_directory,
             read_prism_instance,
             import_prism_instance,
             install_modpack,

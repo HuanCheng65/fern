@@ -1,6 +1,11 @@
 <script lang="ts">
   /**
-   * 把一个已有的 `.minecraft` 接进来。
+   * 把一个已有的游戏目录接进来。
+   *
+   * **认两种来源，但只有一个入口。** 用户手上只有一个目录，不该由他来告诉
+   * 我们它是官方那一系（`versions/` 一堆版本）还是 Prism / MultiMC（一个
+   * 目录一个实例）——选完我们自己认，见 `instance::discover`。两者在交互上
+   * 是同一件事：给一张清单，勾选要接进来的哪些，所以它们共用下面这一套。
    *
    * 大多数人用启动器的方式是把它和 `.minecraft` 放在一起，那个目录里已经有
    * 版本、有存档、有几百个 Mod。上一版的 Fern 只认自己私有目录里的实例，
@@ -49,6 +54,39 @@
     skipped: SkippedVersion[]
   }
 
+  /** Prism / MultiMC 的一个实例。 */
+  interface PrismInstance {
+    directory: string
+    name: string
+    gameVersion: string
+    components: { kind: string; version: string }[]
+    unsupported: string[]
+    jarMods: string[]
+    imported: boolean
+  }
+
+  type Discovery =
+    | ({ kind: 'game-directory' } & ExternalScan)
+    | { kind: 'prism-instances'; root: string; instances: PrismInstance[] }
+    | { kind: 'unrecognised'; lookedAt: string }
+
+  /**
+   * 一条可以勾选的候选。
+   *
+   * 两种来源归一成同一个形状：一个版本和一个 Prism 实例，在这一屏上要回答的
+   * 是同一个问题——「要不要把它接进来」。归一之后下面那份清单只写一遍。
+   */
+  interface Candidate {
+    /** 提交时用来指名的东西：版本 id，或者实例目录。 */
+    key: string
+    title: string
+    detail: string
+    /** 已经添加过了，不再是选项。 */
+    taken: boolean
+    /** 需要提醒的一句（Prism 里我们装不了的那些层）。 */
+    note?: string
+  }
+
   interface Props {
     /** 一开始就指向某个目录（首次启动时发现的那一个）。 */
     initial?: string
@@ -67,7 +105,9 @@
   let { initial = '', standalone = true, onstatus }: Props = $props()
 
   let directory = $state('')
-  let versions = $state<ExternalVersion[] | null>(null)
+  /** 这个目录是哪一种来源。`none` 是还没选。 */
+  let source = $state<'none' | 'game' | 'prism' | 'unknown'>('none')
+  let candidates = $state<Candidate[] | null>(null)
   let skipped = $state<SkippedVersion[]>([])
   /** 勾选了哪些版本 id。用数组而不是 Set：几十条的量，可读比省事重要。 */
   let chosen = $state<string[]>([])
@@ -99,9 +139,53 @@
   }
 
   /** 还能添加的那些。已添加的留在列表里，但它们不是选项。 */
-  const available = $derived((versions ?? []).filter((item) => !item.attached))
-  const attachedCount = $derived((versions ?? []).length - available.length)
+  const available = $derived((candidates ?? []).filter((item) => !item.taken))
+  const attachedCount = $derived((candidates ?? []).length - available.length)
   const allChosen = $derived(available.length > 0 && chosen.length === available.length)
+  /** 清单上那些东西的量词。两种来源数的不是同一种东西。 */
+  const noun = $derived(source === 'prism' ? '实例' : '版本')
+
+  const ISOLATION = (isolation: 'shared' | 'perVersion') => ISOLATION_LABEL[isolation]
+
+  /** 官方那一系的一个版本，摊成一条候选。 */
+  const fromVersion = (version: ExternalVersion): Candidate => ({
+    key: version.id,
+    title: version.id,
+    detail: [
+      version.gameVersion,
+      version.loader !== 'vanilla'
+        ? `${LOADER_LABEL[version.loader] ?? version.loader}${version.loaderVersion ? ` ${version.loaderVersion}` : ''}`
+        : '',
+      ISOLATION(version.isolation),
+      version.saves > 0 ? `${version.saves} 个存档` : '',
+      version.mods > 0 ? `${version.mods} 个模组` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    taken: version.attached,
+  })
+
+  /** Prism 的一个实例，摊成一条候选。 */
+  const fromPrism = (instance: PrismInstance): Candidate => ({
+    key: instance.directory,
+    title: instance.name,
+    detail: [
+      instance.gameVersion,
+      ...instance.components.map(
+        (one) => `${LOADER_LABEL[one.kind] ?? one.kind} ${one.version}`,
+      ),
+      instance.jarMods.length > 0 ? `${instance.jarMods.length} 个 jar mod` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    taken: instance.imported,
+    // 装不了的层要如实说：不说的话，导进来的是一个「看着成功」但少了半套东西
+    // 的实例。
+    note:
+      instance.unsupported.length > 0
+        ? `无法安装：${instance.unsupported.join('、')}`
+        : undefined,
+  })
 
   async function choose() {
     if (!inTauri()) return
@@ -115,19 +199,31 @@
   async function scan(path: string) {
     busy = 'scan'
     error = ''
-    versions = null
+    candidates = null
     skipped = []
     // 不清 failures：添加完会重扫一次，清了就等于没报过。
     try {
-      const result = await invoke<ExternalScan>('scan_game_directory', { path })
-      versions = result.versions
-      skipped = result.skipped
-      chosen = result.versions.filter((item) => !item.attached).map((item) => item.id)
-      // 选中的目录里正好有一个 `.minecraft` 时读的是它，后续的添加也用它。
-      directory = result.root
+      const found = await invoke<Discovery>('inspect_directory', { path })
+      if (found.kind === 'game-directory') {
+        source = 'game'
+        candidates = found.versions.map(fromVersion)
+        skipped = found.skipped
+        // 选中的目录里正好有一个 `.minecraft` 时读的是它，后续的添加也用它。
+        directory = found.root
+      } else if (found.kind === 'prism-instances') {
+        source = 'prism'
+        candidates = found.instances.map(fromPrism)
+        directory = found.root
+      } else {
+        source = 'unknown'
+        candidates = []
+        directory = found.lookedAt
+      }
+      chosen = (candidates ?? []).filter((item) => !item.taken).map((item) => item.key)
     } catch (cause) {
       error = String(cause)
       directory = path
+      source = 'none'
     } finally {
       busy = ''
     }
@@ -138,7 +234,7 @@
   }
 
   function toggleAll() {
-    chosen = allChosen ? [] : available.map((item) => item.id)
+    chosen = allChosen ? [] : available.map((item) => item.key)
   }
 
   async function add() {
@@ -148,16 +244,19 @@
     failures = []
     done = 0
     let last: { id: string; name: string } | undefined
-    for (const id of wanted) {
+    for (const key of wanted) {
       try {
-        last = await invoke<{ id: string; name: string }>('attach_game_version', {
-          path: directory,
-          versionId: id,
-          sharedLibraries: shared,
-        })
+        last =
+          source === 'prism'
+            ? await invoke<{ id: string; name: string }>('import_prism_instance', { path: key })
+            : await invoke<{ id: string; name: string }>('attach_game_version', {
+                path: directory,
+                versionId: key,
+                sharedLibraries: shared,
+              })
         done += 1
       } catch (cause) {
-        failures.push({ id, reason: String(cause) })
+        failures.push({ id: key, reason: String(cause) })
       }
     }
     await instances.load()
@@ -168,7 +267,7 @@
     if (added === 0 || !last) return
     const target = last
     notices.say({
-      title: added === 1 ? `已添加 ${target.name}` : `已添加 ${added} 个版本`,
+      title: added === 1 ? `已添加 ${target.name}` : `已添加 ${added} 个${noun}`,
       detail: '游戏文件保留在原位置。',
       action: {
         label: '打开',
@@ -202,7 +301,7 @@
 <div class="adopt">
   {#if standalone}
     <p class="lead">
-      选择一个 <code class="t-mono">.minecraft</code> 目录，Fern 会列出其中的版本并默认全部添加。添加后可以照常补全文件、安装模组与启动；游戏文件保留在原位置，不会移动或复制，该目录仍可由原启动器使用。
+      选择一个游戏目录，Fern 会认出它是 <code class="t-mono">.minecraft</code> 还是 Prism / MultiMC 的实例，列出其中的内容并默认全部添加。添加后可以照常补全文件、安装模组与启动；游戏文件保留在原位置，不会移动或复制，原来的启动器仍然可以使用它。
     </p>
   {/if}
 
@@ -217,13 +316,23 @@
 
   {#if busy === 'scan'}
     <p class="t-quiet">正在读取目录…</p>
-  {:else if versions}
-    {#if versions.length === 0}
-      <p class="t-quiet">该目录中没有可用的版本。</p>
+  {:else if source === 'unknown'}
+    <!--
+      认不出来时要说清我们在找什么。上一版只说「没有可用的版本」，那句话既
+      不告诉他选错了目录，也不告诉他我们读不懂。
+    -->
+    <p class="t-quiet">
+      这个目录里没有认得出来的游戏。Fern 找的是带 <code class="t-mono">versions</code>
+      的 <code class="t-mono">.minecraft</code>，或者 Prism / MultiMC 的实例目录（里面有
+      <code class="t-mono">mmc-pack.json</code>）。选它们的上一层也可以。
+    </p>
+  {:else if candidates}
+    {#if candidates.length === 0}
+      <p class="t-quiet">该目录中没有可用的{noun}。</p>
     {:else}
       <div class="summary">
         <span class="t-quiet">
-          {versions.length} 个版本{attachedCount > 0 ? `，其中 ${attachedCount} 个已添加` : ''}
+          {candidates.length} 个{noun}{attachedCount > 0 ? `，其中 ${attachedCount} 个已添加` : ''}
         </span>
         {#if available.length > 1}
           <button class="toggle-all" disabled={busy !== ''} onclick={toggleAll}>
@@ -233,37 +342,29 @@
       </div>
 
       <ul class="versions">
-        {#each versions as version (version.id)}
-          <li class="row" class:off={!version.attached && !chosen.includes(version.id)}>
+        {#each candidates as item (item.key)}
+          <li class="row" class:off={!item.taken && !chosen.includes(item.key)}>
             <label class="pick">
               <input
                 type="checkbox"
-                checked={version.attached || chosen.includes(version.id)}
-                disabled={version.attached || busy !== ''}
-                onchange={() => toggle(version.id)}
+                checked={item.taken || chosen.includes(item.key)}
+                disabled={item.taken || busy !== ''}
+                onchange={() => toggle(item.key)}
               />
               <span class="text">
-                <strong>{version.id}</strong>
-                <small class="t-mono">
-                  {version.gameVersion}
-                  {#if version.loader !== 'vanilla'}
-                    · {LOADER_LABEL[version.loader] ?? version.loader}{version.loaderVersion
-                      ? ` ${version.loaderVersion}`
-                      : ''}
-                  {/if}
-                  · {ISOLATION_LABEL[version.isolation]}
-                  {#if version.saves > 0}· {version.saves} 个存档{/if}
-                  {#if version.mods > 0}· {version.mods} 个模组{/if}
-                </small>
+                <strong>{item.title}</strong>
+                <small class="t-mono">{item.detail}</small>
+                {#if item.note}<small class="note">{item.note}</small>{/if}
               </span>
             </label>
-            {#if version.attached}
+            {#if item.taken}
               <span class="t-quiet done">已添加</span>
             {/if}
           </li>
         {/each}
       </ul>
 
+      {#if source === 'game'}
       <label class="shared">
         <input type="checkbox" bind:checked={shared} disabled={busy !== ''} />
         <span>
@@ -273,6 +374,7 @@
           </small>
         </span>
       </label>
+      {/if}
 
       {#if standalone}
         <div class="commit">
@@ -280,14 +382,16 @@
             variant="primary"
             disabled={chosen.length === 0 || busy !== ''}
             onclick={() => void add()}>
-            {busy === 'add' ? `正在添加 ${done}/${chosen.length}` : `添加 ${chosen.length} 个版本`}
+            {busy === 'add'
+              ? `正在添加 ${done}/${chosen.length}`
+              : `添加 ${chosen.length} 个${noun}`}
           </Button>
         </div>
       {/if}
 
       {#if failures.length > 0}
         <div class="alert">
-          <p>{failures.length} 个版本未能添加：</p>
+          <p>{failures.length} 个{noun}未能添加：</p>
           <ul>
             {#each failures as item (item.id)}
               <li><span class="t-mono">{item.id}</span> — {item.reason}</li>
@@ -303,7 +407,7 @@
       一个都没扫出来时，这里就是唯一能解释发生了什么的地方。
     -->
     {#if skipped.length > 0}
-      <details class="skipped" open={versions.length === 0}>
+      <details class="skipped" open={candidates.length === 0}>
         <summary>{skipped.length} 个目录未被识别为版本</summary>
         <ul>
           {#each skipped as item (item.name)}
@@ -427,6 +531,14 @@
     gap: 1px;
     min-width: 0;
     transition: opacity var(--t-fast) var(--ease);
+  }
+
+  /*
+   * 装不了的那几层。用次要文字色，不用 --danger：那一档是「出事了」，而这
+   * 只是一句必须说出口的损失——导进来仍然是成功的。
+   */
+  .text .note {
+    color: var(--ink-2);
   }
 
   .text strong {

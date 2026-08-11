@@ -39,6 +39,9 @@
    * 从零建一个，和把已有的接进来，产出的是同一种东西——一个实例。所以两个
    * 入口并排，而不是把后者藏进设置里：想让 Fern 用自己那个 .minecraft 的人，
    * 会在这一屏找它。
+   *
+   * 只有这一个「已有」入口：官方那一系和 Prism / MultiMC 由后端认，不该由
+   * 用户先回答「我用的是哪个启动器」。
    */
   const onadopt = () => nav.open(EXISTING)
 
@@ -55,7 +58,7 @@
   </div>
 {:else if adopting}
   <div class="depth scroll existing" data-page-scroll in:expand>
-    <h1 class="t-h1">现有游戏目录</h1>
+    <h1 class="t-h1">添加现有游戏</h1>
     <AdoptDirectory />
   </div>
 {:else if viewing}
@@ -69,7 +72,7 @@
       <Loading note="读取实例" />
     {:else}
       <h1 class="t-h1">暂无实例</h1>
-      <p class="note">创建一个实例之后，它的封面会出现在这里。已有 .minecraft 目录的话，也可以直接添加其中的版本。</p>
+      <p class="note">创建一个实例之后，它的封面会出现在这里。已经有游戏目录的话，也可以直接添加——官方启动器和 Prism / MultiMC 的都认得。</p>
       <div class="ways">
         <Button variant="ghost" onclick={oncreate}><Plus size={15} />新建实例</Button>
         <Button variant="link" onclick={onadopt}>

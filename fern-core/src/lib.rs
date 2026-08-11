@@ -79,6 +79,7 @@ pub use instance::catalog::{
     read_prepared_java_major, rename_instance, set_instance_account, touch_played,
     update_instance_settings, write_instance_profile,
 };
+pub use instance::discover::{Discovery, inspect as inspect_directory};
 pub use instance::external::{
     ExternalScan, ExternalVersion, SkippedVersion, attach as attach_external_version,
     scan as scan_external_directory,
