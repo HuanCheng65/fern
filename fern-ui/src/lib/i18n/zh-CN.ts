@@ -187,6 +187,12 @@ const backend = {
       '它声明的 Java 版本是 {range}，而这个实例会使用 Java {java}。加载器会因此拒绝启动。可以在实例设置中更换 Java。',
   },
 
+  'preflight.stale-jvm-argument': {
+    title: '{argument} 在 Java {java} 上已不可用',
+    detail:
+      '这个参数从 Java {removedIn} 起被移除，带着它启动虚拟机会直接失败。启动时会自动忽略它；可以在实例设置的额外 JVM 参数中删除。',
+  },
+
   // 事前兼容规则拦下来的。能自己处理掉的那些不出现在界面上，只有确实无法
   // 启动、需要用户做决定的才在这里说话。
   'preflight.compat.a-headless-java-cannot-open-a-window': {

@@ -13,6 +13,7 @@ pub(crate) mod compat;
 pub(crate) mod crash;
 pub(crate) mod forge;
 pub(crate) mod gamelog;
+pub(crate) mod jvmargs;
 pub(crate) mod loader;
 pub(crate) mod mcversion;
 pub(crate) mod memory;
@@ -466,13 +467,26 @@ pub async fn launch_instance(
     let log_directory = paths.instance_log_directory(instance_id);
     std::fs::create_dir_all(&log_directory)?;
     let gc_log = log_directory.join("gc.log");
+    // 这个 Java 不认的参数在这里就要去掉，**而且要赶在算内存之前**：一个写着
+    // `-XX:+UseConcMarkSweepGC` 的老整合包，去掉之后就成了「没有人指定 GC」，
+    // 我们的分配器才会接手挑一个。反过来先算再删，得到的是一份既没有 CMS 也
+    // 没有 G1 的命令行。见 launch::jvmargs。
+    let (mut jvm_arguments, obsolete) = jvmargs::prune(jvm_arguments, java_major);
+    let (user_arguments, user_obsolete) =
+        jvmargs::prune(effective.jvm_arguments.clone(), java_major);
+    for argument in obsolete.iter().chain(user_obsolete.iter()) {
+        append_launch_log(
+            &log_directory.join("launch.log"),
+            &format!("dropped jvm argument {argument}: not accepted by Java {java_major}"),
+        )?;
+    }
     // 判断「用户是不是已经自己表过态」时，看的必须是**元数据加用户参数**合起来
     // 的那一份。上一版先按元数据算完再把用户参数追加上去，于是用户写的
     // `-XX:+UseZGC` 和我们给的 `-XX:+UseG1GC` 一起进了命令行——JVM 直接拒绝
     // 启动，报出来只有一句「Could not create the Java Virtual Machine」。
     let declared: Vec<String> = jvm_arguments
         .iter()
-        .chain(effective.jvm_arguments.iter())
+        .chain(user_arguments.iter())
         .cloned()
         .collect();
     // 挑完 Java 才问得了那几条要看 Java 的规则（32 位装不下大堆之类）。
@@ -502,12 +516,12 @@ pub async fn launch_instance(
     jvm_arguments.extend(allocation.arguments.iter().cloned());
     // 用户自己那几个排在最后：同一个开关出现两次时 JVM 认后面的，所以他写的
     // 永远能盖掉我们给的。
-    jvm_arguments.extend(effective.jvm_arguments.iter().cloned());
+    jvm_arguments.extend(user_arguments);
     stage(LaunchStage::BuildingCommand);
     let plan = LaunchPlan {
         java_binary: java_binary.clone(),
         working_directory: game_directory,
-        jvm_arguments: filter_jvm_arguments(jvm_arguments, java_major),
+        jvm_arguments,
         classpath: classpath
             .into_iter()
             .chain(std::iter::once(client_jar))
@@ -1059,13 +1073,6 @@ fn platform_arguments(version_id: &str, existing: &[String]) -> Vec<String> {
     extra
 }
 
-fn filter_jvm_arguments(arguments: Vec<String>, java_major: u16) -> Vec<String> {
-    arguments
-        .into_iter()
-        .filter(|argument| argument != "--sun-misc-unsafe-memory-access=allow" || java_major >= 24)
-        .collect()
-}
-
 async fn collect_classpath_and_extract_natives(
     paths: &DataPaths,
     metadata: &VersionMetadata,
@@ -1419,7 +1426,7 @@ mod tests {
             "--sun-misc-unsafe-memory-access=allow".to_owned(),
             "-Xmx2G".to_owned(),
         ];
-        assert_eq!(filter_jvm_arguments(args.clone(), 21), vec!["-Xmx2G"]);
-        assert_eq!(filter_jvm_arguments(args, 24).len(), 2);
+        assert_eq!(jvmargs::prune(args.clone(), 21).0, vec!["-Xmx2G"]);
+        assert_eq!(jvmargs::prune(args, 24).0.len(), 2);
     }
 }

@@ -66,9 +66,11 @@ pub mod kind {
     pub const INCOMPATIBLE: &str = "incompatible";
     /// 模组要求的 Java 大版本，不是这个实例会用的那个。
     pub const WRONG_JAVA: &str = "wrong-java";
+    /// 设置里写着一个这个 Java 已经不认的参数。
+    pub const STALE_JVM_ARGUMENT: &str = "stale-jvm-argument";
 
     /// 全部取值。界面那边的文案表按它对齐。
-    pub const ALL: [&str; 8] = [
+    pub const ALL: [&str; 9] = [
         NO_LOADER,
         DUPLICATE,
         WRONG_LOADER,
@@ -77,6 +79,7 @@ pub mod kind {
         DISABLED_DEPENDENCY,
         INCOMPATIBLE,
         WRONG_JAVA,
+        STALE_JVM_ARGUMENT,
     ];
 }
 
@@ -154,7 +157,42 @@ pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
         runtime.as_ref().map(|runtime| runtime.major),
     );
     findings.extend(refusals(profile, runtime.as_ref()));
+    if let Some(java) = runtime.as_ref().map(|runtime| runtime.major) {
+        let effective = crate::effective_settings(
+            &profile.settings,
+            &crate::current_settings().game,
+            super::memory::physical_memory_bytes(),
+        );
+        findings.extend(stale_arguments(&effective.jvm_arguments, java));
+    }
     findings
+}
+
+/// 设置里那串 JVM 参数里，这个 Java 已经不认的那些。
+///
+/// **只说这一串。** 我们自己算出来的、元数据带的那些同样会被去掉，但那些静悄
+/// 悄处理掉就好——用户没写过它们，也就无从解释（见 [`super::jvmargs`]）。这一
+/// 串不一样：是人自己敲进去的，他有权知道它没有生效。
+fn stale_arguments(arguments: &[String], java: u16) -> Vec<Finding> {
+    arguments
+        .iter()
+        .filter_map(|argument| {
+            let removed = super::jvmargs::retired_in(argument, java)?;
+            Some(Finding {
+                id: format!("stale-{argument}"),
+                // 不是 Blocking：启动照常，只是这个参数不会生效。说它是
+                // 「大概率起不来」就成了一句假话——我们刚刚把它处理掉了。
+                kind: kind::STALE_JVM_ARGUMENT.to_owned(),
+                severity: Severity::Warning,
+                args: args([
+                    ("argument", argument.clone()),
+                    ("java", java.to_string()),
+                    ("removedIn", removed.to_string()),
+                ]),
+                action: None,
+            })
+        })
+        .collect()
 }
 
 /// 事前兼容规则里被拦下来的那些（见 [`super::compat`]）。
@@ -713,6 +751,46 @@ mod tests {
     use super::*;
 
     use crate::instance::jar::{Dependency, Relation};
+
+    /// 用户自己写的过期参数要说出来，说的时候得说清是哪一个、从哪一版起没了。
+    ///
+    /// 一份 2014 年整合包的参数在 Java 8 上一个问题都没有，换到 21 就一条都
+    /// 不能留——而它们全都来自设置里那个输入框，所以每一条都要有话说。
+    #[test]
+    fn the_users_own_stale_arguments_are_named_one_by_one() {
+        let arguments: Vec<String> = [
+            "-XX:MaxPermSize=256m",
+            "-XX:+UseConcMarkSweepGC",
+            "-Xmx4G",
+            "-Dfml.ignorePatchDiscrepancies=true",
+        ]
+        .iter()
+        .map(|item| (*item).to_owned())
+        .collect();
+
+        assert!(stale_arguments(&arguments, 8).is_empty());
+
+        let found = stale_arguments(&arguments, 21);
+        assert_eq!(found.len(), 2);
+        assert!(
+            found
+                .iter()
+                .all(|finding| finding.kind == kind::STALE_JVM_ARGUMENT)
+        );
+        assert_eq!(
+            found[0].args.get("argument").map(String::as_str),
+            Some("-XX:MaxPermSize=256m")
+        );
+        // 「从哪一版起没了」是这句话里唯一能让人自己判断的信息。
+        assert_eq!(
+            found[0].args.get("removedIn").map(String::as_str),
+            Some("9")
+        );
+        assert_eq!(
+            found[1].args.get("removedIn").map(String::as_str),
+            Some("15")
+        );
+    }
 
     fn jar(name: &str, mod_id: &str, loader: LoaderKind) -> ModJar {
         ModJar {
