@@ -387,6 +387,52 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
 
 /// 把实例文件整份写回去。先写临时文件再改名——写到一半断电不该让实例
 /// 彻底打不开。
+/// 给这个实例再叠一层。
+///
+/// 只用于附加层（今天只有 LiteLoader）：主加载器是建实例时就定下的一次选择，
+/// 换它等于换一个实例。版本取上游最新的稳定版——附加层的版本几乎没有人会去
+/// 挑，而它只有一两个可选。
+pub async fn add_component(
+    paths: &DataPaths,
+    instance_id: &str,
+    kind: crate::LoaderKind,
+) -> Result<InstanceProfile> {
+    let mut profile = read_instance(paths, instance_id)?;
+    if profile.components.iter().any(|one| one.kind == kind) {
+        return Ok(profile);
+    }
+    let version = crate::launch::loader::latest_version(paths, kind, &profile.game_version).await?;
+    // 叠在最后：层表的顺序就是合并的顺序，附加层要盖在主加载器之上。
+    profile.components.push(crate::Component {
+        kind,
+        version,
+        version_id: String::new(),
+        jar_mods: Vec::new(),
+    });
+    let profile = profile.normalized();
+    write_instance_profile(paths, &profile)?;
+    Ok(profile)
+}
+
+/// 撤掉一层。主加载器撤不掉——那是建实例时的选择。
+pub fn remove_component(
+    paths: &DataPaths,
+    instance_id: &str,
+    kind: crate::LoaderKind,
+) -> Result<InstanceProfile> {
+    let mut profile = read_instance(paths, instance_id)?;
+    if !kind.stackable() {
+        return Err(anyhow!(
+            "{} 是这个实例的主加载器，撤不掉",
+            crate::loader_display_name(kind)
+        ));
+    }
+    profile.components.retain(|one| one.kind != kind);
+    let profile = profile.normalized();
+    write_instance_profile(paths, &profile)?;
+    Ok(profile)
+}
+
 pub fn write_instance_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<()> {
     // 算得出来的字段在这里重算一遍。写盘只有这一个入口，所以「主加载器和层
     // 表对不上」这件事没有别的地方能发生。

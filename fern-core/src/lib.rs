@@ -74,10 +74,11 @@ pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;
 pub use fern_meta::{VersionManifest, VersionManifestEntry};
 pub use instance::catalog::{
-    InstanceRuntime, VersionOption, create_instance, create_instance_with_loader, delete_instance,
-    duplicate_instance, instance_runtime, list_instances, list_versions, read_instance,
-    read_prepared_java_major, rename_instance, set_instance_account, touch_played,
-    update_instance_settings, write_instance_profile,
+    InstanceRuntime, VersionOption, add_component as add_instance_component, create_instance,
+    create_instance_with_loader, delete_instance, duplicate_instance, instance_runtime,
+    list_instances, list_versions, read_instance, read_prepared_java_major,
+    remove_component as remove_instance_component, rename_instance, set_instance_account,
+    touch_played, update_instance_settings, write_instance_profile,
 };
 pub use instance::discover::{Discovery, inspect as inspect_directory};
 pub use instance::external::{

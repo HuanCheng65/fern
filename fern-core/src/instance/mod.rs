@@ -104,6 +104,17 @@ pub enum LoaderKind {
     LiteLoader,
 }
 
+impl LoaderKind {
+    /// 它是叠在别人上面的一层，不是「主加载器」。
+    ///
+    /// 这个区别有实际后果：主加载器决定 Java 区间、崩溃规则的守卫、模组在
+    /// 补给站按什么标签筛。一个 Forge + LiteLoader 的实例，主加载器是
+    /// Forge——把最外面那一层当成主加载器的话，Java 上限那条就没人给了。
+    pub fn stackable(self) -> bool {
+        matches!(self, Self::LiteLoader)
+    }
+}
+
 /// 叠在游戏本体上的一层。
 ///
 /// **一个实例是一摞有序的层，不是「一个版本 + 一个加载器」。** 这个形状不是
@@ -251,15 +262,24 @@ pub struct InstanceProfile {
 }
 
 impl InstanceProfile {
-    /// 主加载器那一层。多层叠着时是最外面那一个加载器。
+    /// 主加载器那一层。
     ///
-    /// 「最外面」而不是「第一个」：Prism 的层表按依赖顺序排，越靠后越接近
-    /// 成品，而决定主类的正是最后那一层。
+    /// 「最外面那一个**不可叠加**的加载器」：层表按依赖顺序排，越靠后越接近
+    /// 成品，所以从后往前找；但附加层（LiteLoader）要跳过——它排在最后，却
+    /// 不是这个实例的主加载器，认错了的话 Java 区间、崩溃守卫、模组筛选全都
+    /// 会按错的那个来。
     pub fn loader_component(&self) -> Option<&Component> {
         self.components
             .iter()
             .rev()
-            .find(|component| component.kind != LoaderKind::Vanilla)
+            .find(|component| component.kind != LoaderKind::Vanilla && !component.kind.stackable())
+    }
+
+    /// 叠在主加载器之上的那些层。
+    pub fn addon_components(&self) -> impl Iterator<Item = &Component> {
+        self.components
+            .iter()
+            .filter(|component| component.kind.stackable())
     }
 
     /// 把算得出来的那些字段算一遍。**写盘前必须过这一道。**
@@ -396,6 +416,47 @@ mod tests {
         assert_eq!(
             profile.loader_component().map(|one| one.version.as_str()),
             Some("10.13.4.1614")
+        );
+    }
+
+    /// 附加层排在最后，但它不是主加载器。认错了的话 Java 区间、崩溃守卫、
+    /// 模组筛选全都会按错的那个来。
+    #[test]
+    fn a_stacked_addon_does_not_become_the_primary_loader() {
+        let mut profile =
+            InstanceProfile::vanilla(InstanceId::parse("both").expect("id"), "都要", "1.7.10");
+        profile.components.push(Component {
+            kind: LoaderKind::Forge,
+            version: "10.13.4.1614".to_owned(),
+            version_id: "1.7.10-Forge10.13.4.1614".to_owned(),
+            jar_mods: Vec::new(),
+        });
+        profile.components.push(Component {
+            kind: LoaderKind::LiteLoader,
+            version: "1.7.10_04".to_owned(),
+            version_id: "1.7.10-LiteLoader1.7.10_04".to_owned(),
+            jar_mods: Vec::new(),
+        });
+        let profile = profile.normalized();
+
+        assert_eq!(profile.loader, LoaderKind::Forge);
+        assert_eq!(
+            profile.loader_component().map(|one| one.kind),
+            Some(LoaderKind::Forge)
+        );
+        assert_eq!(
+            profile
+                .addon_components()
+                .map(|one| one.kind)
+                .collect::<Vec<_>>(),
+            vec![LoaderKind::LiteLoader]
+        );
+        // 但要启动的仍然是最外面那一层——主类和参数由它给。
+        assert_eq!(
+            crate::launch::version::layers(&profile)
+                .last()
+                .map(String::as_str),
+            Some("1.7.10-LiteLoader1.7.10_04")
         );
     }
 

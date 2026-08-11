@@ -435,6 +435,32 @@ fn installable_loaders(game_version: Option<String>) -> Vec<fern_core::LoaderOpt
     fern_core::loaders_for_version(game_version.as_deref().unwrap_or_default())
 }
 
+/// 给实例再叠一层（今天只有 LiteLoader 会走到这里）。
+#[tauri::command]
+async fn add_instance_component(
+    instance_id: String,
+    loader: String,
+) -> Result<fern_core::InstanceProfile, String> {
+    let kind = parse_loader(Some(&loader))?;
+    fern_core::add_instance_component(&paths()?, &instance_id, kind)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 撤掉一层。主加载器撤不掉。
+#[tauri::command]
+async fn remove_instance_component(
+    instance_id: String,
+    loader: String,
+) -> Result<fern_core::InstanceProfile, String> {
+    let kind = parse_loader(Some(&loader))?;
+    off_thread(move || {
+        fern_core::remove_instance_component(&paths()?, &instance_id, kind)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 /// 这个版本 × 这个主加载器之下还能叠哪些附加层。多数组合下是空的。
 #[tauri::command]
 fn loader_addons(game_version: String, loader: Option<String>) -> Result<Vec<fern_core::LoaderOption>, String> {
@@ -1575,6 +1601,8 @@ pub fn run() {
             list_loader_versions,
             installable_loaders,
             loader_addons,
+            add_instance_component,
+            remove_instance_component,
             detect_java,
             list_accounts,
             active_account,
