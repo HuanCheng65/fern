@@ -13,6 +13,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { commands, provides, type Subject } from 'fern-kit/parts/palette'
 import { nav } from './nav.svelte'
+import { CREATE } from './depths'
 
 export interface Instance {
   id: string
@@ -321,6 +322,6 @@ commands(() => [
     title: '新建实例',
     accepts: 'none',
     creates: 'instance',
-    run: () => nav.enter('instances', 'new'),
+    run: () => nav.enter('instances', CREATE),
   },
 ])

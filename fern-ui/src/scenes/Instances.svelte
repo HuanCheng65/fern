@@ -23,13 +23,10 @@
   import { instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
+  import { CREATE, DEPTHS, EXISTING } from '../lib/depths'
   import { expand, riseIn } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
-
-  /** 新建页和添加现有目录各占一个纵深位。实例 id 是随机发的，撞不上这两个词。 */
-  const CREATE = 'new'
-  const EXISTING = 'existing'
 
   const creating = $derived(nav.detail === CREATE)
   const adopting = $derived(nav.detail === EXISTING)
@@ -58,7 +55,7 @@
   </div>
 {:else if adopting}
   <div class="depth scroll existing" data-page-scroll in:expand>
-    <h1 class="t-h1">添加现有游戏</h1>
+    <h1 class="t-h1">{DEPTHS[EXISTING]}</h1>
     <AdoptDirectory />
   </div>
 {:else if viewing}
@@ -76,7 +73,7 @@
       <div class="ways">
         <Button variant="ghost" onclick={oncreate}><Plus size={15} />新建实例</Button>
         <Button variant="link" onclick={onadopt}>
-          <FolderOpen size={14} strokeWidth={1.8} />添加现有目录
+          <FolderOpen size={14} strokeWidth={1.8} />添加现有游戏
         </Button>
       </div>
     {/if}
@@ -88,7 +85,7 @@
       <span class="t-quiet">{instances.list.length} 个实例</span>
       <Button variant="link" onclick={oncreate}><Plus size={14} />新建实例</Button>
       <Button variant="link" onclick={onadopt}>
-        <FolderOpen size={14} strokeWidth={1.8} />添加现有目录
+        <FolderOpen size={14} strokeWidth={1.8} />添加现有游戏
       </Button>
     {/snippet}
 

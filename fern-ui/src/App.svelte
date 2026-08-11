@@ -35,6 +35,7 @@
   import { DURATION, scaled } from './lib/motion'
   import { island } from './lib/island.svelte'
   import { nav, SCENES, type SceneId } from './lib/nav.svelte'
+  import { CREATE, DEPTHS } from './lib/depths'
   import { palette } from 'fern-kit/parts/palette'
   import './lib/places.svelte'
   import { prefs } from './lib/prefs.svelte'
@@ -54,15 +55,15 @@
     !nav.detail
       ? ''
       : nav.scene === 'instances'
-        ? nav.detail === 'new'
-          ? '新建实例'
-          : (instances.list.find((item) => item.id === nav.detail)?.name ?? '')
+        ? (DEPTHS[nav.detail] ??
+          instances.list.find((item) => item.id === nav.detail)?.name ??
+          '')
         : nav.scene === 'supply'
           ? supply.viewingTitle || nav.detail
           : '',
   )
 
-  const createInstance = () => nav.enter('instances', 'new')
+  const createInstance = () => nav.enter('instances', CREATE)
   const away = $derived(nav.overlay !== '')
 
   // 联机昵称沿用当前账户的名字，Pearl 的配置只作为跨启动的兜底。

@@ -33,6 +33,7 @@
   import { launch } from '../lib/launch.svelte'
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
+  import { DEPTHS, EXISTING } from '../lib/depths'
   import { expand, pop, unfold } from '../lib/motion'
   import { ancient, generations, newestRelease, newestSnapshot, snapshots } from '../lib/versions'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -573,8 +574,8 @@
       {#if !pack}
         <Button variant="link" onclick={() => void pickPack()}>从整合包创建</Button>
         <span class="t-quiet">·</span>
-        <Button variant="link" onclick={() => nav.enter('instances', 'existing')}>
-          添加已有游戏
+        <Button variant="link" onclick={() => nav.enter('instances', EXISTING)}>
+          {DEPTHS[EXISTING]}
         </Button>
       {/if}
     </div>
