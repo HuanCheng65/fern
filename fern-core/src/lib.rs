@@ -185,7 +185,7 @@ pub fn message_ids() -> Vec<String> {
 
 pub use storage::{
     StorageReport, clear_cache, clear_logs, instance_bytes as instance_storage_bytes,
-    report as storage_report,
+    migrate as migrate_data, migration_target, report as storage_report,
     slim::{SlimContents, SlimPlan, apply as slim_apply, preview as slim_preview},
 };
 

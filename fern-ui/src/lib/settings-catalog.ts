@@ -49,7 +49,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: 'java', label: 'Java' },
   { id: 'download', label: '下载' },
   { id: 'data', label: '数据' },
-  { id: 'storage', label: '存储' },
   { id: 'about', label: '关于' },
 ]
 
@@ -131,48 +130,25 @@ export const SETTINGS_ROWS: SettingsRow[] = [
 
   { id: 'download/source', label: '下载源', keywords: 'download source mirror bmclapi 镜像 官方源' },
 
-  { id: 'data/root', label: '数据目录', keywords: 'data directory 路径 目录', stack: true },
   {
-    id: 'data/game',
-    label: '游戏目录',
-    note: '共享的资源、依赖库与版本描述。各实例的存档与模组在实例自己的目录中。',
-    keywords: 'minecraft game assets libraries versions 游戏 资源 依赖库 版本',
+    id: 'data/root',
+    label: '目录',
+    keywords: 'data directory path migrate 数据目录 游戏目录 日志目录 路径 位置 便携 迁移 移动 搬家',
     stack: true,
   },
-  { id: 'data/logs', label: '日志目录', keywords: 'log directory 日志', stack: true },
+  {
+    id: 'data/usage',
+    label: '占用',
+    note: '各部分占用的磁盘空间。标注可清除的会在需要时重新生成或重新下载，不影响存档、模组或任何设置。',
+    keywords:
+      'storage disk usage space clean slim 磁盘 占用 空间 大小 容量 清理 清除 缓存 日志 瘦身 释放 版本 依赖库 资源 运行时 快照 实例',
+    stack: true,
+  },
   {
     id: 'data/existing',
     label: '现有游戏目录',
     note: '把已有的 .minecraft 中的版本添加为实例。游戏文件保留在原位置。',
     keywords: 'minecraft import existing directory 导入 现有 目录 便携',
-    stack: true,
-  },
-
-  {
-    id: 'storage/usage',
-    label: '占用',
-    note: '各部分占用的磁盘空间。快照之间共用相同的内容，删除单张快照未必能省出它显示的大小。',
-    keywords: 'storage disk usage space 磁盘 占用 空间 大小 容量',
-    stack: true,
-  },
-  {
-    id: 'storage/instances',
-    label: '各实例',
-    keywords: 'instance size 实例 大小 占用',
-    stack: true,
-  },
-  {
-    id: 'storage/clean',
-    label: '清理',
-    note: '缓存与日志可随时清除，需要时会重新生成，不影响存档、模组或任何设置。',
-    keywords: 'clean cache log 清理 清除 缓存 日志',
-    stack: true,
-  },
-  {
-    id: 'storage/slim',
-    label: '瘦身',
-    note: '清除没有任何实例使用的版本、依赖库、资源与 Java 运行时。这些内容需要时会重新下载。',
-    keywords: 'slim cleanup orphan 瘦身 清除 版本 依赖库 资源 运行时 释放',
     stack: true,
   },
 

@@ -254,6 +254,98 @@ fn slimming_removes_only_what_nothing_references() {
     fs::remove_dir_all(root).expect("clean up");
 }
 
+#[test]
+fn migrating_moves_the_root_and_leaves_a_note_that_resolve_follows() {
+    let base = scratch("migrate");
+    let old = base.join("old");
+    let default = base.join("default");
+    let paths = instance(&old, "1.20.1");
+    put(&old, "cache/manifest.json", &[0; 8]);
+
+    // 迁去别处：数据整棵过去，默认位置留字条。
+    let target = base.join("drive/fern");
+    let mut peak = 0u64;
+    let landed = migrate_with_default(&paths, &target, &default, &mut |done, _| peak = done)
+        .expect("migrate");
+    assert_eq!(landed, target);
+    assert!(!old.exists());
+    assert!(target.join("cache/manifest.json").exists());
+    assert!(target.join("instances/moss/instance.json").exists());
+    let note = fs::read_to_string(default.join("data-root.txt")).expect("note");
+    assert_eq!(note.trim(), target.display().to_string());
+
+    // 迁回默认位置：只剩字条的目录算空，字条随之撤掉。
+    let paths = DataPaths::new(&target);
+    migrate_with_default(&paths, &default, &default, &mut |_, _| {}).expect("migrate back");
+    assert!(default.join("cache/manifest.json").exists());
+    assert!(!default.join("data-root.txt").exists());
+    assert!(!target.exists());
+
+    fs::remove_dir_all(base).expect("clean up");
+}
+
+#[test]
+fn migration_refuses_what_would_lose_data() {
+    let base = scratch("migrate-no");
+    let old = base.join("old");
+    let default = base.join("default");
+    let paths = instance(&old, "1.20.1");
+
+    // 相对路径、迁进自己、互相包含、非空目标，全都停下。
+    let refuse = |destination: &Path| {
+        migrate_with_default(&paths, destination, &default, &mut |_, _| {})
+            .expect_err("应当拒绝")
+    };
+    refuse(Path::new("relative/fern"));
+    refuse(&old.join("inside"));
+    refuse(&base);
+    let taken = base.join("taken");
+    fs::create_dir_all(&taken).expect("create");
+    fs::write(taken.join("keep.txt"), b"mine").expect("write");
+    refuse(&taken);
+    assert!(old.exists(), "拒绝之后原目录一动不动");
+
+    fs::remove_dir_all(base).expect("clean up");
+}
+
+#[test]
+fn a_picked_directory_lands_inside_when_it_is_not_empty() {
+    let base = scratch("target");
+    // 不存在、空、只剩字条：挑的就是目的地。
+    assert_eq!(migration_target(&base.join("absent")), base.join("absent"));
+    let empty = base.join("empty");
+    fs::create_dir_all(&empty).expect("create");
+    assert_eq!(migration_target(&empty), empty);
+    let noted = base.join("noted");
+    fs::create_dir_all(&noted).expect("create");
+    fs::write(noted.join("data-root.txt"), b"/elsewhere").expect("write");
+    assert_eq!(migration_target(&noted), noted);
+    // 非空：落到里面的 Fern 子目录，谁也不会被清空。
+    let busy = base.join("busy");
+    fs::create_dir_all(&busy).expect("create");
+    fs::write(busy.join("save.zip"), b"mine").expect("write");
+    assert_eq!(migration_target(&busy), busy.join("Fern"));
+
+    fs::remove_dir_all(base).expect("clean up");
+}
+
+#[test]
+fn a_tree_copy_reports_progress_and_verifies_every_file() {
+    let base = scratch("copy");
+    let from = base.join("from");
+    put(&from, "a.bin", &[1; 10]);
+    put(&from, "deep/b.bin", &[2; 30]);
+
+    let mut calls = Vec::new();
+    copy_tree(&from, &base.join("to"), 40, &mut |done, total| calls.push((done, total)))
+        .expect("copy");
+    assert_eq!(fs::read(base.join("to/a.bin")).expect("read a"), vec![1; 10]);
+    assert_eq!(fs::read(base.join("to/deep/b.bin")).expect("read b"), vec![2; 30]);
+    assert_eq!(calls.last(), Some(&(40, 40)));
+
+    fs::remove_dir_all(base).expect("clean up");
+}
+
 /// 算不清就不删：一份存在却读不出来的版本 JSON 让整个瘦身停下。
 #[test]
 fn an_unreadable_version_json_stops_the_slim_cold() {

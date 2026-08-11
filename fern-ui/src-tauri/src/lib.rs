@@ -801,6 +801,51 @@ async fn slim_apply(contents: fern_core::SlimContents) -> Result<fern_core::Slim
     .await?
 }
 
+/// 用户在系统选择器里挑的目录落到哪。非空目录落到其中的 `Fern` 子目录。
+/// 界面在确认那一步展示这个最终路径，`migrate_data` 收到的已经是它。
+#[tauri::command]
+async fn migration_target(picked: String) -> Result<String, String> {
+    Ok(fern_core::migration_target(std::path::Path::new(&picked))
+        .display()
+        .to_string())
+}
+
+/// 把数据目录搬到新位置。
+///
+/// 同一卷瞬间完成；跨卷是一次复制，字节进度挂在任务岛上。`paths()` 每条命令
+/// 都现解析，所以迁移完成即生效，不需要重启。
+#[tauri::command]
+async fn migrate_data(
+    app: tauri::AppHandle,
+    destination: String,
+    title: String,
+) -> Result<String, String> {
+    let events = launcher_events(&app);
+    off_thread(move || {
+        let paths = paths()?;
+        let job = fern_core::Job::begin(&events, title, vec!["data-migrate".to_owned()]);
+        job.expect(1);
+        job.step("复制文件".to_owned());
+        let bytes = job.downloads();
+        let started = std::time::Instant::now();
+        let mut report = |done: u64, total: u64| {
+            let speed = (done as f64 / started.elapsed().as_secs_f64().max(0.1)) as u64;
+            let _ = bytes.send(fern_core::DownloadEvent::Progress {
+                done_bytes: done,
+                total_bytes: total,
+                speed_bps: speed,
+            });
+        };
+        let result =
+            fern_core::migrate_data(&paths, std::path::Path::new(&destination), &mut report)
+                .map(|path| path.display().to_string())
+                .map_err(|error| format!("{error:#}"));
+        job.finish(&result);
+        result
+    })
+    .await?
+}
+
 /// 快照一共占多少磁盘。
 #[tauri::command]
 async fn backup_usage() -> Result<fern_core::Usage, String> {
@@ -1563,6 +1608,8 @@ pub fn run() {
             clear_logs,
             slim_preview,
             slim_apply,
+            migration_target,
+            migrate_data,
             backup_usage,
             export_world,
             export_fernpack,

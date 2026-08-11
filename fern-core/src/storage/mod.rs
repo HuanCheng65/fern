@@ -191,5 +191,149 @@ fn clear_directory(directory: &Path) -> Result<u64> {
     Ok(freed)
 }
 
+/// 把整个数据根搬到新位置。返回落定的路径。
+///
+/// 同一卷上是一次改名，瞬间完成；跨卷退到「复制 → 逐文件校验 → 删旧」，
+/// `progress` 收到复制的字节数。完成后默认位置只留一张字条
+/// （[`crate::data::REDIRECT_FILE`]）指向新家，`DataPaths::resolve` 会跟着它
+/// 走——每条命令都现解析数据根，所以迁移完成即生效，不需要重启。
+///
+/// 便携模式拒绝：它的迁移方式本来就是「把整个文件夹拷走」，字条机制反而会
+/// 把两套规则搅在一起。
+pub fn migrate(
+    paths: &DataPaths,
+    destination: &Path,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<std::path::PathBuf> {
+    let default =
+        crate::data::default_data_root().ok_or_else(|| anyhow!("无法确定默认数据目录"))?;
+    migrate_with_default(paths, destination, &default, progress)
+}
+
+/// 用户在系统选择器里挑的目录落到哪。
+///
+/// 挑一个非空目录（`D:\Games`）的意思是「放到这里面」，不是「清空它」——
+/// 落到其中的 `Fern` 子目录。空目录、不存在的目录、只剩字条的默认目录，
+/// 挑的就是目的地本身。界面在确认那一步展示这里算出的最终路径，
+/// [`migrate`] 收到的已经是它。
+pub fn migration_target(picked: &Path) -> std::path::PathBuf {
+    let mut entries = fs::read_dir(picked).into_iter().flatten().flatten();
+    let empty =
+        !entries.any(|entry| entry.file_name().to_str() != Some(crate::data::REDIRECT_FILE));
+    if empty { picked.to_owned() } else { picked.join("Fern") }
+}
+
+/// 与 [`migrate`] 相同，默认位置由调用方给——测试不该往真的用户目录写字条。
+fn migrate_with_default(
+    paths: &DataPaths,
+    destination: &Path,
+    default: &Path,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<std::path::PathBuf> {
+    if paths.is_portable() {
+        return Err(anyhow!(
+            "便携模式的数据随可执行文件走，移动整个文件夹即可迁移"
+        ));
+    }
+    if !destination.is_absolute() {
+        return Err(anyhow!("请填写一个绝对路径"));
+    }
+    if destination
+        .components()
+        .any(|part| matches!(part, std::path::Component::CurDir | std::path::Component::ParentDir))
+    {
+        return Err(anyhow!("路径里不能有「.」或「..」"));
+    }
+    if destination == paths.root {
+        return Err(anyhow!("数据已经在这个位置"));
+    }
+    if destination.starts_with(&paths.root) {
+        return Err(anyhow!("不能迁移到数据目录自己的里面"));
+    }
+    if paths.root.starts_with(destination) {
+        return Err(anyhow!("目标不能包含现在的数据目录"));
+    }
+    if let Some(name) = occupant_name(paths) {
+        return Err(anyhow!("{name} 正在运行，请先退出游戏再迁移"));
+    }
+
+    // 目标要么不存在，要么是空目录。只剩一张字条的默认目录也算空——迁回
+    // 默认位置时它就长那样。
+    if destination.exists() {
+        if !destination.is_dir() {
+            return Err(anyhow!("{} 已存在且不是目录", destination.display()));
+        }
+        let stray = fs::read_dir(destination)?
+            .flatten()
+            .find(|entry| entry.file_name().to_str() != Some(crate::data::REDIRECT_FILE));
+        if let Some(entry) = stray {
+            return Err(anyhow!(
+                "目标目录不是空的（里面有 {}）",
+                entry.file_name().to_string_lossy()
+            ));
+        }
+        fs::remove_dir_all(destination)
+            .with_context(|| format!("清理 {}", destination.display()))?;
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("创建 {}", parent.display()))?;
+    }
+
+    // 快路：同一卷改名，一步到位，中间没有任何半搬状态。
+    if fs::rename(&paths.root, destination).is_err() {
+        // 跨卷：复制 → 校验 → 删旧。任何一步失败都停在「两份都在」的状态，
+        // 磁盘上没有丢过任何东西。
+        let total = tree_bytes(&paths.root);
+        copy_tree(&paths.root, destination, total, progress)?;
+        fs::remove_dir_all(&paths.root)
+            .context("复制已完成但原目录删除失败——两份数据都在，没有丢失任何内容")?;
+    }
+
+    // 字条：迁去别处就写，迁回默认位置就撤。
+    let note = default.join(crate::data::REDIRECT_FILE);
+    if destination == default {
+        let _ = fs::remove_file(&note);
+    } else {
+        fs::create_dir_all(default).with_context(|| format!("创建 {}", default.display()))?;
+        fs::write(&note, destination.display().to_string())
+            .with_context(|| format!("写入 {}", note.display()))?;
+    }
+    Ok(destination.to_owned())
+}
+
+/// 复制一棵树，逐文件核对字节数。软链接不搬——数据根里的内容都是 Fern 自己
+/// 写的，没有软链接；真有也不该跟过去，链接指向的东西不属于这里。
+fn copy_tree(
+    from: &Path,
+    to: &Path,
+    total: u64,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<()> {
+    let mut done = 0u64;
+    let mut stack = vec![from.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let relative = current.strip_prefix(from).expect("在 from 之下");
+        let target = to.join(relative);
+        fs::create_dir_all(&target).with_context(|| format!("创建 {}", target.display()))?;
+        for entry in fs::read_dir(&current)? {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                stack.push(entry.path());
+            } else if metadata.is_file() {
+                let file = target.join(entry.file_name());
+                let copied = fs::copy(entry.path(), &file)
+                    .with_context(|| format!("复制 {}", entry.path().display()))?;
+                if copied != metadata.len() {
+                    return Err(anyhow!("{} 复制不完整", entry.path().display()));
+                }
+                done += copied;
+                progress(done, total);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;

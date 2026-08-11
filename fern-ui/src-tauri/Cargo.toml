@@ -28,7 +28,7 @@ pearl-core = { git = "https://github.com/HuanCheng65/pearl.git", rev = "15b47647
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tauri = { version = "2", features = ["macos-private-api"] }
-# 只用于选择已有的游戏目录。仅授予 dialog:allow-open。
+# 只用于选目录（现有游戏目录、迁移数据目录）。仅授予 dialog:allow-open。
 tauri-plugin-dialog = "2"
 # 更新的下载与验签交给它。**落盘不交给它**：Windows 上它只认安装器，会把便携
 # exe 当安装器从临时目录跑起来（见 docs/fern-update-design.md §2）。

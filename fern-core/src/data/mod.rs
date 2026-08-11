@@ -174,7 +174,15 @@ impl DataPaths {
                 gather_scattered(&root)?;
                 Ok(Self::new(root))
             }
-            None => Self::for_current_user(),
+            None => {
+                let default = platform_data_root().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "unable to resolve user data directory",
+                    )
+                })?;
+                Ok(Self::new(redirected(default)))
+            }
         }
     }
 
@@ -302,6 +310,34 @@ pub const PORTABLE_DIRECTORY: &str = "fern-data";
 /// **只认标记，不猜。** 猜的代价是把数据写进一个不属于我们的文件夹：旁边有
 /// `.minecraft` 说明不了什么，而 MultiMC 那一系的便携目录同样有 `instances`、
 /// `libraries`、`assets`，光看目录名分不出是谁的。
+/// 数据根被迁走之后，默认位置只剩这一张字条，里面写着新家的绝对路径。
+///
+/// 是 `.txt` 是有意的：用户点开默认目录看到唯一一个文件时，双击它就能知道
+/// 自己的数据去了哪。写与撤都在 `storage::migrate` 里。
+pub(crate) const REDIRECT_FILE: &str = "data-root.txt";
+
+/// 平台默认的数据根，不考虑字条。迁移要知道字条该写在哪。
+pub(crate) fn default_data_root() -> Option<PathBuf> {
+    platform_data_root()
+}
+
+/// 默认位置留了字条就跟着字条走。
+///
+/// 不追第二层：字条只会由迁移写在默认位置，指向的地方就是数据本身。字条
+/// 指着不存在的地方也照样跟——那多半是移动硬盘没插；退回默认位置会凭空
+/// 造出一套全新的空数据，比一个「目录打不开」的报错更让人心慌。
+fn redirected(default: PathBuf) -> PathBuf {
+    let Ok(text) = fs::read_to_string(default.join(REDIRECT_FILE)) else {
+        return default;
+    };
+    let target = PathBuf::from(text.trim());
+    if target.is_absolute() && target != default {
+        target
+    } else {
+        default
+    }
+}
+
 fn portable_root() -> Option<PathBuf> {
     let directory = env::current_exe().ok()?.parent()?.to_path_buf();
     directory

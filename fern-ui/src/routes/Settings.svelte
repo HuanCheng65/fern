@@ -24,6 +24,7 @@
    */
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { open } from '@tauri-apps/plugin-dialog'
   import { Check, ChevronLeft, ChevronRight, Copy, FolderOpen, X } from 'lucide-svelte'
   import AccountList from '../components/AccountList.svelte'
   import AccountProfile from '../components/AccountProfile.svelte'
@@ -48,13 +49,13 @@
   import { inTauri, instances } from '../lib/instances.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import { nameList } from '../lib/backup'
+  import { backupUsage } from '../lib/backup'
   import {
     clearCache,
     clearLogs,
     instanceStorage,
     slimApply,
     slimBytes,
-    slimEmpty,
     slimPreview,
     storageReport,
     type SlimPlan,
@@ -70,7 +71,6 @@
     | 'java'
     | 'download'
     | 'data'
-    | 'storage'
     | 'about'
 
   interface Props {
@@ -367,41 +367,117 @@
     }
   }
 
+  // ——— 迁移数据目录 ———
+  //
+  // 系统目录选择器挑目标（和「现有游戏目录」同一个选择器），后端把「挑了个
+  // 非空目录」落到其中的 Fern 子目录；确认那一步展示的就是最终路径。同一
+  // 磁盘瞬间完成；跨磁盘的复制走任务岛显示字节进度。
+
+  /** 选好的最终目的地。空串表示还没在选择器里挑。 */
+  let migrateTo = $state('')
+  let migrating = $state(false)
+
+  async function pickMigrateTarget() {
+    pathError = ''
+    const picked = await open({ directory: true, multiple: false, title: '选择新的数据目录' })
+    if (typeof picked !== 'string') return
+    try {
+      migrateTo = await invoke('migration_target', { picked })
+    } catch (error) {
+      pathError = String(error)
+    }
+  }
+
+  async function migrateData() {
+    migrating = true
+    pathError = ''
+    try {
+      await invoke('migrate_data', { destination: migrateTo, title: '迁移数据目录' })
+      migrateTo = ''
+      // 完成即生效：每条命令都现解析数据根。把这一屏的路径换成新的。
+      paths = await invoke('data_paths')
+    } catch (error) {
+      pathError = String(error)
+    } finally {
+      migrating = false
+    }
+  }
+
   // ——— 存储 ———
+  //
+  // 这里是一张桶表：每个桶一行，「多大、可省多少、动手删」都长在自己的
+  // 行上。可回收注解靠预检自动跑出来（只读）——没有那句注解，「清理」和
+  // 「瘦身」就会退化成两块和数字对不上号的独立控件。
 
   /** 分区报告。undefined 表示还没量完。 */
   let storage = $state<StorageReport | undefined>()
   let storageError = $state('')
-  let storageBusy = $state<'' | 'cache' | 'logs' | 'preview' | 'slim'>('')
+  let storageBusy = $state<'' | 'cache' | 'logs' | 'shared' | 'java'>('')
   /** 每实例的字节数，量出来一个填一个——几十 GB 的实例不挡住整张报告。 */
   let instanceBytes = $state<Record<string, number>>({})
-  /** 「已释放 X」。清理和瘦身共用：一次只做一件事，说的都是最近那一件。 */
-  let freedNote = $state('')
-  /** 瘦身预检的结果。undefined 表示还没检查过。 */
+  /** 快照里模组占多少。快照桶那句注解。 */
+  let snapshotModsBytes = $state<number | undefined>()
+  /** 瘦身预检。undefined 表示还在查。 */
   let slimPlan = $state<SlimPlan | undefined>()
-  let slimPick = $state({ versions: true, runtimes: true, libraries: true, assets: true })
+  let slimPick = $state({ versions: true, libraries: true, assets: true })
+  /** 展开的那一桶。一次只开一个：展开是回答追问，不是多摆几张表。 */
+  let expanded = $state<'' | 'instances' | 'shared' | 'java'>('')
+  /** 清完之后那一行说的话（「已释放 X」），按桶各记各的。 */
+  let freed = $state<Record<string, string>>({})
 
-  /** 大的排前面——来这一页的问题是「占用都在哪」。还没量完的排最后。 */
+  /** 大的排前面——来这一行的问题是「占用都在哪」。还没量完的排最后。 */
   const sizedInstances = $derived(
     [...instances.list].sort(
       (left, right) => (instanceBytes[right.id] ?? -1) - (instanceBytes[left.id] ?? -1),
     ),
   )
 
-  const slimPicked = $derived.by(() => {
+  /** 收起时的一行明细：前三名 + 总数。 */
+  const instanceSummary = $derived.by(() => {
+    const parts = sizedInstances
+      .slice(0, 3)
+      .map(
+        (item) =>
+          `${item.name} ${instanceBytes[item.id] !== undefined ? formatBytes(instanceBytes[item.id]!) : '…'}`,
+      )
+    const rest = sizedInstances.length - 3
+    return parts.join(' · ') + (rest > 0 ? ` 等 ${sizedInstances.length} 个` : '')
+  })
+
+  const sharedReclaim = $derived(
+    !slimPlan ? 0 : slimPlan.versionsBytes + slimPlan.librariesBytes + slimPlan.assetsBytes,
+  )
+  const sharedPicked = $derived.by(() => {
     if (!slimPlan) return 0
     return (
       (slimPick.versions ? slimPlan.versionsBytes : 0) +
-      (slimPick.runtimes ? slimPlan.runtimesBytes : 0) +
       (slimPick.libraries ? slimPlan.librariesBytes : 0) +
       (slimPick.assets ? slimPlan.assetsBytes : 0)
     )
   })
 
+  /** 桶的次序即比例条的分段次序。固定次序，颜色才稳定。 */
+  const buckets = $derived.by(() => {
+    if (!storage) return []
+    return [
+      storage.instances,
+      storage.snapshots,
+      storage.versions + storage.libraries + storage.assets,
+      storage.runtimes,
+      storage.cache,
+      storage.logs,
+      storage.other,
+    ]
+  })
+
+  const toggle = (key: 'instances' | 'shared' | 'java') => {
+    expanded = expanded === key ? '' : key
+  }
+
   /** 量一遍。只在第一次进这一节时做：遍历整个数据根不是免费的。 */
   let measured = false
   $effect(() => {
-    if (section !== 'storage' || measured) return
+    if (section !== 'data' || measured) return
     measured = true
     void loadStorage()
   })
@@ -415,6 +491,11 @@
       storageError = String(error)
       return
     }
+    // 注解各自到位，谁也不等谁。
+    void backupUsage()
+      .then((usage) => (snapshotModsBytes = usage.modsBytes))
+      .catch(() => {})
+    void previewSlim()
     // 设置可以在实例列表还没加载时打开（冷启动直奔 ⌘K）。
     if (instances.list.length === 0) await instances.load()
     // 实例挨个量，不并发——同时遍历十个目录只会让磁盘更慢。
@@ -427,19 +508,24 @@
     }
   }
 
+  async function previewSlim() {
+    try {
+      slimPlan = await slimPreview()
+      slimPick = { versions: true, libraries: true, assets: true }
+    } catch (error) {
+      storageError = String(error)
+    }
+  }
+
   async function clean(kind: 'cache' | 'logs') {
     storageBusy = kind
     storageError = ''
     try {
-      const freed = kind === 'cache' ? await clearCache() : await clearLogs()
-      freedNote = `已释放 ${formatBytes(freed)}`
+      const bytes = kind === 'cache' ? await clearCache() : await clearLogs()
+      freed[kind] = `已释放 ${formatBytes(bytes)}`
       // 就地扣掉，不整棵重量：省下多少是后端刚数完的，账仍然是平的。
       if (storage) {
-        storage = {
-          ...storage,
-          total: storage.total - freed,
-          [kind]: 0,
-        }
+        storage = { ...storage, total: storage.total - bytes, [kind]: 0 }
       }
     } catch (error) {
       storageError = String(error)
@@ -448,38 +534,37 @@
     }
   }
 
-  async function previewSlim() {
-    storageBusy = 'preview'
+  async function applySlim(kind: 'shared' | 'java') {
+    storageBusy = kind
     storageError = ''
     try {
-      slimPlan = await slimPreview()
-      slimPick = { versions: true, runtimes: true, libraries: true, assets: true }
-    } catch (error) {
-      storageError = String(error)
-    } finally {
-      storageBusy = ''
-    }
-  }
-
-  async function applySlim() {
-    storageBusy = 'slim'
-    storageError = ''
-    try {
-      const done = await slimApply(slimPick)
-      freedNote = `已释放 ${formatBytes(slimBytes(done))}`
-      slimPlan = undefined
+      const done = await slimApply(
+        kind === 'shared'
+          ? {
+              versions: slimPick.versions,
+              libraries: slimPick.libraries,
+              assets: slimPick.assets,
+              runtimes: false,
+            }
+          : { versions: false, libraries: false, assets: false, runtimes: true },
+      )
+      freed[kind] = `已释放 ${formatBytes(slimBytes(done))}`
+      expanded = ''
       if (storage) {
         storage = {
           ...storage,
           total: storage.total - slimBytes(done),
           versions: storage.versions - done.versionsBytes,
-          runtimes: storage.runtimes - done.runtimesBytes,
           libraries: storage.libraries - done.librariesBytes,
           assets: storage.assets - done.assetsBytes,
+          runtimes: storage.runtimes - done.runtimesBytes,
         }
       }
+      // 注解按新的现实重算——预检与执行同一套判定，这里也不例外。
+      slimPlan = undefined
+      void previewSlim()
       // 删掉的可能包括 Java 运行时，那一节的清单要跟上。
-      void loadRuntimes()
+      if (kind === 'java') void loadRuntimes()
     } catch (error) {
       storageError = String(error)
     } finally {
@@ -876,195 +961,287 @@
           </SettingRow>
         {:else if section === 'data'}
           <SettingRow id="data/root" found={focused === 'data/root'}>
-            <p class="path t-mono selectable">{paths.root || '—'}</p>
-            {#if paths.portable}
-              <p class="t-quiet hint">
-                数据目录随可执行文件所在位置。移动整个文件夹即可迁移全部数据。
-              </p>
+            <div class="paths">
+              <div class="path-line">
+                <span class="path-label t-quiet">数据目录</span>
+                <span class="path t-mono selectable">{paths.root || '—'}</span>
+              </div>
+              {#if paths.portable}
+                <p class="t-quiet hint">
+                  数据目录随可执行文件所在位置。移动整个文件夹即可迁移全部数据。
+                </p>
+              {/if}
+              <div class="path-line">
+                <span class="path-label t-quiet">游戏目录</span>
+                <span class="path t-mono selectable">{paths.game || '—'}</span>
+              </div>
+              <div class="path-line">
+                <span class="path-label t-quiet">日志目录</span>
+                <span class="path t-mono selectable">{paths.logs || '—'}</span>
+                <Button
+                  variant="icon"
+                  tone="quiet"
+                  aria-label="打开日志目录"
+                  onclick={() => void openLogs()}
+                >
+                  <FolderOpen size={14} strokeWidth={1.8} />
+                </Button>
+              </div>
+
+              <!-- 便携模式不迁移：拷走整个文件夹就是它的迁移方式，上面那句
+                   提示已经说了。 -->
+              {#if !paths.portable}
+                {#if !migrateTo}
+                  <div class="migrate-entry">
+                    <Button variant="link" disabled={migrating} onclick={() => void pickMigrateTarget()}>
+                      迁移到其他位置…
+                    </Button>
+                  </div>
+                {:else}
+                  <div class="expand migrate-confirm">
+                    <p class="path t-mono selectable">{migrateTo}</p>
+                    <p class="consequence">
+                      会把整个数据目录移动到上面的位置{#if storage}（共 {formatBytes(
+                          storage.total,
+                        )}）{/if}。同一磁盘上瞬间完成；跨磁盘需要复制一段时间，进度显示在任务岛上，期间请不要关闭
+                      Fern。完成后立即生效，原位置只留下一份指路的说明文件。
+                    </p>
+                    <div class="expand-actions">
+                      <Button variant="ghost" disabled={migrating} onclick={() => (migrateTo = '')}>
+                        取消
+                      </Button>
+                      <Button variant="primary" disabled={migrating} onclick={() => void migrateData()}>
+                        {migrating ? '正在迁移……' : '迁移'}
+                      </Button>
+                    </div>
+                  </div>
+                {/if}
+              {/if}
+            </div>
+          </SettingRow>
+
+          <SettingRow id="data/usage" found={focused === 'data/usage'}>
+            {#if !storage}
+              <p class="t-quiet">{storageError || '正在测量……'}</p>
+            {:else}
+              {#if storage.total > 0}
+                <!-- 比例条：数字是确认用的，大头在哪一眼要能看出来。 -->
+                <div class="bar" role="img" aria-label="各部分占用比例">
+                  {#each buckets as bytes, index (index)}
+                    {#if bytes > 0}
+                      <span class="seg tone-{index}" style:flex-grow={bytes}></span>
+                    {/if}
+                  {/each}
+                </div>
+              {/if}
+              <p class="tally t-quiet">共占用 {formatBytes(storage.total)}</p>
+
+              <ul class="bucket-table">
+                <li>
+                  <div class="bucket-head">
+                    <span class="dot tone-0"></span>
+                    <span class="bucket-name">实例</span>
+                    <span class="bytes">{formatBytes(storage.instances)}</span>
+                  </div>
+                  {#if sizedInstances.length > 0}
+                    <button class="sub sub-toggle" onclick={() => toggle('instances')}>
+                      {expanded === 'instances' ? '收起' : instanceSummary}
+                    </button>
+                    {#if expanded === 'instances'}
+                      <ul class="detail">
+                        {#each sizedInstances as item (item.id)}
+                          <li>
+                            <span class="detail-name">
+                              {item.name}
+                              {#if item.external}
+                                <small class="t-quiet">外部目录，游戏文件不计入</small>
+                              {/if}
+                            </span>
+                            <span class="bytes">
+                              {instanceBytes[item.id] !== undefined
+                                ? formatBytes(instanceBytes[item.id]!)
+                                : '…'}
+                            </span>
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  {/if}
+                </li>
+
+                <li>
+                  <div class="bucket-head">
+                    <span class="dot tone-1"></span>
+                    <span class="bucket-name">快照</span>
+                    <span class="bytes">{formatBytes(storage.snapshots)}</span>
+                  </div>
+                  {#if snapshotModsBytes !== undefined && snapshotModsBytes > 0}
+                    <p class="sub t-quiet">其中模组 {formatBytes(snapshotModsBytes)}</p>
+                  {/if}
+                </li>
+
+                <li>
+                  <div class="bucket-head">
+                    <span class="dot tone-2"></span>
+                    <span class="bucket-name">共享游戏文件</span>
+                    <span class="bytes">
+                      {formatBytes(storage.versions + storage.libraries + storage.assets)}
+                    </span>
+                  </div>
+                  {#if !slimPlan && !freed.shared}
+                    <p class="sub t-quiet">正在检查引用……</p>
+                  {:else if sharedReclaim > 0}
+                    <div class="sub reclaim">
+                      <span>{formatBytes(sharedReclaim)} 未被任何实例使用</span>
+                      <Button variant="link" onclick={() => toggle('shared')}>
+                        {expanded === 'shared' ? '收起' : '清除…'}
+                      </Button>
+                    </div>
+                    {#if expanded === 'shared' && slimPlan}
+                      <div class="expand">
+                        {#if slimPlan.versions.length > 0}
+                          <label>
+                            <input type="checkbox" bind:checked={slimPick.versions} />
+                            <span class="pick-name">
+                              没有实例使用的版本：{nameList(slimPlan.versions)}
+                            </span>
+                            <span class="bytes">{formatBytes(slimPlan.versionsBytes)}</span>
+                          </label>
+                        {/if}
+                        {#if slimPlan.librariesFiles > 0}
+                          <label>
+                            <input type="checkbox" bind:checked={slimPick.libraries} />
+                            <span class="pick-name">
+                              未被引用的依赖库（{slimPlan.librariesFiles} 个文件）
+                            </span>
+                            <span class="bytes">{formatBytes(slimPlan.librariesBytes)}</span>
+                          </label>
+                        {/if}
+                        {#if slimPlan.assetsFiles > 0}
+                          <label>
+                            <input type="checkbox" bind:checked={slimPick.assets} />
+                            <span class="pick-name">
+                              未被引用的资源（{slimPlan.assetsFiles} 个文件）
+                            </span>
+                            <span class="bytes">{formatBytes(slimPlan.assetsBytes)}</span>
+                          </label>
+                        {/if}
+                        <!-- 按下去会发生什么，先说清再给按钮——和恢复快照同一个规矩。 -->
+                        <p class="consequence">
+                          将释放 {formatBytes(sharedPicked)}。清除的内容需要时会重新下载。
+                        </p>
+                        <div class="expand-actions">
+                          <Button variant="ghost" onclick={() => (expanded = '')}>取消</Button>
+                          <Button
+                            variant="primary"
+                            disabled={sharedPicked === 0 || storageBusy !== ''}
+                            onclick={() => void applySlim('shared')}
+                          >
+                            {storageBusy === 'shared' ? '正在清除……' : '清除'}
+                          </Button>
+                        </div>
+                      </div>
+                    {/if}
+                  {:else if freed.shared}
+                    <p class="sub t-quiet">{freed.shared}</p>
+                  {/if}
+                </li>
+
+                <li>
+                  <div class="bucket-head">
+                    <span class="dot tone-3"></span>
+                    <span class="bucket-name">Java 运行时</span>
+                    <span class="bytes">{formatBytes(storage.runtimes)}</span>
+                  </div>
+                  {#if slimPlan && slimPlan.runtimes.length > 0}
+                    <div class="sub reclaim">
+                      <span>{nameList(slimPlan.runtimes)} 无实例需要</span>
+                      <Button variant="link" onclick={() => toggle('java')}>
+                        {expanded === 'java' ? '收起' : '清除…'}
+                      </Button>
+                    </div>
+                    {#if expanded === 'java'}
+                      <div class="expand">
+                        <p class="consequence">
+                          将删除 {nameList(slimPlan.runtimes)}，释放
+                          {formatBytes(slimPlan.runtimesBytes)}。需要它的实例下次启动时会重新下载。
+                        </p>
+                        <div class="expand-actions">
+                          <Button variant="ghost" onclick={() => (expanded = '')}>取消</Button>
+                          <Button
+                            variant="primary"
+                            disabled={storageBusy !== ''}
+                            onclick={() => void applySlim('java')}
+                          >
+                            {storageBusy === 'java' ? '正在清除……' : '清除'}
+                          </Button>
+                        </div>
+                      </div>
+                    {/if}
+                  {:else if freed.java}
+                    <p class="sub t-quiet">{freed.java}</p>
+                  {/if}
+                </li>
+
+                <li>
+                  <div class="bucket-head">
+                    <span class="dot tone-4"></span>
+                    <span class="bucket-name">元数据缓存</span>
+                    {#if storage.cache > 0}
+                      <Button
+                        variant="link"
+                        disabled={storageBusy !== ''}
+                        onclick={() => void clean('cache')}
+                      >
+                        {storageBusy === 'cache' ? '正在清除……' : '清除'}
+                      </Button>
+                    {:else if freed.cache}
+                      <span class="t-quiet freed-note">{freed.cache}</span>
+                    {/if}
+                    <span class="bytes">{formatBytes(storage.cache)}</span>
+                  </div>
+                </li>
+
+                <li>
+                  <div class="bucket-head">
+                    <span class="dot tone-5"></span>
+                    <span class="bucket-name">日志</span>
+                    {#if storage.logs > 0}
+                      <Button
+                        variant="link"
+                        disabled={storageBusy !== ''}
+                        onclick={() => void clean('logs')}
+                      >
+                        {storageBusy === 'logs' ? '正在清除……' : '清除'}
+                      </Button>
+                    {:else if freed.logs}
+                      <span class="t-quiet freed-note">{freed.logs}</span>
+                    {/if}
+                    <span class="bytes">{formatBytes(storage.logs)}</span>
+                  </div>
+                </li>
+
+                {#if storage.other > 0}
+                  <li>
+                    <div class="bucket-head">
+                      <span class="dot tone-6"></span>
+                      <span class="bucket-name">其他</span>
+                      <span class="bytes">{formatBytes(storage.other)}</span>
+                    </div>
+                    <p class="sub t-quiet">设置、来源记录等零散文件</p>
+                  </li>
+                {/if}
+              </ul>
             {/if}
           </SettingRow>
-          <SettingRow id="data/game" found={focused === 'data/game'}>
-            <p class="path t-mono selectable">{paths.game || '—'}</p>
-          </SettingRow>
+
           <SettingRow id="data/existing" found={focused === 'data/existing'}>
             <Button variant="ghost" onclick={() => nav.show('settings', 'data/existing/browse')}>
               选择目录…
             </Button>
           </SettingRow>
-          <SettingRow id="data/logs" found={focused === 'data/logs'}>
-            <p class="path t-mono selectable">{paths.logs || '—'}</p>
-            <div class="open">
-              <Button variant="ghost" onclick={() => void openLogs()}>
-                <FolderOpen size={14} strokeWidth={1.8} />打开日志目录
-              </Button>
-            </div>
-          </SettingRow>
+
           {#if pathError}<div class="alert">{pathError}</div>{/if}
-        {:else if section === 'storage'}
-          <!--
-            这一节回答的是「占用都在哪、哪些拿得回来」。三档分开摆：用户数据
-            只报数，缓存零代价清除，共享文件按引用关系瘦身——零代价的和要
-            重新下载的绝不混在一个按钮里。
-          -->
-          <SettingRow id="storage/usage" found={focused === 'storage/usage'}>
-            {#if !storage}
-              <p class="t-quiet">{storageError || '正在测量……'}</p>
-            {:else}
-              <p class="tally t-quiet">共占用 {formatBytes(storage.total)}</p>
-              <ul class="buckets">
-                <li>
-                  <span>实例</span>
-                  <span class="bytes">{formatBytes(storage.instances)}</span>
-                </li>
-                <li>
-                  <span>快照</span>
-                  <span class="bytes">{formatBytes(storage.snapshots)}</span>
-                </li>
-                <li>
-                  <span>
-                    共享游戏文件
-                    <small class="t-quiet">版本、依赖库与资源，所有实例共用</small>
-                  </span>
-                  <span class="bytes">
-                    {formatBytes(storage.versions + storage.libraries + storage.assets)}
-                  </span>
-                </li>
-                <li>
-                  <span>Java 运行时</span>
-                  <span class="bytes">{formatBytes(storage.runtimes)}</span>
-                </li>
-                <li>
-                  <span>元数据缓存</span>
-                  <span class="bytes">{formatBytes(storage.cache)}</span>
-                </li>
-                <li>
-                  <span>日志</span>
-                  <span class="bytes">{formatBytes(storage.logs)}</span>
-                </li>
-                {#if storage.other > 0}
-                  <li>
-                    <span>
-                      其他
-                      <small class="t-quiet">设置、来源记录等零散文件</small>
-                    </span>
-                    <span class="bytes">{formatBytes(storage.other)}</span>
-                  </li>
-                {/if}
-              </ul>
-            {/if}
-          </SettingRow>
-
-          <SettingRow id="storage/instances" found={focused === 'storage/instances'}>
-            {#if sizedInstances.length === 0}
-              <p class="t-quiet">还没有实例。</p>
-            {:else}
-              <ul class="buckets">
-                {#each sizedInstances as item (item.id)}
-                  <li>
-                    <span>
-                      {item.name}
-                      {#if item.external}
-                        <small class="t-quiet">外部目录，游戏文件不计入</small>
-                      {/if}
-                    </span>
-                    <span class="bytes">
-                      {instanceBytes[item.id] !== undefined
-                        ? formatBytes(instanceBytes[item.id]!)
-                        : '…'}
-                    </span>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </SettingRow>
-
-          <SettingRow id="storage/clean" found={focused === 'storage/clean'}>
-            <div class="clean">
-              <Button
-                variant="ghost"
-                disabled={storageBusy !== ''}
-                onclick={() => void clean('cache')}
-              >
-                清除缓存
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={storageBusy !== ''}
-                onclick={() => void clean('logs')}
-              >
-                清除日志
-              </Button>
-              {#if freedNote}<span class="t-quiet">{freedNote}</span>{/if}
-            </div>
-          </SettingRow>
-
-          <SettingRow id="storage/slim" found={focused === 'storage/slim'}>
-            {#if !slimPlan}
-              <Button
-                variant="ghost"
-                disabled={storageBusy !== ''}
-                onclick={() => void previewSlim()}
-              >
-                {storageBusy === 'preview' ? '正在检查……' : '检查可清除的内容'}
-              </Button>
-            {:else if slimEmpty(slimPlan)}
-              <p class="t-quiet">没有可清除的共享文件：现有的每一项都有实例在用。</p>
-            {:else}
-              <div class="slim">
-                {#if slimPlan.versions.length > 0}
-                  <label>
-                    <input type="checkbox" bind:checked={slimPick.versions} />
-                    <span>
-                      没有实例使用的版本：{nameList(slimPlan.versions)}
-                      <small class="t-quiet">{formatBytes(slimPlan.versionsBytes)}</small>
-                    </span>
-                  </label>
-                {/if}
-                {#if slimPlan.runtimes.length > 0}
-                  <label>
-                    <input type="checkbox" bind:checked={slimPick.runtimes} />
-                    <span>
-                      无实例需要的 Java 运行时：{nameList(slimPlan.runtimes)}
-                      <small class="t-quiet">{formatBytes(slimPlan.runtimesBytes)}</small>
-                    </span>
-                  </label>
-                {/if}
-                {#if slimPlan.librariesFiles > 0}
-                  <label>
-                    <input type="checkbox" bind:checked={slimPick.libraries} />
-                    <span>
-                      未被引用的依赖库（{slimPlan.librariesFiles} 个文件）
-                      <small class="t-quiet">{formatBytes(slimPlan.librariesBytes)}</small>
-                    </span>
-                  </label>
-                {/if}
-                {#if slimPlan.assetsFiles > 0}
-                  <label>
-                    <input type="checkbox" bind:checked={slimPick.assets} />
-                    <span>
-                      未被引用的资源（{slimPlan.assetsFiles} 个文件）
-                      <small class="t-quiet">{formatBytes(slimPlan.assetsBytes)}</small>
-                    </span>
-                  </label>
-                {/if}
-                <!-- 按下去会发生什么，先说清再给按钮——和恢复快照同一个规矩。 -->
-                <p class="slim-consequence">
-                  将释放 {formatBytes(slimPicked)}。清除的内容需要时会重新下载。
-                </p>
-                <div class="clean">
-                  <Button variant="ghost" onclick={() => (slimPlan = undefined)}>取消</Button>
-                  <Button
-                    variant="primary"
-                    disabled={slimPicked === 0 || storageBusy !== ''}
-                    onclick={() => void applySlim()}
-                  >
-                    {storageBusy === 'slim' ? '正在清除……' : '清除'}
-                  </Button>
-                </div>
-              </div>
-            {/if}
-          </SettingRow>
-
           {#if storageError && storage}<div class="alert">{storageError}</div>{/if}
         {:else}
           <!--
@@ -1325,8 +1502,50 @@
     font-size: var(--t-micro);
   }
 
-  /* 分区清单：名字在左、数字靠右对齐成一列，扫一眼就知道大头在哪。 */
-  .buckets {
+  /* 目录：三条路径并成一行设置，小标签在左，路径等宽字体。 */
+  .paths {
+    display: grid;
+    gap: var(--s2);
+  }
+
+  .path-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-width: 0;
+  }
+
+  .path-label {
+    flex: none;
+    width: 4em;
+    font-size: var(--t-micro);
+  }
+
+  /* 比例条：大头在哪一眼看出来，数字是确认用的。 */
+  .bar {
+    display: flex;
+    height: 6px;
+    margin: 0 0 var(--s2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .seg {
+    min-width: 1px;
+  }
+
+  /* 同一支色阶从强到弱：桶有固定次序，颜色跟着次序走，不各自抢戏。 */
+  .tone-0 { background: color-mix(in srgb, var(--accent) 90%, transparent); }
+  .tone-1 { background: color-mix(in srgb, var(--accent) 68%, transparent); }
+  .tone-2 { background: color-mix(in srgb, var(--accent) 50%, transparent); }
+  .tone-3 { background: color-mix(in srgb, var(--accent) 36%, transparent); }
+  .tone-4 { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+  .tone-5 { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .tone-6 { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+  /* 桶表：每桶一行，形状完全一样——色点、名字、数字；注解和动作长在
+     自己的行上，「看、可省多少、删」不再分家。 */
+  .bucket-table {
     display: grid;
     gap: 1px;
     margin: 0;
@@ -1334,24 +1553,34 @@
     list-style: none;
   }
 
-  .buckets li {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--s3);
+  .bucket-table > li {
     padding: var(--s2) 0;
-    color: var(--ink-2);
-    font-size: var(--t-body);
     box-shadow: inset 0 -1px 0 var(--hairline-2);
   }
 
-  .buckets li:last-child {
+  .bucket-table > li:last-child {
     box-shadow: none;
   }
 
-  .buckets small {
-    display: block;
-    font-size: var(--t-micro);
+  .bucket-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    color: var(--ink-2);
+    font-size: var(--t-body);
+  }
+
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    align-self: center;
+  }
+
+  .bucket-name {
+    flex: 1;
+    min-width: 0;
   }
 
   .bytes {
@@ -1360,37 +1589,99 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .clean {
+  /* 桶的第二行：注解、明细摘要。缩进对齐到名字，不对齐到色点。 */
+  .sub {
+    margin: var(--s1) 0 0;
+    padding-left: calc(8px + var(--s2));
+    font-size: var(--t-micro);
+  }
+
+  .sub-toggle {
+    display: block;
+    color: var(--ink-4);
+    text-align: left;
+    cursor: pointer;
+    transition: color var(--t-fast) var(--ease);
+  }
+
+  .sub-toggle:hover {
+    color: var(--ink-2);
+  }
+
+  .reclaim {
     display: flex;
-    align-items: center;
+    align-items: baseline;
+    justify-content: space-between;
     gap: var(--s3);
+    color: var(--ink-3);
   }
 
-  .slim {
+  .freed-note {
+    flex: none;
+    font-size: var(--t-micro);
+  }
+
+  .detail {
     display: grid;
-    gap: var(--s3);
+    gap: var(--s1);
+    margin: var(--s2) 0 0;
+    padding: 0 0 0 calc(8px + var(--s2));
+    list-style: none;
   }
 
-  .slim label {
+  .detail li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
+    color: var(--ink-3);
+    font-size: var(--t-small);
+  }
+
+  .detail-name small {
+    margin-left: var(--s2);
+    font-size: var(--t-micro);
+  }
+
+  /* 就地展开的确认区：勾选、后果句、按钮。不弹窗——决定在它作用的那一行
+     旁边做。 */
+  .expand {
+    display: grid;
+    gap: var(--s2);
+    margin-top: var(--s2);
+    padding-left: calc(8px + var(--s2));
+  }
+
+  .expand label {
     display: flex;
     align-items: baseline;
     gap: var(--s2);
     color: var(--ink-2);
-    font-size: var(--t-body);
+    font-size: var(--t-small);
     cursor: pointer;
   }
 
-  .slim label small {
-    margin-left: var(--s2);
-    font-variant-numeric: tabular-nums;
+  .pick-name {
+    flex: 1;
+    min-width: 0;
   }
 
-  /* 后果句。这一段是这一节最重要的一行：说清按下去会发生什么。 */
-  .slim-consequence {
+  .migrate-confirm {
+    padding-left: 0;
+  }
+
+  /* 后果句。这一段是展开区最重要的一行：说清按下去会发生什么。 */
+  .consequence {
     margin: 0;
     color: var(--ink-2);
     font-size: var(--t-small);
     line-height: 1.7;
+  }
+
+  .expand-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s3);
   }
 
   /*
@@ -1576,10 +1867,6 @@
     margin: 0;
     color: var(--ink-2);
     overflow-wrap: anywhere;
-  }
-
-  .open {
-    justify-self: start;
   }
 
   .err {
