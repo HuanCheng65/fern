@@ -352,6 +352,38 @@ const ui = {
     files: '{count} 个文件',
   },
 
+  // 导出实例的弹窗。两种格式回答两个问题：整合包给别人，搬迁包给自己的
+  // 另一台机器。带什么由内容清单说了算，空分区不出现。
+  export: {
+    dialog: '导出实例',
+    title: '导出「{name}」',
+    formatAria: '导出格式',
+    mrpack: '整合包',
+    fernpack: '搬迁包',
+    mrpackTitle: 'Modrinth 整合包（.mrpack）',
+    mrpackAbout: 'Prism、HMCL、PCL 等启动器都能导入。整合包不含存档。',
+    mrpackMods:
+      '模组只记下载地址，包内不含 jar 文件。地址要联网按文件哈希从 Modrinth 查得，查不到的模组会直接打进包里。',
+    fernpackTitle: 'Fern 搬迁包（.fernpack）',
+    fernpackAbout: '包含模组文件本身，换机器时用。只有 Fern 能打开。',
+    carry: '带上哪些内容',
+    world: '世界「{name}」',
+    mods: '模组文件（{count} 个）',
+    modsOff: '不含 jar 的包在另一台机器上需要重新下载模组。',
+    config: '配置（{count} 个文件）',
+    configHint: '配置里可能有服务器地址和坐标点，分享给别人前想一想。',
+    resourcepacks: '资源包（{count} 个文件）',
+    shaderpacks: '光影包（{count} 个文件）',
+    schematics: '投影原理图（{count} 个文件）',
+    screenshots: '截图（{count} 张）',
+    cancel: '取消',
+    run: '选择位置并导出',
+    running: '正在导出',
+    done: '已导出',
+    doneDetail: '{count} 个文件 · {size}',
+    doneLinked: '，其中 {count} 个模组以下载地址记录',
+  },
+
   // 单张快照的浮层：命名、恢复、删除。
   snapshot: {
     dialog: '快照',

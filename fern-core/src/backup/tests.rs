@@ -436,9 +436,12 @@ fn the_interface_sees_the_field_names_it_expects() {
     assert_eq!(usage["modsBytes"], 40);
     assert_eq!(usage["instances"][0]["reclaimable"], 60);
 
-    let contents: export::Contents =
-        serde_json::from_str(r#"{"saves":true,"mods":false}"#).expect("contents");
-    assert!(contents.saves && !contents.mods);
+    let contents: export::Contents = serde_json::from_str(
+        r#"{"saves":["家"],"mods":false,"config":true,"resourcepacks":true,"shaderpacks":false,"schematics":false,"screenshots":false}"#,
+    )
+    .expect("contents");
+    assert_eq!(contents.saves, vec!["家".to_owned()]);
+    assert!(!contents.mods && contents.config);
     let exported = serde_json::to_value(export::Exported {
         path: PathBuf::from("/tmp/a.mrpack"),
         bytes: 5,

@@ -44,23 +44,70 @@ pub struct Exported {
     pub linked: Option<usize>,
 }
 
-/// `.fernpack` 里带什么。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 包里带什么。
+///
+/// 两种格式共用一份清单；格式自己的定义盖过清单里说不通的部分——mrpack 的
+/// 模组是它存在的意义（`mods` 不适用），惯例上也不含存档（`saves` 不适用）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Contents {
-    /// 存档。整包分享时通常不要，换机器时一定要。
-    pub saves: bool,
-    /// 模组 jar 本身。关掉之后这个包就不再「保证能用」了。
+    /// 带哪些世界，按世界名。空就是一个都不带。
+    pub saves: Vec<String>,
+    /// 模组 jar 本身。关掉之后搬迁包就不再「保证能用」了。
     pub mods: bool,
+    /// `config/` 加游戏目录根下的设置文件。里面常有服务器地址、坐标点，
+    /// 分享给别人时未必想带。
+    pub config: bool,
+    pub resourcepacks: bool,
+    pub shaderpacks: bool,
+    /// 投影原理图，玩家自己的创作。
+    pub schematics: bool,
+    pub screenshots: bool,
 }
 
-impl Default for Contents {
-    fn default() -> Self {
-        Self {
-            saves: true,
-            mods: true,
+/// 这个实例有什么可导。界面按它画勾选项——没有的分区不该出现在界面上，
+/// 一个永远勾不出东西的选项只会让人怀疑导出坏了。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Inventory {
+    pub saves: Vec<String>,
+    pub mods: usize,
+    pub config: usize,
+    pub resourcepacks: usize,
+    pub shaderpacks: usize,
+    pub schematics: usize,
+    pub screenshots: usize,
+}
+
+/// 顶层归类：`saves/家/...` 的顶层是 `saves`。
+fn top(relative: &str) -> &str {
+    relative.split('/').next().unwrap_or("")
+}
+
+/// 数一遍有什么可带的。
+pub fn inventory(paths: &DataPaths, instance_id: &str) -> Result<Inventory> {
+    let directory = game_directory(paths, instance_id)?;
+    let (candidates, _) = select::scan(&directory);
+    let mut inventory = Inventory::default();
+    for candidate in &candidates {
+        if let Some(save) = select::save_of(&candidate.relative) {
+            if !inventory.saves.iter().any(|name| name == save) {
+                inventory.saves.push(save.to_owned());
+            }
+        } else if select::is_mod(&candidate.relative) {
+            inventory.mods += 1;
+        } else {
+            match top(&candidate.relative) {
+                "resourcepacks" => inventory.resourcepacks += 1,
+                "shaderpacks" => inventory.shaderpacks += 1,
+                "schematics" => inventory.schematics += 1,
+                "screenshots" => inventory.screenshots += 1,
+                _ => inventory.config += 1,
+            }
         }
     }
+    inventory.saves.sort();
+    Ok(inventory)
 }
 
 /// 把一个世界打成 zip。
@@ -111,7 +158,7 @@ pub fn fernpack(
     files += 1;
 
     for candidate in &candidates {
-        if !wanted(&candidate.relative, contents) {
+        if !wanted(&candidate.relative, &contents) {
             continue;
         }
         copy_entry(
@@ -126,14 +173,21 @@ pub fn fernpack(
     finish(writer, destination, files, None)
 }
 
-fn wanted(relative: &str, contents: Contents) -> bool {
-    if select::save_of(relative).is_some() {
-        return contents.saves;
+fn wanted(relative: &str, contents: &Contents) -> bool {
+    if let Some(save) = select::save_of(relative) {
+        return contents.saves.iter().any(|name| name == save);
     }
     if select::is_mod(relative) {
         return contents.mods;
     }
-    true
+    match top(relative) {
+        "resourcepacks" => contents.resourcepacks,
+        "shaderpacks" => contents.shaderpacks,
+        "schematics" => contents.schematics,
+        "screenshots" => contents.screenshots,
+        // config/ 和游戏目录根下的设置文件。
+        _ => contents.config,
+    }
 }
 
 /// Modrinth 整合包。
@@ -143,7 +197,12 @@ fn wanted(relative: &str, contents: Contents) -> bool {
 /// 和实际文件对不上，而哈希永远描述的是磁盘上真正的那一份。
 ///
 /// 查不到的 jar 落进 `overrides/`，包会大一些，但仍然是个能用的包。
-pub async fn mrpack(paths: &DataPaths, instance_id: &str, destination: &Path) -> Result<Exported> {
+pub async fn mrpack(
+    paths: &DataPaths,
+    instance_id: &str,
+    contents: Contents,
+    destination: &Path,
+) -> Result<Exported> {
     let profile = crate::read_instance(paths, instance_id)?;
     let directory = game_directory(paths, instance_id)?;
     let (candidates, _) = select::scan(&directory);
@@ -214,8 +273,9 @@ pub async fn mrpack(paths: &DataPaths, instance_id: &str, destination: &Path) ->
     )?;
     files += 1;
 
-    // 配置、options.txt、资源包，加上查不到来源的那些 jar。存档不进整合包：
-    // 整合包是「一套玩法」，不是「某个人的存档」。
+    // overrides 里带什么由清单说了算，两条格式规则盖过清单：存档不进整合包
+    // （它是「一套玩法」，不是「某个人的存档」），模组是整合包的定义本身——
+    // 查得到来源的记地址，查不到的随包，都不受 `contents.mods` 影响。
     for candidate in &candidates {
         let carried = embedded
             .iter()
@@ -223,7 +283,11 @@ pub async fn mrpack(paths: &DataPaths, instance_id: &str, destination: &Path) ->
         if select::save_of(&candidate.relative).is_some() {
             continue;
         }
-        if select::is_mod(&candidate.relative) && !carried {
+        if select::is_mod(&candidate.relative) {
+            if !carried {
+                continue;
+            }
+        } else if !wanted(&candidate.relative, &contents) {
             continue;
         }
         copy_entry(
@@ -385,16 +449,47 @@ mod tests {
 
     #[test]
     fn a_fernpack_carries_what_was_asked_for() {
-        let bare = Contents {
-            saves: false,
-            mods: false,
+        let everything = Contents {
+            saves: vec!["家".to_owned()],
+            mods: true,
+            config: true,
+            resourcepacks: true,
+            shaderpacks: true,
+            schematics: true,
+            screenshots: true,
         };
-        assert!(!wanted("saves/家/level.dat", bare));
-        assert!(!wanted("mods/create.jar", bare));
-        assert!(wanted("config/create.toml", bare));
-        // 默认是「保证能用」的那一份：存档和 jar 都带上。
-        assert!(wanted("saves/家/level.dat", Contents::default()));
-        assert!(wanted("mods/create.jar", Contents::default()));
+        let nothing = Contents {
+            saves: Vec::new(),
+            mods: false,
+            config: false,
+            resourcepacks: false,
+            shaderpacks: false,
+            schematics: false,
+            screenshots: false,
+        };
+        for relative in [
+            "saves/家/level.dat",
+            "mods/create.jar",
+            "config/create.toml",
+            "options.txt",
+            "resourcepacks/faithful.zip",
+            "shaderpacks/bsl.zip",
+            "schematics/城堡.litematic",
+            "screenshots/2026-08-11.png",
+        ] {
+            assert!(wanted(relative, &everything), "{relative} 应当被带上");
+            assert!(!wanted(relative, &nothing), "{relative} 应当被略过");
+        }
+        // 世界按名字逐个选：勾了「家」不等于勾了别的世界。
+        assert!(!wanted("saves/矿场/level.dat", &everything));
+        // 根下的设置文件归「配置」管。
+        assert!(wanted(
+            "servers.dat",
+            &Contents {
+                config: true,
+                ..nothing.clone()
+            }
+        ));
     }
 
     #[test]

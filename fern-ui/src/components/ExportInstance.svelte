@@ -9,15 +9,27 @@
    * - **搬迁包**（`.fernpack`）——给自己的另一台机器。模组文件本身在包里，
    *   所以它是那个「装得下就一定装得回去」的格式。
    *
-   * 每一种下面都写清它**不**包含什么。导出最常见的失望是「拿到手才发现少了
-   * 东西」，而那句话本该在按下去之前就说。
+   * 带什么由内容清单说了算：世界逐个勾，其余按分区勾。上一版一股脑全带，
+   * 既选不了「五个世界只带一个」，也没法在分享整合包时把写着服务器地址的
+   * config 摘出去。空分区不出现——一个永远勾不出东西的选项只会让人怀疑
+   * 导出坏了。
    */
   import { save } from '@tauri-apps/plugin-dialog'
   import Dialog from 'fern-kit/ui/Dialog.svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
+  import { format as fill, ui } from '../lib/i18n'
+  import { inTauri } from '../lib/instances.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import { notices } from '../lib/notices.svelte'
-  import { exportFernpack, exportMrpack, fileStem, type Exported } from '../lib/backup'
+  import {
+    exportFernpack,
+    exportInventory,
+    exportMrpack,
+    fileStem,
+    type ExportContents,
+    type ExportInventory,
+    type Exported,
+  } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
 
   interface Props {
@@ -31,17 +43,69 @@
   type Format = 'mrpack' | 'fernpack'
 
   let format = $state<Format>('mrpack')
-  let withSaves = $state(true)
-  let withMods = $state(true)
+  let inventory = $state<ExportInventory | undefined>(undefined)
+  /** 勾选状态。世界是名字的集合，其余是分区开关。 */
+  let saves = $state<string[]>([])
+  let mods = $state(true)
+  let config = $state(true)
+  let resourcepacks = $state(true)
+  let shaderpacks = $state(true)
+  let schematics = $state(true)
+  let screenshots = $state(true)
   let busy = $state(false)
   let error = $state('')
 
   const extension = $derived(format === 'mrpack' ? 'mrpack' : 'fernpack')
 
+  /**
+   * 默认值按格式的用途给：搬迁是「全带走」，整合包是「一套玩法」——
+   * 原理图和截图是这个人自己的东西，默认不给别人。
+   */
+  function applyDefaults(inv: ExportInventory, next: Format) {
+    saves = next === 'fernpack' ? [...inv.saves] : []
+    mods = true
+    config = true
+    resourcepacks = true
+    shaderpacks = true
+    schematics = next === 'fernpack'
+    screenshots = next === 'fernpack'
+  }
+
+  $effect(() => {
+    if (!inTauri()) return
+    void exportInventory(instanceId).then((inv) => {
+      inventory = inv
+      applyDefaults(inv, format)
+    })
+  })
+
+  function switchFormat(next: Format) {
+    format = next
+    if (inventory) applyDefaults(inventory, next)
+  }
+
+  const toggleSave = (name: string) =>
+    (saves = saves.includes(name) ? saves.filter((it) => it !== name) : [...saves, name])
+
+  const contents = (): ExportContents => ({
+    saves,
+    mods,
+    config,
+    resourcepacks,
+    shaderpacks,
+    schematics,
+    screenshots,
+  })
+
   async function run() {
     const destination = await save({
       defaultPath: `${fileStem(instanceName)}.${extension}`,
-      filters: [{ name: format === 'mrpack' ? 'Modrinth 整合包' : 'Fern 搬迁包', extensions: [extension] }],
+      filters: [
+        {
+          name: format === 'mrpack' ? ui.export.mrpackTitle : ui.export.fernpackTitle,
+          extensions: [extension],
+        },
+      ],
     })
     if (!destination) return
 
@@ -50,13 +114,18 @@
     try {
       const result: Exported =
         format === 'mrpack'
-          ? await exportMrpack(instanceId, destination)
-          : await exportFernpack(instanceId, { saves: withSaves, mods: withMods }, destination)
+          ? await exportMrpack(instanceId, contents(), destination)
+          : await exportFernpack(instanceId, contents(), destination)
       notices.say({
-        title: '已导出',
+        title: ui.export.done,
         detail:
-          `${result.files} 个文件 · ${formatBytes(result.bytes)}` +
-          (result.linked === undefined ? '' : `，其中 ${result.linked} 个模组以下载地址记录`),
+          fill(ui.export.doneDetail, {
+            count: String(result.files),
+            size: formatBytes(result.bytes),
+          }) +
+          (result.linked === undefined
+            ? ''
+            : fill(ui.export.doneLinked, { count: String(result.linked) })),
       })
       onclose()
     } catch (cause) {
@@ -67,50 +136,98 @@
   }
 </script>
 
-<Dialog label="导出实例" width="500px" {onclose}>
+<Dialog label={ui.export.dialog} width="500px" {onclose}>
   <header>
-    <h2>导出「{instanceName}」</h2>
+    <h2>{fill(ui.export.title, { name: instanceName })}</h2>
   </header>
 
   <div class="body">
     <SegmentedControl
       options={[
-        { value: 'mrpack' as const, label: '整合包' },
-        { value: 'fernpack' as const, label: '搬迁包' },
+        { value: 'mrpack' as const, label: ui.export.mrpack },
+        { value: 'fernpack' as const, label: ui.export.fernpack },
       ]}
       value={format}
-      onchange={(value) => (format = value)}
-      aria-label="导出格式"
+      onchange={switchFormat}
+      aria-label={ui.export.formatAria}
     />
 
     {#if format === 'mrpack'}
       <p class="about">
-        <strong>Modrinth 整合包（.mrpack）</strong>
-        <span>Prism、HMCL、PCL 等启动器都能导入，配置和资源包会一并打包。</span>
-        <span class="t-quiet">
-          模组只记下载地址，包内不含 jar 文件。地址要联网按文件哈希从 Modrinth 查得，查不到的模组会直接打进包里。整合包不含存档。
-        </span>
+        <strong>{ui.export.mrpackTitle}</strong>
+        <span>{ui.export.mrpackAbout}</span>
+        <span class="t-quiet">{ui.export.mrpackMods}</span>
       </p>
     {:else}
       <p class="about">
-        <strong>Fern 搬迁包（.fernpack）</strong>
-        <span>包含模组文件本身，换机器时用。只有 Fern 能打开。</span>
+        <strong>{ui.export.fernpackTitle}</strong>
+        <span>{ui.export.fernpackAbout}</span>
       </p>
+    {/if}
 
-      <div class="options">
-        <label>
-          <input type="checkbox" bind:checked={withSaves} />
-          <span>包含存档</span>
-        </label>
-        <label>
-          <input type="checkbox" bind:checked={withMods} />
-          <span>
-            包含模组文件
-            {#if !withMods}
-              <small class="t-quiet">不含 jar 的包在另一台机器上需要重新下载模组。</small>
-            {/if}
-          </span>
-        </label>
+    {#if inventory}
+      <div class="carry">
+        <span class="t-quiet group">{ui.export.carry}</span>
+
+        {#if format === 'fernpack'}
+          {#each inventory.saves as world (world)}
+            <label>
+              <input
+                type="checkbox"
+                checked={saves.includes(world)}
+                onchange={() => toggleSave(world)}
+              />
+              <span>{fill(ui.export.world, { name: world })}</span>
+            </label>
+          {/each}
+          {#if inventory.mods > 0}
+            <label>
+              <input type="checkbox" bind:checked={mods} />
+              <span>
+                {fill(ui.export.mods, { count: String(inventory.mods) })}
+                {#if !mods}
+                  <small class="t-quiet">{ui.export.modsOff}</small>
+                {/if}
+              </span>
+            </label>
+          {/if}
+        {/if}
+
+        {#if inventory.config > 0}
+          <label>
+            <input type="checkbox" bind:checked={config} />
+            <span>
+              {fill(ui.export.config, { count: String(inventory.config) })}
+              {#if format === 'mrpack'}
+                <small class="t-quiet">{ui.export.configHint}</small>
+              {/if}
+            </span>
+          </label>
+        {/if}
+        {#if inventory.resourcepacks > 0}
+          <label>
+            <input type="checkbox" bind:checked={resourcepacks} />
+            <span>{fill(ui.export.resourcepacks, { count: String(inventory.resourcepacks) })}</span>
+          </label>
+        {/if}
+        {#if inventory.shaderpacks > 0}
+          <label>
+            <input type="checkbox" bind:checked={shaderpacks} />
+            <span>{fill(ui.export.shaderpacks, { count: String(inventory.shaderpacks) })}</span>
+          </label>
+        {/if}
+        {#if inventory.schematics > 0}
+          <label>
+            <input type="checkbox" bind:checked={schematics} />
+            <span>{fill(ui.export.schematics, { count: String(inventory.schematics) })}</span>
+          </label>
+        {/if}
+        {#if inventory.screenshots > 0}
+          <label>
+            <input type="checkbox" bind:checked={screenshots} />
+            <span>{fill(ui.export.screenshots, { count: String(inventory.screenshots) })}</span>
+          </label>
+        {/if}
       </div>
     {/if}
 
@@ -118,9 +235,9 @@
   </div>
 
   <footer>
-    <Button variant="ghost" onclick={onclose}>取消</Button>
+    <Button variant="ghost" onclick={onclose}>{ui.export.cancel}</Button>
     <Button variant="primary" disabled={busy} onclick={() => void run()}>
-      {busy ? '正在导出' : '选择位置并导出'}
+      {busy ? ui.export.running : ui.export.run}
     </Button>
   </footer>
 </Dialog>
@@ -163,12 +280,17 @@
     color: var(--ink-2);
   }
 
-  .options {
+  .carry {
     display: grid;
     gap: var(--s3);
   }
 
-  .options label {
+  .carry .group {
+    font-size: var(--t-micro);
+    letter-spacing: 0.02em;
+  }
+
+  .carry label {
     display: flex;
     align-items: flex-start;
     gap: var(--s3);
@@ -177,13 +299,13 @@
     cursor: pointer;
   }
 
-  .options small {
+  .carry small {
     display: block;
     margin-top: 2px;
     font-size: var(--t-micro);
   }
 
-  .options input {
+  .carry input {
     margin-top: 2px;
     accent-color: var(--accent);
   }

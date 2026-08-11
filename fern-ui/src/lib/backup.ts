@@ -84,9 +84,26 @@ export interface Exported {
   linked?: number
 }
 
+/** 包里带什么。世界按名字逐个选，其余按分区开关。 */
 export interface ExportContents {
-  saves: boolean
+  saves: string[]
   mods: boolean
+  config: boolean
+  resourcepacks: boolean
+  shaderpacks: boolean
+  schematics: boolean
+  screenshots: boolean
+}
+
+/** 这个实例有什么可导。数字是文件数，界面据此隐藏空分区。 */
+export interface ExportInventory {
+  saves: string[]
+  mods: number
+  config: number
+  resourcepacks: number
+  shaderpacks: number
+  schematics: number
+  screenshots: number
 }
 
 export const listSnapshots = (instanceId: string) =>
@@ -119,8 +136,14 @@ export const exportFernpack = (
   destination: string,
 ) => invoke<Exported>('export_fernpack', { instanceId, contents, destination })
 
-export const exportMrpack = (instanceId: string, destination: string) =>
-  invoke<Exported>('export_mrpack', { instanceId, destination })
+export const exportMrpack = (
+  instanceId: string,
+  contents: ExportContents,
+  destination: string,
+) => invoke<Exported>('export_mrpack', { instanceId, contents, destination })
+
+export const exportInventory = (instanceId: string) =>
+  invoke<ExportInventory>('export_inventory', { instanceId })
 
 /** 这一张为什么在这里。 */
 export const why = (snapshot: Snapshot) => describe(`snapshot.${snapshot.reason}`)

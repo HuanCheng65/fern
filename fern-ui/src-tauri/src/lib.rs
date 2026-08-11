@@ -775,15 +775,26 @@ async fn export_fernpack(
 #[tauri::command]
 async fn export_mrpack(
     instance_id: String,
+    contents: fern_core::ExportContents,
     destination: String,
 ) -> Result<fern_core::Exported, String> {
     fern_core::export_mrpack(
         &paths()?,
         &instance_id,
+        contents,
         std::path::Path::new(&destination),
     )
     .await
     .map_err(|error| format!("{error:#}"))
+}
+
+/// 这个实例有什么可导。导出弹窗按它画勾选项，没有的分区不出现。
+#[tauri::command]
+async fn export_inventory(instance_id: String) -> Result<fern_core::ExportInventory, String> {
+    off_thread(move || {
+        fern_core::export_inventory(&paths()?, &instance_id).map_err(|error| format!("{error:#}"))
+    })
+    .await?
 }
 
 /// 现在有哪些游戏在跑。
@@ -1473,6 +1484,7 @@ pub fn run() {
             export_world,
             export_fernpack,
             export_mrpack,
+            export_inventory,
             list_places,
             pearl_host,
             pearl_join,

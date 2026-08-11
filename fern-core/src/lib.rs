@@ -49,9 +49,10 @@ pub use account::yggdrasil::{
     YggdrasilSession, authenticate, ensure_fresh as refresh_session, ensure_injector,
     prefetched as prefetched_metadata,
 };
-pub use backup::export::{Contents as ExportContents, Exported};
+pub use backup::export::{Contents as ExportContents, Exported, Inventory as ExportInventory};
 pub use backup::export::{
-    fernpack as export_fernpack, mrpack as export_mrpack, world as export_world,
+    fernpack as export_fernpack, inventory as export_inventory, mrpack as export_mrpack,
+    world as export_world,
 };
 pub use backup::manifest::Reason as SnapshotReason;
 pub use backup::select::{SkipReason, Skipped};
