@@ -813,7 +813,12 @@
           </SettingRow>
 
           <SettingRow id="game/window" found={focused === 'game/window'}>
-            <div class="slider-row">
+            <!--
+              分段控件留在它在别的行上的那个位置——右边，同宽。尺寸只在选了
+              「指定尺寸」时出现，落在它正下方，而不是把整行改成竖排：一节里
+              有的行横排、有的行竖排，读起来就是没有对齐这回事。
+            -->
+            <div class="window">
               <SegmentedControl
                 aria-label="游戏窗口"
                 value={resolution ? 'custom' : 'default'}
@@ -825,23 +830,25 @@
                 ]}
               />
               {#if resolution}
-                <Input
-                  class="size"
-                  type="number"
-                  aria-label="窗口宽度"
-                  value={resolution.width}
-                  oninput={(event) =>
-                    setResolution(Number(event.currentTarget.value), resolution.height)}
-                />
-                <span class="t-quiet">×</span>
-                <Input
-                  class="size"
-                  type="number"
-                  aria-label="窗口高度"
-                  value={resolution.height}
-                  oninput={(event) =>
-                    setResolution(resolution.width, Number(event.currentTarget.value))}
-                />
+                <div class="size-row">
+                  <Input
+                    class="size"
+                    type="number"
+                    aria-label="窗口宽度"
+                    value={resolution.width}
+                    oninput={(event) =>
+                      setResolution(Number(event.currentTarget.value), resolution.height)}
+                  />
+                  <span class="t-quiet">×</span>
+                  <Input
+                    class="size"
+                    type="number"
+                    aria-label="窗口高度"
+                    value={resolution.height}
+                    oninput={(event) =>
+                      setResolution(resolution.width, Number(event.currentTarget.value))}
+                  />
+                </div>
               {/if}
             </div>
           </SettingRow>
@@ -1798,10 +1805,17 @@
     cursor: pointer;
   }
 
-  .slider-row {
+  /* 控件在上、它的补充在下，都靠右——右边缘是这一节所有控件共用的那条线。 */
+  .window {
+    display: grid;
+    justify-items: end;
+    gap: var(--s2);
+  }
+
+  .size-row {
     display: flex;
     align-items: center;
-    gap: var(--s3);
+    gap: var(--s2);
   }
 
   /* 结论在上、尺在下：读到的第一件事是那个数，不是一根线。 */
@@ -1821,7 +1835,7 @@
   }
 
   /* 布局归调用方，作用域样式进不了组件，罩一层自己的祖先。 */
-  .slider-row :global(.size) {
+  .size-row :global(.size) {
     width: 88px;
   }
 

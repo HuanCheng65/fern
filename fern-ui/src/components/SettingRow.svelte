@@ -47,10 +47,25 @@
     box-shadow: inset 0 -1px 0 var(--hairline-2);
   }
 
+  /*
+   * 标题在上、控件在下。
+   *
+   * 那一列必须写成显式的 `minmax(0, 1fr)`：隐式的 auto 轨道只在
+   * `justify-content` 是 normal 或 stretch 时才铺开，而这一行从 `.row` 继承来
+   * 的是 space-between，于是整行会缩到内容的宽度上——尺被挤成一小段、展开一
+   * 张明细表就把整行撑宽。0 那一头同样是必要的：没有它，一个长实例名照样能把
+   * 行顶出去。
+   */
   .row.stack {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     justify-items: stretch;
     gap: var(--s3);
+  }
+
+  /* 自己占一行的按钮不跟着拉满：铺满整行的按钮读起来是一块横幅。 */
+  .row.stack > :global(.btn) {
+    justify-self: start;
   }
 
   .row:last-child {
@@ -93,7 +108,15 @@
     line-height: 1.55;
   }
 
-  .row :global(.choice) {
+  /*
+   * 所有分段控件同宽。
+   *
+   * 选项字数各不相同（「自动/G1/ZGC」和「由游戏决定/指定尺寸」），跟着内容
+   * 走的话每一行的控件左边都停在不同的位置上，整节读起来就是一排参差的边。
+   * 这里认的是组件真正的类名 `segmented`——上一版写的 `.choice` 不存在，那条
+   * 规则一直没生效。
+   */
+  .row :global(.segmented) {
     flex: none;
     width: 210px;
   }
@@ -105,7 +128,7 @@
       gap: var(--s3);
     }
 
-    .row :global(.choice) {
+    .row :global(.segmented) {
       width: 100%;
     }
   }

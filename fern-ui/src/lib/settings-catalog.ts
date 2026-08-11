@@ -97,7 +97,6 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     label: '游戏窗口',
     note: '未指定时沿用游戏自身记录的尺寸。',
     keywords: 'window resolution 分辨率 尺寸 全屏',
-    stack: true,
   },
   {
     id: 'game/jvm',
@@ -149,7 +148,6 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     label: '现有游戏目录',
     note: '把已有的 .minecraft 中的版本添加为实例。游戏文件保留在原位置。',
     keywords: 'minecraft import existing directory 导入 现有 目录 便携',
-    stack: true,
   },
 
   { id: 'about/version', label: '版本', keywords: 'version about 关于 build 构建' },
