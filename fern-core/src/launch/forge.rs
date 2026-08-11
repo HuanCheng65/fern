@@ -143,7 +143,8 @@ pub async fn install(
         tokio::fs::rename(&temporary, &installer_path).await?;
     }
 
-    let (profile, version_json) = read_profile(&installer_path)?;
+    let (profile, mut version_json) = read_profile(&installer_path)?;
+    inherit_from_vanilla(&mut version_json, game_version);
     let version_id = write_version_json(paths, &version_json)?;
 
     // 装过就别再来一遍：processors 那一段要几十秒到几分钟。
@@ -233,6 +234,34 @@ fn read_profile(installer: &Path) -> Result<(InstallProfile, serde_json::Value)>
     Ok((profile, version_json))
 }
 
+/// 补上老 Forge 漏写的 `inheritsFrom`。
+///
+/// 1.7.2 及更早的 `versionInfo` 是一份**完整**的版本描述（整份库清单都抄在
+/// 里面），却不说自己是给哪个版本用的——那个年代的启动器靠 `install_profile`
+/// 另一半的 `minecraft` 字段知道。照字面读，这份描述里没有 client jar 的地
+/// 址、没有 assetIndex、没有 logging：游戏 jar 会被找到版本目录下一个不存在
+/// 的位置，资源一个都不下。
+///
+/// 补上这一句，合并那条路（[`crate::launch::version::resolve`]）就把这些全
+/// 接上了，不必为老格式另开一套。1.7.10 起 Forge 自己写了这个字段。
+fn inherit_from_vanilla(version_json: &mut serde_json::Value, game_version: &str) {
+    let Some(object) = version_json.as_object_mut() else {
+        return;
+    };
+    let declared = object
+        .get("inheritsFrom")
+        .and_then(serde_json::Value::as_str);
+    let id = object.get("id").and_then(serde_json::Value::as_str);
+    // 它自己就是那个版本的话，继承自己只会被 resolve 判成循环。
+    if declared.is_some() || id == Some(game_version) {
+        return;
+    }
+    object.insert(
+        "inheritsFrom".to_owned(),
+        serde_json::Value::String(game_version.to_owned()),
+    );
+}
+
 fn write_version_json(paths: &DataPaths, version_json: &serde_json::Value) -> Result<String> {
     let id = version_json
         .get("id")
@@ -280,6 +309,22 @@ fn install_legacy(
     let mut entry = archive
         .by_name(name)
         .with_context(|| format!("安装器里没有 {name}"))?;
+    let mut target = std::fs::File::create(&destination)?;
+    std::io::copy(&mut entry, &mut target)?;
+    Ok(())
+}
+
+/// 把安装器自带的那一份库掏到 libraries 下。
+///
+/// 安装器里没有这一份就什么都不做：那说明它是某个 processor 的产物，轮不到
+/// 这里管。
+fn unpack_bundled_library(installer: &Path, relative: &str, libraries: &Path) -> Result<()> {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(installer)?)?;
+    let Ok(mut entry) = archive.by_name(&format!("maven/{relative}")) else {
+        return Ok(());
+    };
+    let destination = fern_download::safe_join(libraries, Path::new(relative))?;
+    std::fs::create_dir_all(destination.parent().expect("library directory"))?;
     let mut target = std::fs::File::create(&destination)?;
     std::io::copy(&mut entry, &mut target)?;
     Ok(())
@@ -380,7 +425,12 @@ async fn run_processors(
             continue;
         };
         if artifact.url.is_empty() {
-            // 有些条目只是占位，真正的文件由某个 processor 产出。
+            // 地址是空的说明这个文件不在网上：要么安装器自己带着，要么由某个
+            // processor 产出。1.12.2 那一代属于前者——它没有一条 processor，
+            // forge 自己那个 jar 就躺在安装器的 `maven/` 下面，掏不出来的话
+            // classpath 上就少了它，游戏起来是「ClassNotFoundException:
+            // net.minecraftforge.fml.common.launcher.FMLTweaker」。
+            unpack_bundled_library(installer, &artifact.path, &paths.libraries)?;
             continue;
         }
         tasks.push(DownloadTask::new(
@@ -652,5 +702,31 @@ mod tests {
                 .ends_with("/forge/1.12.2-14.23.5.2859/forge-1.12.2-14.23.5.2859-installer.jar")
         );
         assert!(installer_url(LoaderKind::Fabric, "1.21.1", "0.16.5").is_err());
+    }
+
+    /// 1.7.2 的安装器给的就是这个形状：一份完整的版本描述，不说自己是给哪个
+    /// 版本用的。补不上这一句，client jar 会被找去 Forge 那个版本目录（那里
+    /// 什么都没有），assetIndex 和 logging 也一并丢掉。
+    #[test]
+    fn a_legacy_profile_is_pointed_back_at_the_vanilla_version() {
+        let mut legacy = serde_json::json!({
+            "id": "1.7.2-Forge10.12.2.1161-mc172",
+            "mainClass": "net.minecraft.launchwrapper.Launch",
+        });
+        inherit_from_vanilla(&mut legacy, "1.7.2");
+        assert_eq!(legacy["inheritsFrom"], "1.7.2");
+
+        // 1.7.10 起 Forge 自己写了这个字段，写了就不动。
+        let mut modern = serde_json::json!({
+            "id": "1.7.10-Forge10.13.4.1614-1.7.10",
+            "inheritsFrom": "1.7.10",
+        });
+        inherit_from_vanilla(&mut modern, "1.7.10");
+        assert_eq!(modern["inheritsFrom"], "1.7.10");
+
+        // 它自己就是那个版本时不能补——继承自己会被 resolve 判成循环。
+        let mut itself = serde_json::json!({ "id": "1.7.2" });
+        inherit_from_vanilla(&mut itself, "1.7.2");
+        assert!(itself.get("inheritsFrom").is_none());
     }
 }

@@ -416,54 +416,34 @@ fn task_from_info(path: PathBuf, info: &DownloadInfo) -> Result<DownloadTask> {
     DownloadTask::new(path, &info.url, &info.sha1, info.size)
 }
 
-/// 这一条库要下哪个文件。rules、去重、classifier 都已经在 `effective_libraries`
-/// 与 `Library::file` 里定完了，这里只管把它翻译成路径。
+/// 这一条库要下哪个文件。rules、去重、classifier、仓库地址都已经在
+/// `effective_libraries` 与 `Library::file` 里定完了，这里只管把它变成一个
+/// 下载任务——启动时拼 classpath 读的是同一个函数。
+///
+/// 坐标推不出路径的条目跳过而不是让整轮补全失败：加载器的元数据里确实会有
+/// 不指向任何文件的占位条目。
 fn append_library_tasks(
     tasks: &mut Vec<DownloadTask>,
     root: &Path,
     library: &Library,
     context: &RuleContext,
 ) -> Result<()> {
-    if library.downloads.is_none() {
-        // 第三方 Maven（Fabric、Forge）只给一个仓库前缀，路径和文件名都要
-        // 从坐标推出来，也没有 sha1 可校验。
-        return append_maven_task(tasks, root, library);
-    }
     let Some(file) = library.file(context) else {
         return Ok(());
     };
-    let relative = file
-        .path
-        .as_deref()
-        .ok_or_else(|| anyhow!("library {} has no artifact path", library.name))?;
-    tasks.push(task_from_info(root.join(relative), file)?);
-    Ok(())
-}
-
-/// 只有 `url` 前缀的库。
-fn append_maven_task(tasks: &mut Vec<DownloadTask>, root: &Path, library: &Library) -> Result<()> {
-    let Some(repository) = library.url.as_deref() else {
-        // 既没有 downloads 也没有 url：这一条不指向任何可下载的东西。加载器
-        // 的元数据里确实会出现这种占位条目，跳过而不是让整轮补全失败。
+    // 地址是空串的条目下不了，也不该下：那是加载器的安装器在本地产出的文件
+    // （Forge 1.12.2 的 `net.minecraftforge:forge:…` 就是这样一条），补全时
+    // 它已经躺在 libraries 里了。启动那边照样把它算进 classpath。
+    if file.url.is_empty() {
         return Ok(());
-    };
-    let Some(relative) = fern_meta::maven_path(&library.name) else {
-        return Err(anyhow!("无法从库坐标 {} 推导路径", library.name));
-    };
-    let url = format!("{}{relative}", ensure_trailing_slash(repository));
-    tasks.push(DownloadTask::unverified(
-        fern_download::safe_join(root, Path::new(&relative))?,
-        &url,
-    )?);
-    Ok(())
-}
-
-fn ensure_trailing_slash(url: &str) -> String {
-    if url.ends_with('/') {
-        url.to_owned()
-    } else {
-        format!("{url}/")
     }
+    let path = fern_download::safe_join(root, Path::new(&file.path))?;
+    tasks.push(match (file.sha1, file.size) {
+        (Some(sha1), Some(size)) => DownloadTask::new(path, &file.url, sha1, size)?,
+        // 老格式只给坐标，没有 sha1 可校验。
+        _ => DownloadTask::unverified(path, &file.url)?,
+    });
+    Ok(())
 }
 
 #[cfg(test)]
@@ -533,10 +513,62 @@ mod tests {
         );
     }
 
+    /// 连仓库都不写的库要走 Mojang 那个默认仓库。1.12.2 之前的 Forge 把整份
+    /// 库清单抄进自己的版本描述，其中大半就是这么写的——包括主类所在的
+    /// launchwrapper。曾经把这种条目当占位跳过：文件不下、classpath 里也没有，
+    /// 游戏一启动就是「找不到主类」，退出码 1，一行日志都没有。
+    #[test]
+    fn a_bare_coordinate_comes_from_mojangs_repository() {
+        let library = Library {
+            name: "net.minecraft:launchwrapper:1.9".to_owned(),
+            ..Library::default()
+        };
+        let mut tasks = Vec::new();
+        append_library_tasks(
+            &mut tasks,
+            Path::new("libraries"),
+            &library,
+            &RuleContext::linux_x64(),
+        )
+        .expect("build library tasks");
+        assert_eq!(
+            tasks[0].url.as_str(),
+            "https://libraries.minecraft.net/net/minecraft/launchwrapper/1.9/launchwrapper-1.9.jar"
+        );
+        assert!(tasks[0].sha1.is_none());
+    }
+
+    /// Forge 1.12.2 的版本描述里，它自己那个 jar 的地址是空串——文件由安装器
+    /// 在本地产出。拿这个空串去解析地址，整轮补全会以「invalid download URL」
+    /// 收场，而它和「Forge」两个字毫无关系。
+    #[test]
+    fn a_library_with_no_address_is_produced_locally_not_downloaded() {
+        let library = Library {
+            name: "net.minecraftforge:forge:1.12.2-14.23.5.2864".to_owned(),
+            downloads: Some(LibraryDownloads {
+                artifact: Some(DownloadInfo {
+                    url: String::new(),
+                    ..info("net/minecraftforge/forge/1.12.2-14.23.5.2864/forge-14.23.5.2864.jar")
+                }),
+                classifiers: None,
+            }),
+            ..Library::default()
+        };
+        let mut tasks = Vec::new();
+        append_library_tasks(
+            &mut tasks,
+            Path::new("libraries"),
+            &library,
+            &RuleContext::linux_x64(),
+        )
+        .expect("build library tasks");
+        assert!(tasks.is_empty());
+    }
+
     #[test]
     fn a_library_that_points_at_nothing_is_skipped_not_fatal() {
         let library = Library {
-            name: "org.example:placeholder:1.0".to_owned(),
+            name: "这不是一个坐标".to_owned(),
             ..Library::default()
         };
         let mut tasks = Vec::new();

@@ -110,6 +110,11 @@ impl LaunchVariables {
             .insert("auth_uuid", &credentials.uuid)
             .insert("auth_access_token", &credentials.access_token)
             .insert("user_type", &credentials.user_type)
+            // 1.7.10 到 1.12 的 `--userProperties` 收的是一段 JSON，当年装的是
+            // Twitch 那套账号属性，今天一律是空对象。少了这一条，游戏拿到的是
+            // 字面的 `${user_properties}`，Gson 在 main 的第一行就抛
+            // 「Expected BEGIN_OBJECT but was STRING」——看不出和账户有关。
+            .insert("user_properties", "{}")
     }
 
     pub fn substitute(&self, template: &str) -> String {
@@ -618,6 +623,9 @@ pub async fn launch_instance(
         };
         running::unregister(&wait_instance);
 
+        // 窗口到底有没有出现过。下面判断这次是「关掉了」还是「没起来」要用，
+        // 所以要抢在那句占位的 store 之前读。
+        let ever_running = running.load(Ordering::SeqCst);
         alive.store(false, Ordering::SeqCst);
         // 抢在十五秒兜底之前把标记占掉：进程已经没了，再报一次「跑起来了」
         // 是在说一件不成立的事。实测就是这么出现的——退出之后又冒出一条
@@ -642,7 +650,12 @@ pub async fn launch_instance(
 
         // 正常关掉游戏不该在界面上留下任何痕迹，崩了才需要说话。信号退出
         // （exit_code 为 None）也算——那多半是被 OOM killer 收走了。
-        if exit_code != Some(0) {
+        //
+        // 退出码 0 同样可能是没起来：窗口一次都没出现过的话，这一次就不是
+        // 「玩完了关掉」。老 Forge 装了自己的 SecurityManager 去拦
+        // `System.exit`，启动失败时退出码是几全看它怎么抛——0 的那次用户什么
+        // 都看不到，而这正是最需要一句解释的时候。
+        if exit_code != Some(0) || !ever_running {
             let report = crash::build_report(
                 &crash::Situation {
                     instance_id: &wait_instance,
@@ -975,7 +988,7 @@ fn resolve_java_runtime(
                     .join("、")
             )
         };
-        anyhow!("需要 Java {} 或更高版本；{found}", requirement.minimum)
+        anyhow!("需要 {}；{found}", java::describe(requirement))
     })
 }
 
@@ -1027,31 +1040,16 @@ async fn collect_classpath_and_extract_natives(
     // rules 与坐标冲突都在这一步解决：同一个库只留一份，否则加载器会因为
     // classpath 上有两份同名类而拒绝启动（见 effective_libraries）。
     for library in metadata.effective_libraries(context) {
-        if library.downloads.is_none() {
-            // 只给了仓库前缀的库（加载器的那些）——路径由坐标推出来，补全时
-            // 就是按同一个坐标下的。指向不了任何文件的占位条目跳过。
-            if library.url.is_some() {
-                let Some(relative) = fern_meta::maven_path(&library.name) else {
-                    return Err(anyhow!("库坐标 {} 无法推出路径", library.name));
-                };
-                classpath.push(paths.libraries.join(relative));
-            }
-            continue;
-        }
-        // 补全下的就是这一个文件，同一个函数算出来的（见 prepare）。
+        // 补全下的就是这一个文件，同一个函数算出来的（见 prepare）。指向不了
+        // 任何文件的占位条目跳过。
         let Some(file) = library.file(context) else {
             continue;
         };
-        let relative = file
-            .path
-            .as_deref()
-            .ok_or_else(|| anyhow!("library {} has no artifact path", library.name))?;
-        let path = paths.libraries.join(relative);
-        // 有 `natives` 表的要解压出来，交给 -Djava.library.path 去找。1.19 之后
-        // 的元数据没有这张表，native jar 就是一条普通库（坐标带 classifier），
-        // 直接进 classpath——那个年代的 LWJGL 自己会从 classpath 上把 .dll 掏
-        // 出来。
-        if library.natives.is_some() {
+        let path = fern_download::safe_join(&paths.libraries, Path::new(&file.path))?;
+        // native 载荷要解压出来，交给 -Djava.library.path 去找。1.19 之后的元
+        // 数据不再这么写，native jar 就是一条普通库（坐标带 classifier），直接
+        // 进 classpath——那个年代的 LWJGL 自己会从 classpath 上把 .dll 掏出来。
+        if file.native {
             extract_native_jar(&path, natives_directory, library).await?;
         } else {
             classpath.push(path);

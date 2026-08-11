@@ -140,6 +140,11 @@ const backend = {
     detail:
       '{first} 与 {second} 同时在 classpath 上，加载器无法确定用哪一份，因此拒绝启动。这来自版本描述文件里重复列出的库，重新安装一次加载器通常可以解决。',
   },
+  'crash.forge-launchwrapper-java8': {
+    title: '这个 Forge 版本无法在 Java 8 上启动',
+    detail:
+      '1.7.10 之前的 Forge 存在一处缺陷，在 Java 8 上启动时必然中断，与安装了哪些模组无关。这些游戏版本又无法使用更高版本的 Java，因此只能改用 1.7.10 或更高的游戏版本。',
+  },
   'crash.java-without-a-jvm': {
     title: 'Java 安装不完整',
     detail:

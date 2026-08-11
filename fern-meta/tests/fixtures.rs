@@ -55,7 +55,7 @@ fn split_native_entries_both_survive_on_windows() {
         .effective_libraries(&windows)
         .into_iter()
         .filter(|library| library.name == "org.lwjgl:lwjgl:3.2.2")
-        .filter_map(|library| library.file(&windows)?.path.as_deref())
+        .filter_map(|library| Some(library.file(&windows)?.path))
         .collect();
 
     assert_eq!(

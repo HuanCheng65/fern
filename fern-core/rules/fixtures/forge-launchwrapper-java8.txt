@@ -1,0 +1,35 @@
+#! loader=forge mc=1.7.2 scope=console
+  <log4j:Event logger="LaunchWrapper" timestamp="1786431293780" level="INFO" thread="main">
+    <log4j:Message><![CDATA[Calling tweak class cpw.mods.fml.common.launcher.FMLTweaker]]></log4j:Message>
+  </log4j:Event>
+  <log4j:Event logger="FML" timestamp="1786431293802" level="INFO" thread="main">
+    <log4j:Message><![CDATA[Forge Mod Loader version 7.2.217.1161 for Minecraft 1.7.2 loading]]></log4j:Message>
+  </log4j:Event>
+  <log4j:Event logger="FML" timestamp="1786431293802" level="INFO" thread="main">
+    <log4j:Message><![CDATA[Java is OpenJDK 64-Bit Server VM, version 1.8.0_492, running on Windows 11:amd64:10.0, installed at C:\Users\Player\AppData\Roaming\Fern\runtimes\jre-legacy]]></log4j:Message>
+  </log4j:Event>
+  <log4j:Event logger="LaunchWrapper" timestamp="1786431293814" level="INFO" thread="main">
+    <log4j:Message><![CDATA[Loading tweak class name cpw.mods.fml.common.launcher.FMLInjectionAndSortingTweaker]]></log4j:Message>
+  </log4j:Event>
+  <log4j:Event logger="LaunchWrapper" timestamp="1786431293815" level="INFO" thread="main">
+    <log4j:Message><![CDATA[Loading tweak class name cpw.mods.fml.common.launcher.FMLDeobfTweaker]]></log4j:Message>
+  </log4j:Event>
+  <log4j:Event logger="LaunchWrapper" timestamp="1786431293815" level="INFO" thread="main">
+    <log4j:Message><![CDATA[Calling tweak class cpw.mods.fml.common.launcher.FMLInjectionAndSortingTweaker]]></log4j:Message>
+  </log4j:Event>
+  <log4j:Event logger="LaunchWrapper" timestamp="1786431293816" level="ERROR" thread="main">
+    <log4j:Message><![CDATA[Unable to launch]]></log4j:Message>
+    <log4j:Throwable><![CDATA[java.util.ConcurrentModificationException
+	at java.util.ArrayList$Itr.checkForComodification(ArrayList.java:911)
+	at java.util.ArrayList$Itr.remove(ArrayList.java:875)
+	at net.minecraft.launchwrapper.Launch.launch(Launch.java:117)
+	at net.minecraft.launchwrapper.Launch.main(Launch.java:28)
+]]></log4j:Throwable>
+  </log4j:Event>
+Exception in thread "main" cpw.mods.fml.relauncher.FMLSecurityManager$ExitTrappedException
+	at cpw.mods.fml.relauncher.FMLSecurityManager.checkPermission(FMLSecurityManager.java:25)
+	at java.lang.SecurityManager.checkExit(SecurityManager.java:761)
+	at java.lang.Runtime.exit(Runtime.java:101)
+	at java.lang.System.exit(System.java:987)
+	at net.minecraft.launchwrapper.Launch.launch(Launch.java:138)
+	at net.minecraft.launchwrapper.Launch.main(Launch.java:28)

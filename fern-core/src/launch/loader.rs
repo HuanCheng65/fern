@@ -153,12 +153,34 @@ async fn list_maven_versions(
                     stable: true,
                 })
                 .collect();
-            // maven-metadata 是按发布顺序排的，新的在最后。
-            versions.reverse();
+            // 自己排，别信文件顺序。maven-metadata 大体是按发布时间来的，但
+            // 1.7.2 那一段是倒着的——照单反转，列表第一条（也就是新建实例的
+            // 默认值）会变成 2014 年的第一个构建。
+            versions.sort_by(|left, right| {
+                forge_ordinal(&right.version).cmp(&forge_ordinal(&left.version))
+            });
             Ok(versions)
         }
         other => Err(anyhow!("{other:?} 的版本不从 Maven 列")),
     }
+}
+
+/// Forge 版本号排序用的键。
+///
+/// 形如 `10.12.2.1161-mc172`：几段数字，偶尔跟一个后缀。按段比数字，比不动
+/// 的（后缀）留到最后按字典序——`1161-mc172` 比 `1161` 新。
+fn forge_ordinal(version: &str) -> (Vec<u64>, &str) {
+    let numeric = version
+        .split('.')
+        .map(|segment| {
+            let digits = segment
+                .split(|character: char| !character.is_ascii_digit())
+                .next()
+                .unwrap_or_default();
+            digits.parse::<u64>().unwrap_or_default()
+        })
+        .collect();
+    (numeric, version)
 }
 
 /// `1.21.1` → `21.1.`，`1.21` → `21.0.`
@@ -398,5 +420,30 @@ mod tests {
         ] {
             assert!(version::is_safe_id(&id), "{id}");
         }
+    }
+
+    /// Forge 的 maven-metadata 不是可靠的顺序：1.12.2 那一段最新的在最后，
+    /// 1.7.2 那一段最新的在最前。照单反转，1.7.2 的默认值会变成 2014 年的第
+    /// 一个构建。
+    #[test]
+    fn forge_versions_are_ordered_by_number_not_by_file_order() {
+        let mut versions = vec![
+            "10.12.0.967",
+            "10.12.2.1147",
+            "10.12.2.1161-mc172",
+            "10.12.2.1154-mc172",
+            "10.12.1.1090",
+        ];
+        versions.sort_by(|left, right| forge_ordinal(right).cmp(&forge_ordinal(left)));
+        assert_eq!(
+            versions,
+            vec![
+                "10.12.2.1161-mc172",
+                "10.12.2.1154-mc172",
+                "10.12.2.1147",
+                "10.12.1.1090",
+                "10.12.0.967",
+            ]
+        );
     }
 }

@@ -13,6 +13,7 @@ export const BACKEND_MESSAGES = [
   'crash.forge-dependency-missing',
   'crash.forge-dependency-version',
   'crash.forge-duplicate-mods',
+  'crash.forge-launchwrapper-java8',
   'crash.forge-mandatory-dependencies',
   'crash.forge-missing-dependency',
   'crash.forge-mod-failed-to-load',

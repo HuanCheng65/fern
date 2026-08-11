@@ -158,6 +158,30 @@ pub struct Library {
     pub extract: Option<ExtractRule>,
 }
 
+/// 一条库指向的那一个文件：下到哪、从哪下、怎么用。
+///
+/// 两代元数据说同一件事的方式不同——新的给 `downloads`（路径、地址、sha1
+/// 齐全），老的只给一个坐标（外加一个可选的仓库前缀）。谁读它都不该再关心
+/// 这个区别，所以差异到 [`Library::file`] 为止。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryFile<'a> {
+    /// 相对 `libraries/` 的路径。
+    pub path: String,
+    pub url: String,
+    /// 老格式只给坐标，校验不了——那时候「文件在不在」就是全部判据。
+    pub sha1: Option<&'a str>,
+    pub size: Option<u64>,
+    /// 这是一份 native 载荷：要解压到 natives 目录，而不是进 classpath。
+    pub native: bool,
+}
+
+/// 库坐标没写仓库时的默认仓库。
+///
+/// 1.12.2 之前的 Forge 把整份库清单抄在自己的版本描述里，其中大半只有一个
+/// 坐标——既没有 `downloads` 也没有 `url`。老启动器的约定就是「没写就是
+/// Mojang 那个」，`net.minecraft:launchwrapper`（主类所在）正是这样一条。
+pub const DEFAULT_LIBRARY_REPOSITORY: &str = "https://libraries.minecraft.net/";
+
 impl Library {
     /// 这一条是不是一份 native 载荷，是的话本机要取哪个 classifier。
     ///
@@ -181,12 +205,43 @@ impl Library {
     /// 那个 artifact 不算数：它是同坐标 classpath 那条的同一个 jar（见
     /// [`VersionMetadata::effective_libraries`] 里说的拆成两条），跟着解压
     /// 进 natives 目录只会撒一地 `.class`。
-    pub fn file(&self, context: &RuleContext) -> Option<&DownloadInfo> {
-        let downloads = self.downloads.as_ref()?;
-        match self.native_classifier(context) {
-            Some(classifier) => downloads.classifiers.as_ref()?.get(&classifier),
-            None => downloads.artifact.as_ref(),
-        }
+    pub fn file(&self, context: &RuleContext) -> Option<LibraryFile<'_>> {
+        let classifier = self.native_classifier(context);
+        let native = classifier.is_some();
+        // 坐标是兜底的路径来源：老格式只有它，新格式的 `path` 偶尔也缺。
+        let coordinate = match &classifier {
+            Some(classifier) => format!("{}:{classifier}", self.name),
+            None => self.name.clone(),
+        };
+        let Some(downloads) = self.downloads.as_ref() else {
+            let path = maven_path(&coordinate)?;
+            let repository = self.url.as_deref().unwrap_or(DEFAULT_LIBRARY_REPOSITORY);
+            return Some(LibraryFile {
+                url: format!("{}{path}", with_trailing_slash(repository)),
+                path,
+                sha1: None,
+                size: None,
+                native,
+            });
+        };
+        let info = match &classifier {
+            Some(classifier) => downloads.classifiers.as_ref()?.get(classifier)?,
+            None => downloads.artifact.as_ref()?,
+        };
+        Some(LibraryFile {
+            path: info.path.clone().or_else(|| maven_path(&coordinate))?,
+            url: info.url.clone(),
+            sha1: Some(&info.sha1),
+            size: Some(info.size),
+            native,
+        })
+    }
+}
+
+fn with_trailing_slash(url: &str) -> String {
+    match url.ends_with('/') {
+        true => url.to_owned(),
+        false => format!("{url}/"),
     }
 }
 
@@ -823,6 +878,56 @@ mod tests {
         let picked = metadata.effective_libraries(&windows);
         assert_eq!(picked.len(), 1);
         assert!(picked[0].natives.is_none());
+    }
+
+    /// 1.12.2 之前的 Forge 把整份库清单抄进自己的版本描述，条目大半只有一个
+    /// 坐标：没有 `downloads`，也没有 `url`。老启动器的约定是「没写就是
+    /// Mojang 那个仓库」，而其中一条正是主类所在的 launchwrapper——当成不指
+    /// 向任何文件的占位跳过，游戏起来就是「找不到主类」。
+    #[test]
+    fn a_coordinate_alone_still_names_one_file() {
+        let context = RuleContext::linux_x64();
+
+        let bare = library("net.minecraft:launchwrapper:1.9");
+        let file = bare.file(&context).expect("坐标本身就够推出一个文件");
+        assert_eq!(
+            file.path,
+            "net/minecraft/launchwrapper/1.9/launchwrapper-1.9.jar"
+        );
+        assert_eq!(
+            file.url,
+            "https://libraries.minecraft.net/net/minecraft/launchwrapper/1.9/launchwrapper-1.9.jar"
+        );
+        // 没有 sha1 就得说没有，不能假装校验过。
+        assert!(file.sha1.is_none());
+        assert!(!file.native);
+
+        // 写了仓库就用它，末尾有没有斜杠都行。
+        let elsewhere = Library {
+            url: Some("https://maven.minecraftforge.net".to_owned()),
+            ..library("net.minecraftforge:forge:1.7.2-10.12.2.1161-mc172")
+        };
+        assert_eq!(
+            elsewhere.file(&context).expect("同样推得出").url,
+            "https://maven.minecraftforge.net/net/minecraftforge/forge/\
+             1.7.2-10.12.2.1161-mc172/forge-1.7.2-10.12.2.1161-mc172.jar"
+        );
+
+        // 这个年代的 native 载荷同样只有坐标，classifier 要自己接上去，不然
+        // natives 目录空着、LWJGL 加载不到 .so。
+        let natives = Library {
+            natives: Some(HashMap::from([(
+                "linux".to_owned(),
+                "natives-linux".to_owned(),
+            )])),
+            ..library("org.lwjgl.lwjgl:lwjgl-platform:2.9.0")
+        };
+        let file = natives.file(&context).expect("native 载荷也是一个文件");
+        assert_eq!(
+            file.path,
+            "org/lwjgl/lwjgl/lwjgl-platform/2.9.0/lwjgl-platform-2.9.0-natives-linux.jar"
+        );
+        assert!(file.native);
     }
 
     #[test]
