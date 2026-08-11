@@ -16,7 +16,7 @@
  */
 
 import { cubicOut } from 'svelte/easing'
-import type { TransitionConfig } from 'svelte/transition'
+import { slide, type TransitionConfig } from 'svelte/transition'
 
 // 档位和乘数在 kit（它读 host.motionScale，而 theme 启动时就把档位装了进去）。
 // 两边各写一份必然会分叉，而分叉的那天没人会发现。
@@ -35,6 +35,30 @@ export function expand(_node: Element, { duration = DURATION.deep } = {}): Trans
     duration: total,
     easing: cubicOut,
     css: (t, u) => `opacity: ${t}; transform: translateY(${u * 10}px) scale(${0.985 + t * 0.015});`,
+  }
+}
+
+/**
+ * 就地撑开一段内容。用于「点开一层」——下拉的版本列表、折起来的那一代、
+ * 附加项那一栏。
+ *
+ * 和 {@link expand} 的区别是它动的是高度：下面的东西要跟着让位，用户才看得出
+ * 这一段是从这一行里长出来的，而不是盖在上面。淡入淡出交给内容自己。
+ */
+export function unfold(node: Element, { duration = DURATION.base } = {}): TransitionConfig {
+  return slide(node, { duration: scaled(duration), easing: cubicOut })
+}
+
+/**
+ * 弹一下。只给那种「刚刚生效」的小标记——选中的对勾。
+ *
+ * 起点不是 0：从 0 放大像是被扔进来的，从 0.7 起才像是被按出来的。
+ */
+export function pop(_node: Element, { duration = DURATION.fast } = {}): TransitionConfig {
+  return {
+    duration: scaled(duration),
+    easing: cubicOut,
+    css: (t) => `opacity: ${t}; transform: scale(${0.7 + t * 0.3});`,
   }
 }
 

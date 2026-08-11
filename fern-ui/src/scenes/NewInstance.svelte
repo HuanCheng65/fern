@@ -33,6 +33,7 @@
   import { launch } from '../lib/launch.svelte'
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
+  import { expand, pop, unfold } from '../lib/motion'
   import { ancient, generations, newestRelease, newestSnapshot, snapshots } from '../lib/versions'
   import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
@@ -85,16 +86,31 @@
   /** 展开之后平铺的那一代——最新的那一代，通常只有一两条。 */
   const current = $derived(eras[0])
   const older = $derived(eras.slice(1))
+  /*
+   * 搜索之外**不截断**。上一版只铺前 60 条，于是「所有快照」实际上是
+   * 「最近两个月的快照」，而界面上没有任何东西说明后面还有——一个看不见的
+   * 上限比一个明说的分页更坏。
+   *
+   * 742 行就整份铺出来。实测（无头 Chromium，比真机慢）切到快照那一档要
+   * 60ms，搜索时每次改词 11–42ms，都在可以接受的范围里。试过给行加
+   * `content-visibility: auto`：渲染只快 10ms，却让滚动条的量程在拖到底的
+   * 那一下自己变长——省下的那点远不够抵这个。
+   */
   const matched = $derived(
     query.trim()
-      ? feed
-          .filter((item) => item.id.toLowerCase().includes(query.trim().toLowerCase()))
-          .slice(0, 200)
-      : feed.slice(0, 60),
+      ? feed.filter((item) => item.id.toLowerCase().includes(query.trim().toLowerCase()))
+      : feed,
   )
 
   const loaderLabel = $derived(loaders.find((item) => item.kind === loader)?.label ?? '原版')
+  /*
+   * 稳定版优先，但一个也没有时就把全部摆出来——某些加载器在某些版本上只有
+   * 测试版，那时候空着一片比给个测试版更糟。
+   */
   const stableLoaderVersions = $derived(loaderVersions.filter((item) => item.stable))
+  const shownLoaderVersions = $derived(
+    stableLoaderVersions.length > 0 ? stableLoaderVersions : loaderVersions,
+  )
   /** 主加载器那一排。附加层不在这里——它是另一个问题。 */
   const primaries = $derived(
     loaders.filter((option) => !option.stackable || option.kind === loader),
@@ -291,7 +307,7 @@
   </header>
 
   {#if pack}
-    <div class="pack">
+    <div class="pack" in:expand>
       <span class="badge"><Package size={16} strokeWidth={1.8} /></span>
       <div class="pack-text">
         <strong>{pack.summary.name}</strong>
@@ -306,11 +322,11 @@
       <Button variant="link" onclick={() => (pack = null)}>换一个</Button>
     </div>
 
-    <div class="fields">
+    <div class="fields scroll">
       <Input label="名称" bind:value={name} maxlength={64} oninput={() => (named = true)} />
     </div>
   {:else}
-    <div class="fields">
+    <div class="fields scroll">
       <div class="field">
         <span class="label" id="version-label">Minecraft 版本</span>
         <button
@@ -320,23 +336,37 @@
           onclick={() => (choosing = !choosing)}
         >
           <span class="t-mono">{picked || '选择版本'}</span>
-          <ChevronDown size={14} strokeWidth={2} />
+          <span class="caret" class:up={choosing}><ChevronDown size={14} strokeWidth={2} /></span>
         </button>
 
         {#if choosing}
-          <div class="picker">
-            <SegmentedControl
-              aria-label="版本类型"
-              value={channel}
-              onchange={(next) => {
-                channel = next as 'release' | 'snapshot'
-                openGeneration = ''
-              }}
-              options={[
-                { value: 'release', label: '正式版' },
-                { value: 'snapshot', label: '快照' },
-              ]}
-            />
+          <div class="picker" transition:unfold>
+            <!--
+              档位和搜索框留在滚动区外面：翻到第三百条快照时还想换回正式版，
+              不该先滚回顶上。
+            -->
+            <div class="picker-head">
+              <SegmentedControl
+                aria-label="版本类型"
+                value={channel}
+                onchange={(next) => {
+                  channel = next as 'release' | 'snapshot'
+                  openGeneration = ''
+                }}
+                options={[
+                  { value: 'release', label: '正式版' },
+                  { value: 'snapshot', label: '快照' },
+                ]}
+              />
+              {#if channel === 'snapshot' && !instances.versionsLoading}
+                <Input
+                  bind:value={query}
+                  spellcheck="false"
+                  aria-label="搜索快照"
+                  placeholder="搜索 {feed.length} 个快照"
+                />
+              {/if}
+            </div>
 
             {#if instances.versionsLoading}
               <Loading note="读取版本清单" />
@@ -345,86 +375,109 @@
                 最新那一代平铺，别的按代折起来。整行可点——一行里横排七八个
                 号码，既难点也难看。
               -->
-              {#if current}
-                {#each current.versions as version (version.id)}
+              <div class="list scroll">
+                {#if current}
+                  {#each current.versions as version (version.id)}
+                    <button
+                      class="row"
+                      class:on={picked === version.id}
+                      onclick={() => choose(version.id)}
+                    >
+                      <span class="t-mono grow">{version.id}</span>
+                      {#if version.id === latest?.id}<span class="t-quiet">最新正式版</span>{/if}
+                      {#if picked === version.id}
+                        <span class="tick-mark" in:pop><Check size={14} strokeWidth={2.4} /></span>
+                      {/if}
+                    </button>
+                  {/each}
+                  <hr />
+                {/if}
+                {#each older as era (era.name)}
+                  <button
+                    class="row"
+                    aria-expanded={openGeneration === era.name}
+                    onclick={() => toggleGeneration(era.name)}
+                  >
+                    <span class="t-mono grow">{era.name}</span>
+                    <span class="t-quiet">{era.versions.length} 个版本</span>
+                    <span class="caret" class:up={openGeneration === era.name}>
+                      <ChevronDown size={13} strokeWidth={2} />
+                    </span>
+                  </button>
+                  {#if openGeneration === era.name}
+                    <div class="nest" transition:unfold>
+                      {#each era.versions as version (version.id)}
+                        <button
+                          class="row nested"
+                          class:on={picked === version.id}
+                          onclick={() => choose(version.id)}
+                        >
+                          <span class="t-mono grow">{version.id}</span>
+                          {#if picked === version.id}
+                            <span class="tick-mark" in:pop>
+                              <Check size={14} strokeWidth={2.4} />
+                            </span>
+                          {/if}
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                {/each}
+                {#if oldest.length > 0}
+                  <button
+                    class="row"
+                    aria-expanded={openGeneration === 'ancient'}
+                    onclick={() => toggleGeneration('ancient')}
+                  >
+                    <span class="grow">远古</span>
+                    <span class="t-quiet">{oldest.length} 个</span>
+                    <span class="caret" class:up={openGeneration === 'ancient'}>
+                      <ChevronDown size={13} strokeWidth={2} />
+                    </span>
+                  </button>
+                  {#if openGeneration === 'ancient'}
+                    <div class="nest" transition:unfold>
+                      {#each oldest as version (version.id)}
+                        <button
+                          class="row nested"
+                          class:on={picked === version.id}
+                          onclick={() => choose(version.id)}
+                        >
+                          <span class="t-mono grow">{version.id}</span>
+                          {#if picked === version.id}
+                            <span class="tick-mark" in:pop>
+                              <Check size={14} strokeWidth={2.4} />
+                            </span>
+                          {/if}
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            {:else}
+              <!--
+                快照不分组：742 条按时间倒序，要最新的人看第一条，要某一条的
+                人知道自己在找什么，他要的是搜索。
+              -->
+              <div class="list scroll">
+                {#each matched as version (version.id)}
                   <button
                     class="row"
                     class:on={picked === version.id}
                     onclick={() => choose(version.id)}
                   >
                     <span class="t-mono grow">{version.id}</span>
-                    {#if version.id === latest?.id}<span class="t-quiet">最新正式版</span>{/if}
-                    {#if picked === version.id}<Check size={14} strokeWidth={2.4} />{/if}
+                    {#if version.id === newestFeed?.id}<span class="t-quiet">最新快照</span>{/if}
+                    {#if picked === version.id}
+                      <span class="tick-mark" in:pop><Check size={14} strokeWidth={2.4} /></span>
+                    {/if}
                   </button>
                 {/each}
-              {/if}
-              <hr />
-              {#each older as era (era.name)}
-                <button
-                  class="row"
-                  aria-expanded={openGeneration === era.name}
-                  onclick={() => toggleGeneration(era.name)}
-                >
-                  <span class="t-mono grow">{era.name}</span>
-                  <span class="t-quiet">{era.versions.length} 个版本</span>
-                  <ChevronDown size={13} strokeWidth={2} />
-                </button>
-                {#if openGeneration === era.name}
-                  {#each era.versions as version (version.id)}
-                    <button
-                      class="row nested"
-                      class:on={picked === version.id}
-                      onclick={() => choose(version.id)}
-                    >
-                      <span class="t-mono grow">{version.id}</span>
-                      {#if picked === version.id}<Check size={14} strokeWidth={2.4} />{/if}
-                    </button>
-                  {/each}
+                {#if matched.length === 0}
+                  <p class="hint">没有匹配的快照</p>
                 {/if}
-              {/each}
-              {#if oldest.length > 0}
-                <button
-                  class="row"
-                  aria-expanded={openGeneration === 'ancient'}
-                  onclick={() => toggleGeneration('ancient')}
-                >
-                  <span class="grow">远古</span>
-                  <span class="t-quiet">{oldest.length} 个</span>
-                  <ChevronDown size={13} strokeWidth={2} />
-                </button>
-                {#if openGeneration === 'ancient'}
-                  {#each oldest as version (version.id)}
-                    <button
-                      class="row nested"
-                      class:on={picked === version.id}
-                      onclick={() => choose(version.id)}
-                    >
-                      <span class="t-mono grow">{version.id}</span>
-                      {#if picked === version.id}<Check size={14} strokeWidth={2.4} />{/if}
-                    </button>
-                  {/each}
-                {/if}
-              {/if}
-            {:else}
-              <!--
-                快照不分组：742 条按时间倒序，要最新的人看第一条，要某一条的
-                人知道自己在找什么，他要的是搜索。
-              -->
-              <Input bind:value={query} spellcheck="false" placeholder="搜索快照" />
-              {#each matched as version (version.id)}
-                <button
-                  class="row"
-                  class:on={picked === version.id}
-                  onclick={() => choose(version.id)}
-                >
-                  <span class="t-mono grow">{version.id}</span>
-                  {#if version.id === newestFeed?.id}<span class="t-quiet">最新快照</span>{/if}
-                  {#if picked === version.id}<Check size={14} strokeWidth={2.4} />{/if}
-                </button>
-              {/each}
-              {#if matched.length === 0}
-                <p class="hint">没有匹配的快照</p>
-              {/if}
+              </div>
             {/if}
           </div>
         {/if}
@@ -447,24 +500,29 @@
 
           {#if loader !== 'vanilla'}
             {#if !choosingLoaderVersion}
-              <div class="sub">
+              <div class="sub" transition:unfold>
                 <span class="t-quiet">将安装最新稳定版</span>
                 <Button variant="link" onclick={() => void loadLoaderVersions()}>指定版本</Button>
               </div>
-            {:else if stableLoaderVersions.length === 0}
+            {:else if loaderVersions.length === 0}
               <Loading note="读取 {loaderLabel} 的版本" size={18} />
             {:else}
-              <div class="picker short">
-                {#each stableLoaderVersions.slice(0, 60) as item (item.version)}
-                  <button
-                    class="row"
-                    class:on={loaderVersion === item.version}
-                    onclick={() => (loaderVersion = item.version)}
-                  >
-                    <span class="t-mono grow">{item.version}</span>
-                    {#if loaderVersion === item.version}<Check size={13} strokeWidth={2.4} />{/if}
-                  </button>
-                {/each}
+              <div class="picker" transition:unfold>
+                <div class="list short scroll">
+                  {#each shownLoaderVersions as item (item.version)}
+                    <button
+                      class="row"
+                      class:on={loaderVersion === item.version}
+                      onclick={() => (loaderVersion = item.version)}
+                    >
+                      <span class="t-mono grow">{item.version}</span>
+                      {#if !item.stable}<span class="t-quiet">测试版</span>{/if}
+                      {#if loaderVersion === item.version}
+                        <span class="tick-mark" in:pop><Check size={13} strokeWidth={2.4} /></span>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
               </div>
               <div class="sub">
                 <span class="t-quiet">
@@ -480,7 +538,7 @@
             而不是灰着——摆一栏点不动的东西，等于让人以为自己漏了什么。
           -->
           {#if addons.length > 0}
-            <div class="sub">
+            <div class="sub" transition:unfold>
               <span class="t-quiet">附加</span>
               {#each addons as option (option.kind)}
                 <label class="tick">
@@ -507,7 +565,7 @@
     </div>
   {/if}
 
-  {#if error}<div class="alert">{error}</div>{/if}
+  {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
 
   <footer>
     <!-- 次要出口。层级明确降级：这一屏的主操作只有「创建」一个。 -->
@@ -558,7 +616,6 @@
     gap: var(--s5);
     align-content: start;
     max-width: 48ch;
-    overflow-y: auto;
     min-height: 0;
     flex: 1;
     padding-bottom: var(--s4);
@@ -570,7 +627,7 @@
   }
 
   .label {
-    font-size: var(--fs-1);
+    font-size: var(--t-small);
     color: var(--ink-2);
   }
 
@@ -588,31 +645,52 @@
     color: inherit;
     cursor: pointer;
     text-align: left;
+    transition: background var(--t-fast) var(--ease);
   }
 
   .value:hover {
     background: var(--well-2);
   }
 
+  /*
+   * 展开的那一层。三段各自成块：档位、搜索、列表，**只有列表滚动**——搜索框
+   * 跟着列表一起滚走，等于翻到第三百条之后就没法改条件了。
+   */
   .picker {
     display: grid;
-    gap: 1px;
-    max-height: 46vh;
-    overflow-y: auto;
-    padding: var(--s2);
+    gap: var(--s3);
+    padding: var(--s3);
     border-radius: var(--r1);
     background: var(--tint-1);
   }
 
-  .picker.short {
-    max-height: 30vh;
+  .picker-head {
+    display: grid;
+    gap: var(--s2);
   }
 
-  .picker hr {
+  /* 滚动交给 kit 的 .scroll——细滚动条那一套全应用只有一份。 */
+  .list {
+    display: grid;
+    align-content: start;
+    gap: 2px;
+    max-height: 42vh;
+  }
+
+  .list.short {
+    max-height: 28vh;
+  }
+
+  .list hr {
     width: 100%;
     border: 0;
     border-top: 1px solid var(--hairline-2);
     margin: var(--s2) 0;
+  }
+
+  .nest {
+    display: grid;
+    gap: 2px;
   }
 
   /* 整行可点。判定区是一整条，不是里面那个小号码。 */
@@ -629,6 +707,9 @@
     cursor: pointer;
     text-align: left;
     min-height: 34px;
+    transition:
+      background var(--t-fast) var(--ease),
+      color var(--t-fast) var(--ease);
   }
 
   .grow {
@@ -639,12 +720,34 @@
     background: var(--tint-1);
   }
 
+  .row:active {
+    background: var(--tint-2);
+  }
+
   .row.on {
     background: var(--tint-2);
   }
 
   .row.nested {
     padding-left: var(--s6);
+  }
+
+  .tick-mark {
+    display: grid;
+    place-items: center;
+    color: var(--accent);
+  }
+
+  /* 展开的那一层往下翻——箭头跟着转，省掉一句「已展开」。 */
+  .caret {
+    display: grid;
+    place-items: center;
+    color: var(--ink-3);
+    transition: transform var(--t-base) var(--ease);
+  }
+
+  .caret.up {
+    transform: rotate(180deg);
   }
 
   .loaders {
@@ -660,6 +763,20 @@
     background: var(--tint-1);
     color: var(--ink-2);
     cursor: pointer;
+    transition:
+      background var(--t-fast) var(--ease),
+      color var(--t-fast) var(--ease),
+      transform var(--t-fast) var(--ease);
+  }
+
+  .chip:hover {
+    background: var(--tint-2);
+    color: var(--ink);
+  }
+
+  /* 按下去要陷一点。这一排是这一屏上唯一按了不换页的东西，没有反馈就像没点着。 */
+  .chip:active {
+    transform: scale(0.97);
   }
 
   .chip.on {
@@ -672,7 +789,7 @@
     align-items: center;
     gap: var(--s3);
     flex-wrap: wrap;
-    font-size: var(--fs-1);
+    font-size: var(--t-small);
   }
 
   .tick {
