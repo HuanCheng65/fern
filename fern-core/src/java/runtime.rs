@@ -233,6 +233,27 @@ fn component_for(minimum: u16) -> &'static str {
     }
 }
 
+/// 这台机器上还拿得到这个大版本的 Java 吗——已经装着的，或者下得下来的。
+///
+/// 兼容规则里「换一份 Java」这条备选可不可行，问的就是它（文档 §4.5）。
+/// **实测**：`windows-arm64` 与 `mac-os-arm64` 没有 `jre-legacy`，Mojang 根本
+/// 不为 ARM 发 Java 8；那种机器上第一备选直接落空，只能退到下一条。
+pub(crate) fn obtainable(major: u16) -> bool {
+    let installed = java::discover(None)
+        .iter()
+        .any(|runtime| runtime.major == major);
+    installed || published(component_for(major))
+}
+
+/// Mojang 为这个平台发布了这个组件吗。
+fn published(component: &str) -> bool {
+    let Some(platform) = platform_key() else {
+        return false;
+    };
+    // ARM 上只有新版本，Java 8 那一份从来没有过。
+    !(component == "jre-legacy" && matches!(platform, "windows-arm64" | "mac-os-arm64"))
+}
+
 /// Mojang 的平台键。返回 `None` 表示这个组合官方没有发布——目前只有
 /// linux-aarch64 会落到这里，那时候只能请用户自己装一个。
 fn platform_key() -> Option<&'static str> {

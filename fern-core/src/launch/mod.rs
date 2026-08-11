@@ -9,12 +9,14 @@
 //! **补全与启动必须读同一份合并后的元数据**（`version::resolve`）。两边各算
 //! 各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
 
+pub(crate) mod compat;
 pub(crate) mod crash;
 pub(crate) mod forge;
 pub(crate) mod gamelog;
 pub(crate) mod loader;
 pub(crate) mod mcversion;
 pub(crate) mod memory;
+pub(crate) mod patch;
 pub(crate) mod preflight;
 pub(crate) mod prepare;
 pub(crate) mod ranges;
@@ -231,6 +233,21 @@ pub async fn launch_instance(
         memory::physical_memory_bytes(),
     );
 
+    // 已知会坏的那些组合，以及该怎么绕开（见 launch::compat）。这一轮还没挑
+    // Java，所以只拿得到不依赖 Java 的那几条——它们正是要用来**决定**挑哪个
+    // Java 的。挑完之后还会再问一次。
+    let environment = compat::Environment::here(
+        &profile.game_version,
+        profile.loader,
+        profile
+            .loader_profile
+            .as_ref()
+            .map(|loader| loader.version.as_str())
+            .unwrap_or_default(),
+    );
+    let advice = compat::apply(&environment);
+    let patches = compat::patches(&advice);
+
     stage(LaunchStage::CheckingFiles);
     let context = rules::context(rules::Features {
         custom_resolution: effective.resolution.is_some(),
@@ -275,8 +292,14 @@ pub async fn launch_instance(
         let classpath = {
             // 逐个解 zip，几十个 jar 要一两秒。
             let _track = job.track(JobText::id("job.track.natives"));
-            collect_classpath_and_extract_natives(paths, &metadata, &context, &natives_directory)
-                .await?
+            collect_classpath_and_extract_natives(
+                paths,
+                &metadata,
+                &context,
+                &natives_directory,
+                &patches,
+            )
+            .await?
         };
         if !tokio::fs::try_exists(&client_jar).await? {
             return Err(anyhow!("client jar is missing: {}", client_jar.display()));
@@ -408,6 +431,12 @@ pub async fn launch_instance(
         jvm_arguments.push(logging.argument.clone());
     }
     jvm_arguments.extend(platform_arguments(&profile.game_version, &jvm_arguments));
+    // 兼容规则要加的那几个开关（见 launch::compat）。
+    let from_rules: Vec<String> = compat::jvm_arguments(&advice)
+        .into_iter()
+        .filter(|argument| !jvm_arguments.contains(argument))
+        .collect();
+    jvm_arguments.extend(from_rules);
     // javaagent 要排在最前：它得在游戏的任何一个类被加载之前挂上去。
     for (index, argument) in account.extra_jvm_args().into_iter().enumerate() {
         jvm_arguments.insert(index, argument);
@@ -418,7 +447,8 @@ pub async fn launch_instance(
         .map(|version| version.major_version);
     stage(LaunchStage::PreparingJava);
     let requirement = java::requirement(&profile.game_version, profile.loader, required_java_major)
-        .preferring(mods_floor);
+        .preferring(mods_floor)
+        .capped(compat::runtime_ceiling(&advice));
     let runtime = resolve_java_runtime(paths, &profile, &requirement)?;
     if runtime.major < requirement.minimum {
         return Err(anyhow!(
@@ -445,13 +475,19 @@ pub async fn launch_instance(
         .chain(effective.jvm_arguments.iter())
         .cloned()
         .collect();
+    // 挑完 Java 才问得了那几条要看 Java 的规则（32 位装不下大堆之类）。
+    let advice = compat::apply(&environment.clone().with_java(Some((&runtime).into())));
+    let ceiling = match compat::heap_ceiling(&advice) {
+        Some(rule) => effective.memory_ceiling_mb.min(rule),
+        None => effective.memory_ceiling_mb,
+    };
     let allocation = memory::plan(
         paths,
         &profile,
         &game_directory,
         java_major,
         effective.max_memory_mb,
-        effective.memory_ceiling_mb,
+        ceiling,
         effective.garbage_collector,
         &declared,
         Some(&gc_log),
@@ -1035,6 +1071,7 @@ async fn collect_classpath_and_extract_natives(
     metadata: &VersionMetadata,
     context: &RuleContext,
     natives_directory: &Path,
+    patches: &[&str],
 ) -> Result<Vec<PathBuf>> {
     let mut classpath = Vec::new();
     // rules 与坐标冲突都在这一步解决：同一个库只留一份，否则加载器会因为
@@ -1051,9 +1088,11 @@ async fn collect_classpath_and_extract_natives(
         // 进 classpath——那个年代的 LWJGL 自己会从 classpath 上把 .dll 掏出来。
         if file.native {
             extract_native_jar(&path, natives_directory, library).await?;
-        } else {
-            classpath.push(path);
+            continue;
         }
+        // 兼容规则点名要打补丁的库，进 classpath 的是产物，不是原件。补全时
+        // 已经做过一遍，这里拿到的通常就是缓存里那一份（见 patch 模块）。
+        classpath.push(patch::applied(paths, &library.name, &path, patches)?);
     }
     Ok(classpath)
 }

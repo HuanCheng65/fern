@@ -1,0 +1,9 @@
+# 只装了发行版 -headless 包的 Linux：java 在、虚拟机在，图形栈不在。
+minecraft = "1.21.1"
+loader = "fabric"
+loader-version = "0.16.5"
+
+[java]
+major = 21
+update = 5
+headless = true

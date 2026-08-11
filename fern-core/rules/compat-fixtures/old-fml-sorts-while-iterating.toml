@@ -1,0 +1,9 @@
+# 用户新建的 1.7.2 Forge，这台机器上的 Java 8 是 8u492——也就是所有还拿得到
+# 的 Java 8。不打补丁的话，退出码 1，一行游戏日志都没有。
+minecraft = "1.7.2"
+loader = "forge"
+loader-version = "10.12.2.1161-mc172"
+
+[java]
+major = 8
+update = 492

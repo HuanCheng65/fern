@@ -1,0 +1,13 @@
+# 一个再普通不过的组合：现代版本、现代加载器、64 位的对版 Java。
+# 任何一条规则命中它都是这张表写宽了。
+minecraft = "1.21.1"
+loader = "fabric"
+loader-version = "0.16.5"
+os = "linux"
+arch = "x86_64"
+
+[java]
+major = 21
+update = 5
+bits = 64
+headless = false

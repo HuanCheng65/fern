@@ -157,6 +157,12 @@ pub fn message_ids() -> Vec<String> {
                 .iter()
                 .map(|kind| format!("preflight.{kind}")),
         )
+        // 事前兼容规则拦下来的那些，走的是同一条通道（见 launch::compat）。
+        .chain(
+            launch::compat::ids()
+                .into_iter()
+                .map(|id| format!("preflight.compat.{id}")),
+        )
         .chain(
             backup::manifest::Reason::ALL
                 .iter()

@@ -1,0 +1,83 @@
+# 事前兼容规则（docs/launch-rework.md §4）。
+#
+# 和 crash.toml 是**两张表，不是一张**：那一张的证据是日志，这一张的证据是
+# 环境（游戏版本、加载器、加载器版本、系统、架构、选中的 Java）。输入和时机
+# 都不同，硬合成一张会让 match 语言同时要表达「环境是什么」和「日志里出现了
+# 什么」。
+#
+# 一条规则 = 若干只做收窄的守卫 + 一串**有序的**备选动作。引擎取第一个可行
+# 的；一个都不可行时说清楚为什么（见 launch/compat.rs）。
+#
+# 守卫看不懂就当作不命中——和 crash.toml 相反。那一张认错了只是多一句解释，
+# 这一张认错了会真的改掉启动方式。
+#
+# 加一条规则 = 这里追加一段 + 一份 rules/compat-fixtures/<id>.toml + 文案表
+# 两句话。三步都不能少，测试分别卡这三样。
+
+# 1.7.9 及更早的 FML 直接对 LaunchWrapper 正在遍历的那张 tweaker 表原地排序。
+# Java 8u20 起 Collections.sort 委托给 List.sort，原地排会动 modCount，于是
+# LaunchWrapper 的 it.remove() 抛 ConcurrentModificationException：退出码 1，
+# 一行游戏日志都没有。Forge 自己在 1.7.10 改成了拷一份排完再写回，1.7.9 及
+# 更早再没有发过版。
+#
+# 「运行时 × 加载器版本 × 启动参数」这个可选空间里没有可用组合：所有 8u20
+# 之后的 Java 都坏，Java 7 拿不到也不该要求用户装，上游没有修好的构建。这
+# 正是 §4.3 那条判据允许改产物的情形。
+[[rule]]
+id = "old-fml-sorts-while-iterating"
+minecraft = "<1.7.10"
+loader = ["forge"]
+actions = [{ kind = "artifact-patch", patch = "fml-sort-tweaks" }]
+
+# 同一批版本的第二个坑：FML 会检查 client jar 的签名，而那份 2013 年的
+# MOJANGCS 签名是 SHA-1 的，现代 JVM 一律当作未签名，FML 拿到 0 certificates
+# 之后报「CRITICAL TAMPERING」。主语是 client jar，我们一个字节都没动过。
+#
+# 实测：1.7.10 与 1.12.2 不需要这个开关，所以范围就卡在会打补丁的那一段。
+# jar 的完整性由我们按 Mojang 的 sha1 保证，比被绕过的那个检查更强。
+[[rule]]
+id = "old-fml-refuses-an-unsigned-client"
+minecraft = "<1.7.10"
+loader = ["forge"]
+actions = [
+  { kind = "jvm-arg-add", argument = "-Dfml.ignoreInvalidMinecraftCertificates=true" },
+]
+
+# Forge 34.1.27–36.2.24 里的 ModLauncher 8.1.x 反射了一个在 8u321 被改掉的
+# JDK 内部方法，崩在 NoSuchMethodError。这一条**不需要**改字节码：可选空间里
+# 有两个好组合——8u321 以下的 Java 8（Mojang 自己发的 jre-legacy 是 8u51 /
+# 8u74 / 8u202，全在线下面），或者 36.2.25 及以上的 Forge。
+#
+# 备选是有序的。第一条在 Apple Silicon 和 ARM Windows 上会落空——Mojang 根本
+# 不为 ARM 发 Java 8，那时候才轮到第二条。
+[[rule]]
+id = "modlauncher-8-breaks-on-a-new-java-8"
+minecraft = ">=1.16.3 <=1.16.5"
+loader = ["forge"]
+loader-version = "<36.2.25"
+actions = [
+  { kind = "runtime-select", major = 8, max-update = 320 },
+  { kind = "loader-version", minimum = "36.2.25" },
+]
+
+# 32 位 JVM 的地址空间摆不下一个大堆：连续的 1.5 GB 都未必要得到，而现代整合
+# 包一开口就是 4 GB。要不到的表现不是「慢」，是 JVM 根本起不来，只留一句
+# 「Could not create the Java Virtual Machine」。
+#
+# 先压堆再说不行：压到 1 GB 之后老版本是能玩的，直接 Block 等于把一台还能用
+# 的机器判死。
+[[rule]]
+id = "a-32-bit-java-cannot-hold-a-large-heap"
+java-bits = 32
+actions = [{ kind = "heap-ceiling", mb = 1024 }]
+
+# 发行版的 -headless 包：java 在、虚拟机在，libawt_xawt.so 不在。拿它启动
+# 客户端会在初始化窗口时抛 UnsatisfiedLinkError，报出来的东西和「你装的是
+# headless 包」毫无字面关系。
+#
+# 这一条只能 Block：没有任何参数能给一份运行时补上它不带的图形栈。选择那一步
+# 已经把它排在最后（见 java::select），会走到这里就说明再没有别的了。
+[[rule]]
+id = "a-headless-java-cannot-open-a-window"
+java-headless = true
+actions = [{ kind = "block" }]

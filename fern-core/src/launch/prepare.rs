@@ -264,6 +264,34 @@ pub async fn prepare_instance(
     if let Some((index_id, index)) = legacy_assets {
         materialize_legacy_assets(paths, instance_id, &index_id, &index, events).await?;
     }
+    // 有些库要改过才能跑（老 FML 在 Java 8u20 之后必崩的那一句）。放在这里
+    // 而不是启动那一刻：几百毫秒的重打 jar 该发生在「正在补全文件」里，改写
+    // 失败也该在这时候就说出来。启动读到的是同一个函数产出的同一份产物。
+    {
+        let patch_paths = paths.clone();
+        let patch_metadata = metadata.clone();
+        let patch_context = context.clone();
+        // 打哪几个补丁由兼容规则说了算，补全和启动问的是同一张表。
+        let advice = crate::launch::compat::apply(&crate::launch::compat::Environment::here(
+            &profile.game_version,
+            profile.loader,
+            profile
+                .loader_profile
+                .as_ref()
+                .map(|loader| loader.version.as_str())
+                .unwrap_or_default(),
+        ));
+        tokio::task::spawn_blocking(move || {
+            let patches = crate::launch::compat::patches(&advice);
+            crate::launch::patch::prepare_all(
+                &patch_paths,
+                &patch_metadata,
+                &patch_context,
+                &patches,
+            )
+        })
+        .await??;
+    }
     files_track.done();
 
     Ok(result)

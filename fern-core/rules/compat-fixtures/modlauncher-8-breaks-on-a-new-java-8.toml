@@ -1,0 +1,9 @@
+# Forge 36.2.20 落在 34.1.27–36.2.24 那一段里，ModLauncher 8.1.x 反射的那个
+# JDK 内部方法在 8u321 被改掉了。
+minecraft = "1.16.5"
+loader = "forge"
+loader-version = "36.2.20"
+
+[java]
+major = 8
+update = 492

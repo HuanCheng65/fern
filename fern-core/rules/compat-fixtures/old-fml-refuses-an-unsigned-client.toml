@@ -1,0 +1,9 @@
+# 同一批版本：client jar 那份 2013 年的 SHA-1 签名现代 JVM 一律不认，FML 拿到
+# 0 certificates 就报 CRITICAL TAMPERING。
+minecraft = "1.6.4"
+loader = "forge"
+loader-version = "9.11.1.1345"
+
+[java]
+major = 8
+update = 492

@@ -141,9 +141,9 @@ const backend = {
       '{first} 与 {second} 同时在 classpath 上，加载器无法确定用哪一份，因此拒绝启动。这来自版本描述文件里重复列出的库，重新安装一次加载器通常可以解决。',
   },
   'crash.forge-launchwrapper-java8': {
-    title: '这个 Forge 版本无法在 Java 8 上启动',
+    title: '这个 Forge 版本在启动时中断',
     detail:
-      '1.7.10 之前的 Forge 存在一处缺陷，在 Java 8 上启动时必然中断，与安装了哪些模组无关。这些游戏版本又无法使用更高版本的 Java，因此只能改用 1.7.10 或更高的游戏版本。',
+      '1.7.10 之前的 Forge 存在一处缺陷，在现有的 Java 8 上启动时必然中断，与安装了哪些模组无关。Fern 会在安装时修改对应的类文件来绕开它；仍然出现这条信息，说明这一步没有生效，可尝试重新检查游戏文件。',
   },
   'crash.java-without-a-jvm': {
     title: 'Java 安装不完整',
@@ -185,6 +185,34 @@ const backend = {
     title: '{mod} 需要另一个版本的 Java',
     detail:
       '它声明的 Java 版本是 {range}，而这个实例会使用 Java {java}。加载器会因此拒绝启动。可以在实例设置中更换 Java。',
+  },
+
+  // 事前兼容规则拦下来的。能自己处理掉的那些不出现在界面上，只有确实无法
+  // 启动、需要用户做决定的才在这里说话。
+  'preflight.compat.a-headless-java-cannot-open-a-window': {
+    title: '这份 Java 无法显示游戏窗口',
+    detail:
+      '当前选中的 Java 不含图形组件，多为系统软件源中的精简版本。游戏会在创建窗口时中断。请安装完整版本的 Java，或在实例设置中改用另一份。',
+  },
+  'preflight.compat.a-32-bit-java-cannot-hold-a-large-heap': {
+    title: '这份 Java 是 32 位的，可用内存有限',
+    detail:
+      '32 位的 Java 最多只能使用约 1 GB 内存，超出后虚拟机无法启动。内存上限已自动限制在这个范围内。改用 64 位的 Java 可以解除限制。',
+  },
+  'preflight.compat.modlauncher-8-breaks-on-a-new-java-8': {
+    title: '这个 Forge 版本无法在当前 Java 上启动',
+    detail:
+      'Forge 36.2.25 之前的版本依赖一个在较新的 Java 8 中已被修改的内部接口，启动时会中断。本机没有可用的旧版 Java 8，请将 Forge 更新到 {loaderVersion} 或更高版本。',
+  },
+  'preflight.compat.old-fml-sorts-while-iterating': {
+    title: '这个 Forge 版本需要修改后才能启动',
+    detail:
+      '1.7.10 之前的 Forge 存在一处缺陷，在现有的 Java 8 上启动时必然中断。Fern 会在安装时修改对应的类文件，而这一步没有完成。',
+  },
+  'preflight.compat.old-fml-refuses-an-unsigned-client': {
+    title: '这个 Forge 版本会拒绝启动游戏',
+    detail:
+      '这些版本会检查游戏文件的数字签名，而当年的签名方式已不被现在的 Java 认可。Fern 会在启动时关闭这项检查，而这一步没有完成。',
   },
 
   // ── 文件对账 ────────────────────────────────────────────────────────────

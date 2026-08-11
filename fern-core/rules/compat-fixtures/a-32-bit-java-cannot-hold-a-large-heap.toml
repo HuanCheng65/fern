@@ -1,0 +1,11 @@
+# 32 位的 Windows Java——老机器上仍然常见。堆压不下来的话，JVM 连起都起不来。
+minecraft = "1.12.2"
+loader = "forge"
+loader-version = "14.23.5.2859"
+os = "windows"
+arch = "x86"
+
+[java]
+major = 8
+update = 452
+bits = 32

@@ -146,15 +146,46 @@ pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
         &profile.game_version,
         super::version::release_target(&scoped, profile).as_deref(),
     );
-    inspect(
+    let runtime = chosen_runtime(paths, profile, &jars);
+    let mut findings = inspect(
         &jars,
         profile.loader,
         &game,
-        java_major(paths, profile, &jars),
-    )
+        runtime.as_ref().map(|runtime| runtime.major),
+    );
+    findings.extend(refusals(profile, runtime.as_ref()));
+    findings
 }
 
-/// 这个实例点下去会用哪个大版本的 Java。
+/// 事前兼容规则里被拦下来的那些（见 [`super::compat`]）。
+///
+/// 只有 `Block` 会出现在这里：静悄悄就能办妥的那些（换个 Java、加个开关、打个
+/// 补丁）是启动器该自己解决的事，把它们也念出来，用户就得读一串和自己无关的
+/// 话，真正拦路的那条反而被淹掉。
+fn refusals(profile: &InstanceProfile, runtime: Option<&crate::java::JavaRuntime>) -> Vec<Finding> {
+    let environment = super::compat::Environment::here(
+        &profile.game_version,
+        profile.loader,
+        profile
+            .loader_profile
+            .as_ref()
+            .map(|loader| loader.version.as_str())
+            .unwrap_or_default(),
+    )
+    .with_java(runtime.map(Into::into));
+    super::compat::notices(&super::compat::apply(&environment))
+        .into_iter()
+        .map(|notice| Finding {
+            id: format!("compat-{}", notice.id),
+            kind: format!("compat.{}", notice.id),
+            severity: Severity::Blocking,
+            args: notice.args,
+            action: None,
+        })
+        .collect()
+}
+
+/// 这个实例点下去会用哪一份 Java。
 ///
 /// 和启动走同一条路（`java_requirement` + `resolve_java_runtime`），**包括那两条
 /// 容易漏掉的输入**：元数据里声明的大版本，和模组自己要求的下界。少一条，预检查
@@ -163,13 +194,27 @@ pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
 ///
 /// 挑不出来时返回 `None`——那时该说的话是「没有可用的 Java」，那是启动自己会报
 /// 的错，不该在这里变成一条关于某个模组的警告。
-fn java_major(paths: &DataPaths, profile: &InstanceProfile, jars: &[ModJar]) -> Option<u16> {
+fn chosen_runtime(
+    paths: &DataPaths,
+    profile: &InstanceProfile,
+    jars: &[ModJar],
+) -> Option<crate::java::JavaRuntime> {
     let declared = crate::read_prepared_java_major(paths, &profile.game_version);
+    let environment = super::compat::Environment::here(
+        &profile.game_version,
+        profile.loader,
+        profile
+            .loader_profile
+            .as_ref()
+            .map(|loader| loader.version.as_str())
+            .unwrap_or_default(),
+    );
     let requirement = crate::java::requirement(&profile.game_version, profile.loader, declared)
-        .preferring(java_floor(jars));
-    super::resolve_java_runtime(paths, profile, &requirement)
-        .ok()
-        .map(|runtime| runtime.major)
+        .preferring(java_floor(jars))
+        .capped(super::compat::runtime_ceiling(&super::compat::apply(
+            &environment,
+        )));
+    super::resolve_java_runtime(paths, profile, &requirement).ok()
 }
 
 /// 这些模组里，要求得最高的那条 Java 下界。
