@@ -100,9 +100,10 @@
 
   function open(slug: string, title: string) {
     supply.scrollTop = results?.scrollTop ?? 0
-    // 点的那一刻就知道叫什么，面包屑不必等详情加载完。
-    supply.beginViewing(title)
     nav.open(slug)
+    // 点的那一刻就知道叫什么，面包屑不必等详情加载完——地址里是 slug
+    // （`fabric-api`），而人认的是标题（`Fabric API`）。
+    nav.name(title)
   }
 
   void instances.loadVersions()

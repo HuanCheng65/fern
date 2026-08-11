@@ -114,7 +114,7 @@
       ])
       detail = project
       versions = list
-      supply.beginViewing(project.title)
+      nav.name(project.title)
       error = ''
     } catch (cause) {
       error = String(cause)

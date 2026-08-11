@@ -99,9 +99,11 @@
    * 一段就地展开的东西：看一眼 UUID 要把那一行撑开，添加账户要在名单中间
    * 撑开一整张表单，而撑开的那一刻，下面所有的行都往下跳一截。
    *
-   * 所以加了第二级：**一行可以是一个入口。** 语法在 `nav.focus` 里定义，
-   * `分区/行/目标` 的第三段就是这一级。它和场景的纵深是同一套语法（一次
-   * 返回回到上一层、就地展开而不是横移），只是发生在浮层内部。
+   * 所以加了第二级：**一行可以是一个入口。** 语法在 `nav.settingsRoute` 里定义，
+   * 第三段起就是这一级。它和场景的纵深不只是「同一套语法」——它就是同一套：
+   * 前两段是锚点（分区、行）落在参数里，第三段起才占路径，所以 `nav.up()`
+   * 一视同仁地去掉最后一段。上一版这里自己写了一份 `slice(0, 2)`，于是四段
+   * 长的位置会被它一步退掉两级。
    */
   const location = $derived(at.split('/').filter(Boolean))
   /** 二级页属于哪一行。`分区/行`。 */
@@ -585,7 +587,7 @@
           <!-- 返回到它所属的那一节，名字从目录里取——这一级是通用机制，不是
                账户专用的。 -->
           <div class="crumb-back">
-            <Button variant="link" tone="quiet" onclick={() => nav.show('settings', location.slice(0, 2).join('/'))}>
+            <Button variant="link" tone="quiet" onclick={() => nav.up()}>
               <ChevronLeft size={14} strokeWidth={2} />{sectionLabel}
             </Button>
           </div>
@@ -606,7 +608,7 @@
             home={decodeURIComponent(target)}
             {groups}
             onchanged={() => void loadRuntimes()}
-            ongone={() => nav.show('settings', 'java/runtimes')}
+            ongone={() => nav.settings('java/runtimes')}
             remove={removeRuntime}
             forget={forgetJavaPath}
           />
@@ -615,23 +617,24 @@
           {#key detail}
             <AddAccount
               initial={detail as AccountKind | ''}
-              ondone={(id) => nav.show('settings', `account/list${id ? `/${id}` : ''}`)}
+              ondone={(id) => nav.settings(`account/list${id ? `/${id}` : ''}`)}
             />
           {/key}
         {:else}
           <AccountProfile
             accountId={target}
-            ongone={() => nav.show('settings', 'account/list')}
+            ongone={() => nav.settings('account/list')}
           />
         {/if}
       </div>
     </div>
   {:else}
-  <Form
-    {sections}
-    {section}
-    onsection={(id) => (section = id as SectionId)}
-  >
+  <!--
+    换一节也写进地址。它是横向的（`nav.settings` 对同深度的位置用 replace，
+    不压栈），但它是「我在哪」的一部分——上一版只有被 ⌘K 送进来时才记，自己
+    点的那些换节一律不留痕，于是刷新回到外观、后退也回不到刚才那一节。
+  -->
+  <Form {sections} {section} onsection={(id) => nav.settings(id)}>
     {#snippet head()}
       <header>
         <h1 class="t-h1">设置</h1>
@@ -904,7 +907,7 @@
                   {/if}
 
                   {#each group.runtimes as item (item.path)}
-                    <button class="rt" onclick={() => nav.show('settings', profileAt(item.home))}>
+                    <button class="rt" onclick={() => nav.settings(profileAt(item.home))}>
                       <span class="rt-name">
                         {item.version || `Java ${item.major}`}
                         <small class="t-quiet">{javaLabel(item)}</small>
@@ -1236,7 +1239,7 @@
           </SettingRow>
 
           <SettingRow id="data/existing" found={focused === 'data/existing'}>
-            <Button variant="ghost" onclick={() => nav.show('settings', 'data/existing/browse')}>
+            <Button variant="ghost" onclick={() => nav.settings('data/existing/browse')}>
               选择目录…
             </Button>
           </SettingRow>

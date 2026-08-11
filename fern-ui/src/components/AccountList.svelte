@@ -21,7 +21,7 @@
   import Menu from 'fern-kit/ui/Menu.svelte'
 
   /** 二级页的地址。这一行本身的 id 是 `account/list`。 */
-  const open = (target: string) => nav.show('settings', `account/list/${target}`)
+  const open = (target: string) => nav.settings(`account/list/${target}`)
 
   /**
    * 「添加账户」展开的就是三种方式本身。

@@ -379,7 +379,7 @@
           -->
           <p class="reason">
             堆大小由额外 JVM 参数中的 <code class="t-mono">-Xmx</code> 决定。
-            <Button variant="link" onclick={() => nav.show('settings', 'game/jvm')}>
+            <Button variant="link" onclick={() => nav.settings('game/jvm')}>
               前往设置
             </Button>
           </p>
@@ -391,7 +391,7 @@
             valueMb={shownMb}
             marks={memoryMarks}
             onchange={memoryAuto ? undefined : setMemory}
-            onceiling={() => nav.show('settings', 'game/memory')}
+            onceiling={() => nav.settings('game/memory')}
           />
 
           {#if memoryAuto && basis}<p class="reason t-quiet">{basis}</p>{/if}

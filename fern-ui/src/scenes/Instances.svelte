@@ -20,10 +20,9 @@
   import Collection from '../layouts/Collection.svelte'
   import InstanceDetail from './InstanceDetail.svelte'
   import NewInstance from './NewInstance.svelte'
-  import { instances } from '../lib/instances.svelte'
+  import { CREATE, EXISTING, instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
-  import { CREATE, DEPTHS, EXISTING } from '../lib/depths'
   import { expand, riseIn } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -42,10 +41,21 @@
    */
   const onadopt = () => nav.open(EXISTING)
 
+  /**
+   * 这一屏叫什么，由它自己说。
+   *
+   * 页面标题和顶栏面包屑必须是同一个字符串——上一版是两处各写一遍，于是这
+   * 一个页面同时有「添加现有游戏」「添加现有目录」「添加已有游戏」三个名字。
+   */
+  const ADOPT = '添加现有游戏'
+  $effect(() => {
+    if (adopting) nav.name(ADOPT)
+  })
+
   // 地址里指着一个已经不存在的实例（删掉了、手改了地址栏）就退回网格，
   // 而不是留在一屏空白上。
   $effect(() => {
-    if (nav.detail && !creating && !adopting && !instances.loading && !viewing) nav.back()
+    if (nav.detail && !creating && !adopting && !instances.loading && !viewing) nav.up()
   })
 </script>
 
@@ -55,7 +65,7 @@
   </div>
 {:else if adopting}
   <div class="depth scroll existing" data-page-scroll in:expand>
-    <h1 class="t-h1">{DEPTHS[EXISTING]}</h1>
+    <h1 class="t-h1">{ADOPT}</h1>
     <AdoptDirectory />
   </div>
 {:else if viewing}

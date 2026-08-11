@@ -184,14 +184,6 @@ class SupplyStore {
 
   /** 装到哪个实例。是浏览的上下文，不是筛选条件。 */
   targetId = $state('')
-  /**
-   * 正在看的项目叫什么。
-   *
-   * 顶栏的面包屑要显示它——地址里是 slug（`fabric-api`），而人认的是标题
-   * （`Fabric API`）。详情页读到之后填进来。
-   */
-  viewingTitle = $state('')
-
   target = $derived(
     instances.list.find((item) => item.id === this.targetId) ?? instances.current,
   )
@@ -200,11 +192,6 @@ class SupplyStore {
   #offset = 0
   /** 结果区滚到哪了。切走再回来要接着看，不然又要从头往下滑一遍。 */
   scrollTop = 0
-
-  /** 点卡片的那一刻就知道标题了，不必等详情加载完面包屑才对。 */
-  beginViewing(title: string) {
-    this.viewingTitle = title
-  }
 
   /** 把筛选条件设成「为这个实例找东西」。跨场景跳转过来时用。 */
   aimAt(instanceId: string) {
@@ -319,8 +306,8 @@ providesRemote(async (query, signal) => {
       title: hit.title,
       hint: hit.author,
       run: () => {
-        supply.beginViewing(hit.title)
         nav.enter('supply', hit.slug)
+        nav.name(hit.title)
       },
     }),
   )

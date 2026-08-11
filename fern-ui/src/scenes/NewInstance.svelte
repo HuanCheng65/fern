@@ -29,11 +29,10 @@
   import { Check, ChevronDown, Package, Plus } from 'lucide-svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import Loading from '../components/Loading.svelte'
-  import { instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
+  import { EXISTING, instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
-  import { DEPTHS, EXISTING } from '../lib/depths'
   import { expand, pop, unfold } from '../lib/motion'
   import { ancient, generations, newestRelease, newestSnapshot, snapshots } from '../lib/versions'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -43,6 +42,9 @@
     version: string
     stable: boolean
   }
+
+  const TITLE = '新建实例'
+  nav.name(TITLE)
 
   let name = $state('')
   /** 用户自己动过名字之后就不再替他改。 */
@@ -185,8 +187,9 @@
         await invoke('add_instance_component', { instanceId: created.id, loader: kind })
       }
       // 建完直接落到它的详情页：刚建的东西该能立刻看见，而不是回到网格里自己找。
+      // 用 replace 顶掉这一页：这张表单已经交出去了，后退回到它没有意义。
       instances.select(created.id)
-      nav.open(created.id)
+      nav.replace(['instances', created.id])
       /*
        * 建完立刻开始准备，不等第一次点启动。
        *
@@ -247,7 +250,7 @@
       })
       await instances.load()
       instances.select(created.id)
-      nav.open(created.id)
+      nav.replace(['instances', created.id])
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -304,7 +307,7 @@
 
 <section class="create" class:dropping>
   <header>
-    <h1 class="t-h1">新建实例</h1>
+    <h1 class="t-h1">{TITLE}</h1>
   </header>
 
   {#if pack}
@@ -575,11 +578,11 @@
         <Button variant="link" onclick={() => void pickPack()}>从整合包创建</Button>
         <span class="t-quiet">·</span>
         <Button variant="link" onclick={() => nav.enter('instances', EXISTING)}>
-          {DEPTHS[EXISTING]}
+          添加现有游戏
         </Button>
       {/if}
     </div>
-    <Button onclick={() => nav.back()}>取消</Button>
+    <Button onclick={() => nav.up()}>取消</Button>
     {#if pack}
       <Button variant="primary" disabled={busy} onclick={() => void importPack()}>
         <Plus size={15} />{busy ? '导入中' : '导入整合包'}

@@ -217,7 +217,7 @@ provides(() => [
       // 里某一行的下面去。位置归位置，写在 hint 里。
       title: section.label,
       hint: '设置',
-      run: () => nav.show('settings', section.id),
+      run: () => nav.settings(section.id),
     }),
   ),
   ...SETTINGS_ROWS
@@ -233,7 +233,7 @@ provides(() => [
         // 「垃圾回收器」，而记得它的人多半打 gc。
         hint: `设置 · ${sectionLabel(row.id)}`,
         terms: row.keywords ?? '',
-        run: () => nav.show('settings', row.id),
+        run: () => nav.settings(row.id),
       }),
     ),
 ])

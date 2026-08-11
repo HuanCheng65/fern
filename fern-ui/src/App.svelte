@@ -30,12 +30,11 @@
   import { frame, frameless, platform, selfRounded } from './lib/frame.svelte'
   import { flush, hydrate } from './lib/persist'
   import { accounts } from './lib/accounts.svelte'
-  import { instances } from './lib/instances.svelte'
+  import { CREATE, instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
   import { DURATION, scaled } from './lib/motion'
   import { island } from './lib/island.svelte'
   import { nav, SCENES, type SceneId } from './lib/nav.svelte'
-  import { CREATE, DEPTHS } from './lib/depths'
   import { palette } from 'fern-kit/parts/palette'
   import './lib/places.svelte'
   import { prefs } from './lib/prefs.svelte'
@@ -50,21 +49,16 @@
   let ready = $state(false)
   /** 背景用当前实例的封面当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.cover ?? 'Fern')
-  /** 顶栏的面包屑只要一个词。哪个场景有纵深，就由那个场景说它叫什么。 */
-  const detailLabel = $derived(
-    !nav.detail
-      ? ''
-      : nav.scene === 'instances'
-        ? (DEPTHS[nav.detail] ??
-          instances.list.find((item) => item.id === nav.detail)?.name ??
-          '')
-        : nav.scene === 'supply'
-          ? supply.viewingTitle || nav.detail
-          : '',
-  )
+  /**
+   * 顶栏的面包屑只要一个词，而那个词是当前这一屏自己登记的（`nav.name`）。
+   * 外壳不认识实例，也不认识补给里的项目——上一版在这里放了一张映射表，于是
+   * 每加一个纵深页就要记得回来改它一次，忘了就没有标题也没有返回键。
+   */
+  const detailLabel = $derived(nav.depth > 0 ? nav.title : '')
 
   const createInstance = () => nav.enter('instances', CREATE)
-  const away = $derived(nav.overlay !== '')
+  /** 有东西盖在场景上：背景层要退到后面去。 */
+  const away = $derived(nav.overlay !== '' || nav.modal)
 
   // 联机昵称沿用当前账户的名字，Pearl 的配置只作为跨启动的兜底。
   $effect(() => {
@@ -83,15 +77,22 @@
     }
     if (mod && event.key === ',') {
       event.preventDefault()
-      nav.toggle('settings')
+      nav.toggleSettings()
+      return
+    }
+    // 上一步。桌面上的通用手势，而窗口里没有浏览器的那两颗箭头可点。
+    // preventDefault 是必须的：不拦住的话 webview 自己也会走一次历史。
+    if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault()
+      if (event.key === 'ArrowLeft') nav.back()
+      else history.forward()
       return
     }
     if (event.key === 'Escape') {
-      // 由外向内关：浮层内部还有更浅的一层就先退那一层（设置里的二级页），
-      // 再收浮层，最后才退出详情。
-      if (nav.overlay) {
-        if (!nav.popFocus()) nav.dismiss()
-      } else nav.back()
+      // 由外向内关：随手开的那一层先收，再退一级。设置里的二级页也走同一个
+      // `up()`——它和场景的纵深是同一件事，不该有第二套。
+      if (nav.overlay) nav.dismiss()
+      else nav.up()
       return
     }
     // 左右方向键就是镜头。输入框里除外——那时候方向键属于光标。
@@ -192,8 +193,8 @@
       updateAvailable={updates.available}
       onbrand={() => nav.go('launch')}
       onscene={(id) => nav.go(id as SceneId)}
-      onback={() => nav.back()}
-      onsettings={() => nav.toggle('settings')}
+      onback={() => nav.up()}
+      onsettings={() => nav.toggleSettings()}
     />
 
     <main class="stage">
@@ -224,9 +225,12 @@
         </div>
       {/key}
 
-      <!-- 设置盖在舞台上，顶栏留在上面：它是浮层，不是第六个场景。 -->
-      {#if nav.overlay === 'settings'}
-        <Settings at={nav.focus} onback={() => nav.dismiss()} />
+      <!--
+        设置盖在舞台上，顶栏留在上面：它是模态，不是第六个场景。盖着不等于
+        没有地址——它照样进栈、照样能被后退接住、刷新之后还在原处。
+      -->
+      {#if nav.modal}
+        <Settings at={nav.focus} onback={() => nav.back()} />
       {/if}
     </main>
   {/if}

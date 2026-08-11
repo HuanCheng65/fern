@@ -13,7 +13,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { commands, provides, type Subject } from 'fern-kit/parts/palette'
 import { nav } from './nav.svelte'
-import { CREATE } from './depths'
+
+/**
+ * 实例场景那一级里，不是实例的那两屏。
+ *
+ * 实例 id 是随机发的，撞不上这两个词。它们只是**保留的段名**——各自叫什么
+ * 由渲染它的那一屏自己登记（`nav.name`），这里不留标题。
+ */
+export const CREATE = 'new'
+export const EXISTING = 'existing'
 
 export interface Instance {
   id: string

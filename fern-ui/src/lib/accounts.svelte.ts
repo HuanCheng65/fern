@@ -298,7 +298,7 @@ const switchTo = (id: string) => {
  */
 provides(() => accounts.list.map(asSubject))
 
-/** 档案是设置里的二级页，所以它的地址就是 `nav.focus` 的第三段。 */
+/** 档案是设置里的二级页，所以它占的是路径的第三段（见 `nav.settingsRoute`）。 */
 const profileAt = (id: string) => `account/list/${id}`
 
 /**
@@ -334,11 +334,11 @@ commands(() => [
         title: item.playerName,
         hint: KIND_LABEL[item.kind],
         seed: item.uuid,
-        run: () => nav.show('settings', profileAt(item.id)),
+        run: () => nav.settings(profileAt(item.id)),
       }
     },
     run: (subject) => {
-      if (subject) nav.show('settings', profileAt(subject.id))
+      if (subject) nav.settings(profileAt(subject.id))
     },
   },
   {
@@ -347,6 +347,6 @@ commands(() => [
     accepts: 'none',
     // 名单里没有你要的那个人时，出口就在名单的最后一行。
     creates: 'account',
-    run: () => nav.show('settings', profileAt('new')),
+    run: () => nav.settings(profileAt('new')),
   },
 ])

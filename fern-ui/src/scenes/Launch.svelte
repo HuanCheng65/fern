@@ -128,7 +128,7 @@
           : undefined}
       error={launch.error}
       onidentity={switchIdentity}
-      onaddaccount={() => nav.show('settings', 'account/list/new')}
+      onaddaccount={() => nav.settings('account/list/new')}
       {onswitch}
       onmanage={() => nav.enter('instances', current.id)}
       onlaunch={() => void launch.launch(current.id)}

@@ -38,6 +38,10 @@
 
   let { instance }: Props = $props()
 
+  // 顶栏那一格写的是这个实例的名字，而只有这里知道它叫什么——名字是异步读
+  // 出来的，改名之后也要跟着变。
+  $effect(() => nav.name(instance.name))
+
   /** 原版实例装不了模组，那个 tab 摆在那里只会浪费一次点击。 */
   const tabs = $derived([
     { id: 'overview', label: '概览', reading: true },
@@ -206,7 +210,8 @@
     <InstanceSettings
       instanceId={instance.id}
       instanceName={instance.name}
-      ongone={(replacement) => (replacement ? nav.open(replacement) : nav.back())}
+      ongone={(replacement) =>
+        replacement ? nav.replace(['instances', replacement]) : nav.up()}
     />
   {:else}
     <LogLines
