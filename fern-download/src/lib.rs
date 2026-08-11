@@ -178,6 +178,22 @@ pub async fn verify_file(path: &Path, expected_sha1: &str, expected_size: u64) -
     Ok(bytes.len() as u64 == expected_size && sha1_matches(&bytes, expected_sha1))
 }
 
+/// 下到一半时先落在哪。
+///
+/// **追加后缀，不是替换扩展名。** `with_extension("part")` 会把
+/// `bin/java.exe` 和 `bin/java.dll` 都写成 `bin/java.part`——同一批里两个任务
+/// 抢同一个临时文件，各写各的字节，谁先 rename 谁把对方的半份内容搬进自己的
+/// 目的地。Mojang 的运行时清单里这样的同名兄弟每个平台都有（Windows 上正是
+/// `java.exe`/`java.dll`），结果就是一句「java.exe 不是有效的 Win32 应用程序」。
+///
+/// 而校验拦不住它：sha1 是就着下载流现算的，不是回头读磁盘上那份，所以两个
+/// 任务都「校验通过」。名字唯一是唯一的出路。
+fn part_path(path: &Path) -> PathBuf {
+    let mut name = path.to_path_buf().into_os_string();
+    name.push(".part");
+    PathBuf::from(name)
+}
+
 pub fn safe_join(root: &Path, relative: &Path) -> Result<PathBuf> {
     if relative.is_absolute()
         || relative
@@ -660,7 +676,7 @@ impl DownloadClient {
                 parent.display()
             )));
         }
-        let temporary = task.path.with_extension("part");
+        let temporary = part_path(&task.path);
         let mut last_error = None;
         // 每个源都明确回答「我这里没有」时，重试整批也不会有别的结果。
         let mut all_missing = true;
@@ -890,6 +906,20 @@ mod tests {
         assert!(!verified.is_satisfied().await.expect("check content"));
 
         tokio::fs::remove_dir_all(root).await.expect("remove root");
+    }
+
+    /// 只差扩展名的两个文件不能共用一个临时文件。共用了，同一批里它们会互相
+    /// 覆盖，而各自的 sha1 照样对得上——见 [`part_path`]。
+    #[test]
+    fn files_that_differ_only_in_extension_get_their_own_temporary() {
+        let bin = Path::new("/fern/runtimes/jre-legacy/bin");
+        assert_ne!(
+            part_path(&bin.join("java.exe")),
+            part_path(&bin.join("java.dll"))
+        );
+        assert_eq!(part_path(&bin.join("java.exe")), bin.join("java.exe.part"));
+        // 没有扩展名的也照样加后缀，不会变成「就是它自己」。
+        assert_eq!(part_path(&bin.join("java")), bin.join("java.part"));
     }
 
     #[test]
