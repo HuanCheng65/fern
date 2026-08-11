@@ -44,7 +44,11 @@ fn write_version(paths: &DataPaths, id: &str, json: serde_json::Value) {
 fn the_report_covers_every_bucket_and_the_total_adds_up() {
     let root = scratch("report");
     let paths = instance(&root, "1.20.1");
-    put(&root, "instances/moss/.minecraft/saves/家/level.dat", &[0; 64]);
+    put(
+        &root,
+        "instances/moss/.minecraft/saves/家/level.dat",
+        &[0; 64],
+    );
     put(&root, "cache/manifest.json", &[0; 32]);
     put(&root, "logs/fern.log", &[0; 16]);
     put(&root, ".minecraft/libraries/a/b/c-1.0.jar", &[0; 128]);
@@ -199,7 +203,11 @@ fn slimming_removes_only_what_nothing_references() {
     put(&root, "runtimes/java-runtime-gamma/bin/java", b"elf");
     // 孤儿们。
     put(&root, ".minecraft/versions/1.8.9/1.8.9.jar", &[0; 32]);
-    put(&root, ".minecraft/libraries/org/old/old/1.0/old-1.0.jar", &[0; 16]);
+    put(
+        &root,
+        ".minecraft/libraries/org/old/old/1.0/old-1.0.jar",
+        &[0; 16],
+    );
     put(&root, "runtimes/jre-legacy/bin/java", &[0; 8]);
     // 用户手动登记过的 Java 指着一份运行时：它没被任何版本要求，也得留。
     let mut settings = crate::data::settings::load(&paths);
@@ -293,8 +301,7 @@ fn migration_refuses_what_would_lose_data() {
 
     // 相对路径、迁进自己、互相包含、非空目标，全都停下。
     let refuse = |destination: &Path| {
-        migrate_with_default(&paths, destination, &default, &mut |_, _| {})
-            .expect_err("应当拒绝")
+        migrate_with_default(&paths, destination, &default, &mut |_, _| {}).expect_err("应当拒绝")
     };
     refuse(Path::new("relative/fern"));
     refuse(&old.join("inside"));
@@ -337,10 +344,18 @@ fn a_tree_copy_reports_progress_and_verifies_every_file() {
     put(&from, "deep/b.bin", &[2; 30]);
 
     let mut calls = Vec::new();
-    copy_tree(&from, &base.join("to"), 40, &mut |done, total| calls.push((done, total)))
-        .expect("copy");
-    assert_eq!(fs::read(base.join("to/a.bin")).expect("read a"), vec![1; 10]);
-    assert_eq!(fs::read(base.join("to/deep/b.bin")).expect("read b"), vec![2; 30]);
+    copy_tree(&from, &base.join("to"), 40, &mut |done, total| {
+        calls.push((done, total))
+    })
+    .expect("copy");
+    assert_eq!(
+        fs::read(base.join("to/a.bin")).expect("read a"),
+        vec![1; 10]
+    );
+    assert_eq!(
+        fs::read(base.join("to/deep/b.bin")).expect("read b"),
+        vec![2; 30]
+    );
     assert_eq!(calls.last(), Some(&(40, 40)));
 
     fs::remove_dir_all(base).expect("clean up");

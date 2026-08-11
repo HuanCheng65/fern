@@ -125,7 +125,11 @@ fn live_set(paths: &DataPaths) -> Result<LiveSet> {
     for profile in crate::list_instances(paths)? {
         // 用户给这个实例钉住的 Java 若在 runtimes/ 里，那份运行时就是活的，
         // 无论有没有版本 JSON 还认它。
-        note_component(&mut live.components, paths, profile.settings.java_path.as_deref());
+        note_component(
+            &mut live.components,
+            paths,
+            profile.settings.java_path.as_deref(),
+        );
 
         let scoped = crate::instance::paths_for(paths, &profile);
         // 外部实例的版本目录是别人的，但 shared_libraries 开着时库和资源用的

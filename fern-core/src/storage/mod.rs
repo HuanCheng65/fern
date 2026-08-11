@@ -220,7 +220,11 @@ pub fn migration_target(picked: &Path) -> std::path::PathBuf {
     let mut entries = fs::read_dir(picked).into_iter().flatten().flatten();
     let empty =
         !entries.any(|entry| entry.file_name().to_str() != Some(crate::data::REDIRECT_FILE));
-    if empty { picked.to_owned() } else { picked.join("Fern") }
+    if empty {
+        picked.to_owned()
+    } else {
+        picked.join("Fern")
+    }
 }
 
 /// 与 [`migrate`] 相同，默认位置由调用方给——测试不该往真的用户目录写字条。
@@ -238,10 +242,12 @@ fn migrate_with_default(
     if !destination.is_absolute() {
         return Err(anyhow!("请填写一个绝对路径"));
     }
-    if destination
-        .components()
-        .any(|part| matches!(part, std::path::Component::CurDir | std::path::Component::ParentDir))
-    {
+    if destination.components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    }) {
         return Err(anyhow!("路径里不能有「.」或「..」"));
     }
     if destination == paths.root {
@@ -303,12 +309,7 @@ fn migrate_with_default(
 
 /// 复制一棵树，逐文件核对字节数。软链接不搬——数据根里的内容都是 Fern 自己
 /// 写的，没有软链接；真有也不该跟过去，链接指向的东西不属于这里。
-fn copy_tree(
-    from: &Path,
-    to: &Path,
-    total: u64,
-    progress: &mut dyn FnMut(u64, u64),
-) -> Result<()> {
+fn copy_tree(from: &Path, to: &Path, total: u64, progress: &mut dyn FnMut(u64, u64)) -> Result<()> {
     let mut done = 0u64;
     let mut stack = vec![from.to_path_buf()];
     while let Some(current) = stack.pop() {

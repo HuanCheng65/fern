@@ -443,7 +443,12 @@ pub fn diff(paths: &DataPaths, instance_id: &str, snapshot: &str) -> Result<Diff
         .collect();
     let now: HashMap<&str, (u64, u64)> = candidates
         .iter()
-        .map(|candidate| (candidate.relative.as_str(), (candidate.size, candidate.mtime)))
+        .map(|candidate| {
+            (
+                candidate.relative.as_str(),
+                (candidate.size, candidate.mtime),
+            )
+        })
         .collect();
 
     let mods = |side: &HashMap<&str, (u64, u64)>| -> HashSet<String> {
