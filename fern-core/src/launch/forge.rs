@@ -167,6 +167,8 @@ pub async fn install(
         )
         .await?;
     }
+    // 两份清单里都可能有「安装器自己带着」的库，这一份管版本描述那边。
+    unpack_declared_libraries(paths, &installer_path, &version_json)?;
 
     tokio::fs::write(&marker, loader_version).await?;
     Ok(version_id)
@@ -311,6 +313,52 @@ fn install_legacy(
         .with_context(|| format!("安装器里没有 {name}"))?;
     let mut target = std::fs::File::create(&destination)?;
     std::io::copy(&mut entry, &mut target)?;
+    Ok(())
+}
+
+/// 版本描述里那些「地址是空串」的库，安装器带着的话就掏出来。
+///
+/// 空地址的意思是「这个文件不在网上」——要么安装器自己带着，要么由某个
+/// processor 产出。麻烦在于这样的库分布在**两份清单**里：`install_profile`
+/// 的那份（[`run_processors`] 已经在管）和版本描述自己的那份。
+///
+/// 1.16.5 的 `net.minecraftforge:forge:1.16.5-36.2.39` 只出现在后者里。少了
+/// 它，classpath 上就缺了那个 212 KB 的 jar，而 `fmlclient` 这个启动目标正
+/// 在里面：游戏起来是一句「Cannot find launch target fmlclient」，退出码 1，
+/// 和「Forge 没装全」看不出任何关系。
+///
+/// 已经在磁盘上的不覆盖：那可能是某个 processor 刚产出的，比安装器里带的那
+/// 份更接近成品。
+fn unpack_declared_libraries(
+    paths: &DataPaths,
+    installer: &Path,
+    version_json: &serde_json::Value,
+) -> Result<()> {
+    let metadata: fern_meta::VersionMetadata =
+        serde_json::from_value(version_json.clone()).context("安装器提供的版本描述无法解析")?;
+    for library in &metadata.libraries {
+        let Some(artifact) = library
+            .downloads
+            .as_ref()
+            .and_then(|downloads| downloads.artifact.as_ref())
+        else {
+            continue;
+        };
+        if !artifact.url.is_empty() {
+            continue;
+        }
+        let Some(relative) = artifact
+            .path
+            .clone()
+            .or_else(|| fern_meta::maven_path(&library.name))
+        else {
+            continue;
+        };
+        if fern_download::safe_join(&paths.libraries, Path::new(&relative))?.is_file() {
+            continue;
+        }
+        unpack_bundled_library(installer, &relative, &paths.libraries)?;
+    }
     Ok(())
 }
 
