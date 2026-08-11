@@ -38,18 +38,9 @@ fn seconds(time: io::Result<SystemTime>) -> Option<u64> {
 }
 
 /// 目录占用。软链接不跟——跟过去会把别处的东西算进这个存档的体积里。
+/// 实现是全 crate 共用的那一份（`storage::tree_bytes`）。
 fn tree_bytes(path: &Path) -> u64 {
-    let Ok(entries) = fs::read_dir(path) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .map(|entry| match entry.metadata() {
-            Ok(metadata) if metadata.is_dir() => tree_bytes(&entry.path()),
-            Ok(metadata) if metadata.is_file() => metadata.len(),
-            _ => 0,
-        })
-        .sum()
+    crate::storage::tree_bytes(path)
 }
 
 /// 只要名字，不算体积。

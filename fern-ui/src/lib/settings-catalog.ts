@@ -49,6 +49,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: 'java', label: 'Java' },
   { id: 'download', label: '下载' },
   { id: 'data', label: '数据' },
+  { id: 'storage', label: '存储' },
   { id: 'about', label: '关于' },
 ]
 
@@ -144,6 +145,34 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     label: '现有游戏目录',
     note: '把已有的 .minecraft 中的版本添加为实例。游戏文件保留在原位置。',
     keywords: 'minecraft import existing directory 导入 现有 目录 便携',
+    stack: true,
+  },
+
+  {
+    id: 'storage/usage',
+    label: '占用',
+    note: '各部分占用的磁盘空间。快照之间共用相同的内容，删除单张快照未必能省出它显示的大小。',
+    keywords: 'storage disk usage space 磁盘 占用 空间 大小 容量',
+    stack: true,
+  },
+  {
+    id: 'storage/instances',
+    label: '各实例',
+    keywords: 'instance size 实例 大小 占用',
+    stack: true,
+  },
+  {
+    id: 'storage/clean',
+    label: '清理',
+    note: '缓存与日志可随时清除，需要时会重新生成，不影响存档、模组或任何设置。',
+    keywords: 'clean cache log 清理 清除 缓存 日志',
+    stack: true,
+  },
+  {
+    id: 'storage/slim',
+    label: '瘦身',
+    note: '清除没有任何实例使用的版本、依赖库、资源与 Java 运行时。这些内容需要时会重新下载。',
+    keywords: 'slim cleanup orphan 瘦身 清除 版本 依赖库 资源 运行时 释放',
     stack: true,
   },
 

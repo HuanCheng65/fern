@@ -277,7 +277,7 @@ fn discover_uncached(paths: Option<&DataPaths>) -> Vec<JavaRuntime> {
         // 只给能删的那些算体积——不打算删的东西不必知道它多大，而算一次要
         // 走一万个文件。
         if runtime.managed {
-            runtime.size_bytes = directory_size(&runtime.home);
+            runtime.size_bytes = crate::storage::tree_bytes(&runtime.home);
         }
         // 同一个 JDK 会被好几条路径找到（`java-1.21.0-…` 是 `java-21-…` 的
         // 符号链接，PATH 上的 `java` 又指向其中之一），按真实路径去重。
@@ -483,27 +483,6 @@ fn javac_executable_name() -> &'static str {
     if cfg!(windows) { "javac.exe" } else { "javac" }
 }
 
-/// 目录占用的字节数。不跟符号链接，避免把系统目录算进来。
-fn directory_size(root: &Path) -> u64 {
-    let mut total = 0;
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.is_dir() {
-                stack.push(entry.path());
-            } else if metadata.is_file() {
-                total += metadata.len();
-            }
-        }
-    }
-    total
-}
 
 #[derive(Debug, Default)]
 struct ReleaseFile {

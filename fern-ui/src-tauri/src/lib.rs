@@ -750,6 +750,57 @@ async fn prune_snapshots(instance_id: String) -> Result<Vec<String>, String> {
     .await?
 }
 
+// ——— 存储 ———
+//
+// 全部走 `off_thread`：报数要遍历整个数据根，清理和瘦身要删文件。
+
+/// 数据根各分区占多少磁盘。实例明细另拉（`instance_storage`），不等最慢的。
+#[tauri::command]
+async fn storage_report() -> Result<fern_core::StorageReport, String> {
+    off_thread(move || fern_core::storage_report(&paths()?).map_err(|error| format!("{error:#}")))
+        .await?
+}
+
+/// 一个实例占多大。设置页逐个拉。
+#[tauri::command]
+async fn instance_storage(instance_id: String) -> Result<u64, String> {
+    off_thread(move || {
+        fern_core::instance_storage_bytes(&paths()?, &instance_id)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 清空元数据缓存，返回省下的字节数。
+#[tauri::command]
+async fn clear_cache() -> Result<u64, String> {
+    off_thread(move || fern_core::clear_cache(&paths()?).map_err(|error| format!("{error:#}")))
+        .await?
+}
+
+/// 清空日志，返回省下的字节数。
+#[tauri::command]
+async fn clear_logs() -> Result<u64, String> {
+    off_thread(move || fern_core::clear_logs(&paths()?).map_err(|error| format!("{error:#}")))
+        .await?
+}
+
+/// 瘦身预检：哪些共享文件没有实例引用、删了能省多少。只读。
+#[tauri::command]
+async fn slim_preview() -> Result<fern_core::SlimPlan, String> {
+    off_thread(move || fern_core::slim_preview(&paths()?).map_err(|error| format!("{error:#}")))
+        .await?
+}
+
+/// 按勾选的类别执行瘦身，返回实际删掉的。
+#[tauri::command]
+async fn slim_apply(contents: fern_core::SlimContents) -> Result<fern_core::SlimPlan, String> {
+    off_thread(move || {
+        fern_core::slim_apply(&paths()?, &contents).map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 /// 快照一共占多少磁盘。
 #[tauri::command]
 async fn backup_usage() -> Result<fern_core::Usage, String> {
@@ -1506,6 +1557,12 @@ pub fn run() {
             delete_snapshot,
             label_snapshot,
             prune_snapshots,
+            storage_report,
+            instance_storage,
+            clear_cache,
+            clear_logs,
+            slim_preview,
+            slim_apply,
             backup_usage,
             export_world,
             export_fernpack,

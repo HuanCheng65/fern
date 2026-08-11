@@ -25,6 +25,8 @@ export interface Instance {
   lastPlayed?: number
   /** 这个实例用哪个账户。没记过就是 undefined，跟着当前账户走。 */
   accountId?: string
+  /** 游戏文件在 Fern 数据目录之外（导入的现有 .minecraft）。 */
+  external?: boolean
 }
 
 export interface VersionOption {
@@ -47,6 +49,7 @@ interface CoreInstance {
   cover?: { identity: string }
   lastPlayed?: number
   accountId?: string
+  external?: unknown
 }
 
 export const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -70,6 +73,7 @@ const toInstance = (profile: CoreInstance): Instance => ({
   cover: profile.cover?.identity || profile.id,
   lastPlayed: profile.lastPlayed,
   accountId: profile.accountId,
+  external: profile.external != null,
 })
 
 const SELECTED_KEY = 'fern.instance.selected'

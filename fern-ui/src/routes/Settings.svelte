@@ -45,7 +45,21 @@
   import { launch } from '../lib/launch.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { updates } from '../lib/update.svelte'
-  import { inTauri } from '../lib/instances.svelte'
+  import { inTauri, instances } from '../lib/instances.svelte'
+  import { formatBytes } from '../lib/jobs.svelte'
+  import { nameList } from '../lib/backup'
+  import {
+    clearCache,
+    clearLogs,
+    instanceStorage,
+    slimApply,
+    slimBytes,
+    slimEmpty,
+    slimPreview,
+    storageReport,
+    type SlimPlan,
+    type StorageReport,
+  } from '../lib/storage'
   import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
 
@@ -56,6 +70,7 @@
     | 'java'
     | 'download'
     | 'data'
+    | 'storage'
     | 'about'
 
   interface Props {
@@ -349,6 +364,126 @@
       await invoke('open_logs_directory')
     } catch (error) {
       pathError = String(error)
+    }
+  }
+
+  // ——— 存储 ———
+
+  /** 分区报告。undefined 表示还没量完。 */
+  let storage = $state<StorageReport | undefined>()
+  let storageError = $state('')
+  let storageBusy = $state<'' | 'cache' | 'logs' | 'preview' | 'slim'>('')
+  /** 每实例的字节数，量出来一个填一个——几十 GB 的实例不挡住整张报告。 */
+  let instanceBytes = $state<Record<string, number>>({})
+  /** 「已释放 X」。清理和瘦身共用：一次只做一件事，说的都是最近那一件。 */
+  let freedNote = $state('')
+  /** 瘦身预检的结果。undefined 表示还没检查过。 */
+  let slimPlan = $state<SlimPlan | undefined>()
+  let slimPick = $state({ versions: true, runtimes: true, libraries: true, assets: true })
+
+  /** 大的排前面——来这一页的问题是「占用都在哪」。还没量完的排最后。 */
+  const sizedInstances = $derived(
+    [...instances.list].sort(
+      (left, right) => (instanceBytes[right.id] ?? -1) - (instanceBytes[left.id] ?? -1),
+    ),
+  )
+
+  const slimPicked = $derived.by(() => {
+    if (!slimPlan) return 0
+    return (
+      (slimPick.versions ? slimPlan.versionsBytes : 0) +
+      (slimPick.runtimes ? slimPlan.runtimesBytes : 0) +
+      (slimPick.libraries ? slimPlan.librariesBytes : 0) +
+      (slimPick.assets ? slimPlan.assetsBytes : 0)
+    )
+  })
+
+  /** 量一遍。只在第一次进这一节时做：遍历整个数据根不是免费的。 */
+  let measured = false
+  $effect(() => {
+    if (section !== 'storage' || measured) return
+    measured = true
+    void loadStorage()
+  })
+
+  async function loadStorage() {
+    if (!inTauri()) return
+    storageError = ''
+    try {
+      storage = await storageReport()
+    } catch (error) {
+      storageError = String(error)
+      return
+    }
+    // 设置可以在实例列表还没加载时打开（冷启动直奔 ⌘K）。
+    if (instances.list.length === 0) await instances.load()
+    // 实例挨个量，不并发——同时遍历十个目录只会让磁盘更慢。
+    for (const item of instances.list) {
+      try {
+        instanceBytes[item.id] = await instanceStorage(item.id)
+      } catch {
+        // 单个实例量不出来不挡整页，那一行显示不出数字本身就是信息。
+      }
+    }
+  }
+
+  async function clean(kind: 'cache' | 'logs') {
+    storageBusy = kind
+    storageError = ''
+    try {
+      const freed = kind === 'cache' ? await clearCache() : await clearLogs()
+      freedNote = `已释放 ${formatBytes(freed)}`
+      // 就地扣掉，不整棵重量：省下多少是后端刚数完的，账仍然是平的。
+      if (storage) {
+        storage = {
+          ...storage,
+          total: storage.total - freed,
+          [kind]: 0,
+        }
+      }
+    } catch (error) {
+      storageError = String(error)
+    } finally {
+      storageBusy = ''
+    }
+  }
+
+  async function previewSlim() {
+    storageBusy = 'preview'
+    storageError = ''
+    try {
+      slimPlan = await slimPreview()
+      slimPick = { versions: true, runtimes: true, libraries: true, assets: true }
+    } catch (error) {
+      storageError = String(error)
+    } finally {
+      storageBusy = ''
+    }
+  }
+
+  async function applySlim() {
+    storageBusy = 'slim'
+    storageError = ''
+    try {
+      const done = await slimApply(slimPick)
+      freedNote = `已释放 ${formatBytes(slimBytes(done))}`
+      slimPlan = undefined
+      if (storage) {
+        storage = {
+          ...storage,
+          total: storage.total - slimBytes(done),
+          versions: storage.versions - done.versionsBytes,
+          runtimes: storage.runtimes - done.runtimesBytes,
+          libraries: storage.libraries - done.librariesBytes,
+          assets: storage.assets - done.assetsBytes,
+        }
+      }
+      // 删掉的可能包括 Java 运行时，那一节的清单要跟上。
+      void loadRuntimes()
+    } catch (error) {
+      storageError = String(error)
+    } finally {
+      storageBusy = ''
     }
   }
 </script>
@@ -765,6 +900,172 @@
             </div>
           </SettingRow>
           {#if pathError}<div class="alert">{pathError}</div>{/if}
+        {:else if section === 'storage'}
+          <!--
+            这一节回答的是「占用都在哪、哪些拿得回来」。三档分开摆：用户数据
+            只报数，缓存零代价清除，共享文件按引用关系瘦身——零代价的和要
+            重新下载的绝不混在一个按钮里。
+          -->
+          <SettingRow id="storage/usage" found={focused === 'storage/usage'}>
+            {#if !storage}
+              <p class="t-quiet">{storageError || '正在测量……'}</p>
+            {:else}
+              <p class="tally t-quiet">共占用 {formatBytes(storage.total)}</p>
+              <ul class="buckets">
+                <li>
+                  <span>实例</span>
+                  <span class="bytes">{formatBytes(storage.instances)}</span>
+                </li>
+                <li>
+                  <span>快照</span>
+                  <span class="bytes">{formatBytes(storage.snapshots)}</span>
+                </li>
+                <li>
+                  <span>
+                    共享游戏文件
+                    <small class="t-quiet">版本、依赖库与资源，所有实例共用</small>
+                  </span>
+                  <span class="bytes">
+                    {formatBytes(storage.versions + storage.libraries + storage.assets)}
+                  </span>
+                </li>
+                <li>
+                  <span>Java 运行时</span>
+                  <span class="bytes">{formatBytes(storage.runtimes)}</span>
+                </li>
+                <li>
+                  <span>元数据缓存</span>
+                  <span class="bytes">{formatBytes(storage.cache)}</span>
+                </li>
+                <li>
+                  <span>日志</span>
+                  <span class="bytes">{formatBytes(storage.logs)}</span>
+                </li>
+                {#if storage.other > 0}
+                  <li>
+                    <span>
+                      其他
+                      <small class="t-quiet">设置、来源记录等零散文件</small>
+                    </span>
+                    <span class="bytes">{formatBytes(storage.other)}</span>
+                  </li>
+                {/if}
+              </ul>
+            {/if}
+          </SettingRow>
+
+          <SettingRow id="storage/instances" found={focused === 'storage/instances'}>
+            {#if sizedInstances.length === 0}
+              <p class="t-quiet">还没有实例。</p>
+            {:else}
+              <ul class="buckets">
+                {#each sizedInstances as item (item.id)}
+                  <li>
+                    <span>
+                      {item.name}
+                      {#if item.external}
+                        <small class="t-quiet">外部目录，游戏文件不计入</small>
+                      {/if}
+                    </span>
+                    <span class="bytes">
+                      {instanceBytes[item.id] !== undefined
+                        ? formatBytes(instanceBytes[item.id]!)
+                        : '…'}
+                    </span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </SettingRow>
+
+          <SettingRow id="storage/clean" found={focused === 'storage/clean'}>
+            <div class="clean">
+              <Button
+                variant="ghost"
+                disabled={storageBusy !== ''}
+                onclick={() => void clean('cache')}
+              >
+                清除缓存
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={storageBusy !== ''}
+                onclick={() => void clean('logs')}
+              >
+                清除日志
+              </Button>
+              {#if freedNote}<span class="t-quiet">{freedNote}</span>{/if}
+            </div>
+          </SettingRow>
+
+          <SettingRow id="storage/slim" found={focused === 'storage/slim'}>
+            {#if !slimPlan}
+              <Button
+                variant="ghost"
+                disabled={storageBusy !== ''}
+                onclick={() => void previewSlim()}
+              >
+                {storageBusy === 'preview' ? '正在检查……' : '检查可清除的内容'}
+              </Button>
+            {:else if slimEmpty(slimPlan)}
+              <p class="t-quiet">没有可清除的共享文件：现有的每一项都有实例在用。</p>
+            {:else}
+              <div class="slim">
+                {#if slimPlan.versions.length > 0}
+                  <label>
+                    <input type="checkbox" bind:checked={slimPick.versions} />
+                    <span>
+                      没有实例使用的版本：{nameList(slimPlan.versions)}
+                      <small class="t-quiet">{formatBytes(slimPlan.versionsBytes)}</small>
+                    </span>
+                  </label>
+                {/if}
+                {#if slimPlan.runtimes.length > 0}
+                  <label>
+                    <input type="checkbox" bind:checked={slimPick.runtimes} />
+                    <span>
+                      无实例需要的 Java 运行时：{nameList(slimPlan.runtimes)}
+                      <small class="t-quiet">{formatBytes(slimPlan.runtimesBytes)}</small>
+                    </span>
+                  </label>
+                {/if}
+                {#if slimPlan.librariesFiles > 0}
+                  <label>
+                    <input type="checkbox" bind:checked={slimPick.libraries} />
+                    <span>
+                      未被引用的依赖库（{slimPlan.librariesFiles} 个文件）
+                      <small class="t-quiet">{formatBytes(slimPlan.librariesBytes)}</small>
+                    </span>
+                  </label>
+                {/if}
+                {#if slimPlan.assetsFiles > 0}
+                  <label>
+                    <input type="checkbox" bind:checked={slimPick.assets} />
+                    <span>
+                      未被引用的资源（{slimPlan.assetsFiles} 个文件）
+                      <small class="t-quiet">{formatBytes(slimPlan.assetsBytes)}</small>
+                    </span>
+                  </label>
+                {/if}
+                <!-- 按下去会发生什么，先说清再给按钮——和恢复快照同一个规矩。 -->
+                <p class="slim-consequence">
+                  将释放 {formatBytes(slimPicked)}。清除的内容需要时会重新下载。
+                </p>
+                <div class="clean">
+                  <Button variant="ghost" onclick={() => (slimPlan = undefined)}>取消</Button>
+                  <Button
+                    variant="primary"
+                    disabled={slimPicked === 0 || storageBusy !== ''}
+                    onclick={() => void applySlim()}
+                  >
+                    {storageBusy === 'slim' ? '正在清除……' : '清除'}
+                  </Button>
+                </div>
+              </div>
+            {/if}
+          </SettingRow>
+
+          {#if storageError && storage}<div class="alert">{storageError}</div>{/if}
         {:else}
           <!--
             这一块不走 SettingRow：那一行是「一个名字，一个控件」，而这里没有
@@ -1022,6 +1323,74 @@
     flex: none;
     color: var(--accent);
     font-size: var(--t-micro);
+  }
+
+  /* 分区清单：名字在左、数字靠右对齐成一列，扫一眼就知道大头在哪。 */
+  .buckets {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .buckets li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
+    padding: var(--s2) 0;
+    color: var(--ink-2);
+    font-size: var(--t-body);
+    box-shadow: inset 0 -1px 0 var(--hairline-2);
+  }
+
+  .buckets li:last-child {
+    box-shadow: none;
+  }
+
+  .buckets small {
+    display: block;
+    font-size: var(--t-micro);
+  }
+
+  .bytes {
+    flex: none;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .clean {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .slim {
+    display: grid;
+    gap: var(--s3);
+  }
+
+  .slim label {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    color: var(--ink-2);
+    font-size: var(--t-body);
+    cursor: pointer;
+  }
+
+  .slim label small {
+    margin-left: var(--s2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 后果句。这一段是这一节最重要的一行：说清按下去会发生什么。 */
+  .slim-consequence {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: var(--t-small);
+    line-height: 1.7;
   }
 
   /*

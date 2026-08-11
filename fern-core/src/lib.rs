@@ -29,6 +29,7 @@ mod java;
 mod job;
 mod launch;
 mod process;
+mod storage;
 mod supply;
 mod update;
 
@@ -181,6 +182,12 @@ pub fn message_ids() -> Vec<String> {
     ids.sort();
     ids
 }
+
+pub use storage::{
+    StorageReport, clear_cache, clear_logs, instance_bytes as instance_storage_bytes,
+    report as storage_report,
+    slim::{SlimContents, SlimPlan, apply as slim_apply, preview as slim_preview},
+};
 
 pub use launch::gamelog::{LogLine, LogParser};
 pub use launch::loader::{
