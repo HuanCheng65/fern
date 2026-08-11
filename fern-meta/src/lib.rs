@@ -139,6 +139,99 @@ impl ArgumentValue {
     }
 }
 
+/// 旧参数串（`minecraftArguments`）拆开之后的样子。
+///
+/// 1.13 之前，整份游戏参数是一个字符串。子版本整串覆盖父版本，这在只装一个
+/// 加载器时看不出问题——Forge 把原版那一串抄了一遍再缀上自己的
+/// `--tweakClass`。但 LaunchWrapper 时代的加载器是可以叠加的（Forge +
+/// LiteLoader），整串覆盖会让先装的那个加载器的 tweaker 凭空消失，游戏能起来，
+/// 只是少了一半模组，而且日志里没有任何线索。
+///
+/// 所以合并要逐项来：基础参数按 key 认同一项、后者覆盖前者；tweaker 按顺序
+/// 追加——LaunchWrapper 按列出的顺序实例化它们，顺序是有语义的。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LegacyArguments {
+    /// 1.6 之前那两个没有名字的参数（用户名、会话），按出现顺序。
+    pub positional: Vec<String>,
+    /// `--key value`，以及不带值的 `--flag`（值为 `None`）。
+    pub options: Vec<(String, Option<String>)>,
+    /// `--tweakClass` 的值，按出现顺序。
+    pub tweakers: Vec<String>,
+}
+
+const TWEAK_CLASS: &str = "--tweakClass";
+
+impl LegacyArguments {
+    pub fn parse(arguments: &str) -> Self {
+        let tokens: Vec<&str> = arguments.split_whitespace().collect();
+        let mut parsed = Self::default();
+        let mut index = 0;
+        while index < tokens.len() {
+            let token = tokens[index];
+            if !token.starts_with("--") {
+                parsed.positional.push(token.to_owned());
+                index += 1;
+                continue;
+            }
+            // 下一个 token 以 `--` 开头就说明这一项没有值：官方元数据里的值
+            // 全是 `${...}` 占位符或字面量，没有一个长得像另一个选项。
+            let value = tokens
+                .get(index + 1)
+                .filter(|next| !next.starts_with("--"))
+                .map(|value| (*value).to_owned());
+            index += 1 + usize::from(value.is_some());
+            match (token, &value) {
+                (TWEAK_CLASS, Some(value)) => parsed.tweakers.push(value.clone()),
+                _ => parsed.options.push((token.to_owned(), value)),
+            }
+        }
+        parsed
+    }
+
+    /// 父在前、子在后地叠一层。
+    pub fn merge(parent: &Self, child: &Self) -> Self {
+        // 位置参数没有 key 可以对齐，只能整组换：子写了就以子为准。
+        let positional = match child.positional.is_empty() {
+            true => parent.positional.clone(),
+            false => child.positional.clone(),
+        };
+        let mut options = parent.options.clone();
+        for (key, value) in &child.options {
+            match options.iter_mut().find(|(existing, _)| existing == key) {
+                Some(slot) => slot.1 = value.clone(),
+                None => options.push((key.clone(), value.clone())),
+            }
+        }
+        let mut tweakers = parent.tweakers.clone();
+        for tweaker in &child.tweakers {
+            // 顺序保留，但同一个类不进去两次：加载器常常把父那一串连同
+            // tweaker 一起抄下来，重复列出会让 LaunchWrapper 把它实例化两遍。
+            if !tweakers.contains(tweaker) {
+                tweakers.push(tweaker.clone());
+            }
+        }
+        Self {
+            positional,
+            options,
+            tweakers,
+        }
+    }
+
+    /// 拼回启动器协议里那一串。tweaker 一律排在末尾，和上游写法一致。
+    pub fn render(&self) -> String {
+        let mut tokens = self.positional.clone();
+        for (key, value) in &self.options {
+            tokens.push(key.clone());
+            tokens.extend(value.clone());
+        }
+        for tweaker in &self.tweakers {
+            tokens.push(TWEAK_CLASS.to_owned());
+            tokens.push(tweaker.clone());
+        }
+        tokens.join(" ")
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Library {
     pub name: String,
@@ -445,10 +538,17 @@ impl VersionMetadata {
                 .clone()
                 .or_else(|| parent.asset_index.clone()),
             arguments,
-            minecraft_arguments: child
-                .minecraft_arguments
-                .clone()
-                .or_else(|| parent.minecraft_arguments.clone()),
+            // 整串覆盖会吃掉父那一层的 tweaker，见 [`LegacyArguments`]。
+            minecraft_arguments: match (&parent.minecraft_arguments, &child.minecraft_arguments) {
+                (Some(parent), Some(child)) => Some(
+                    LegacyArguments::merge(
+                        &LegacyArguments::parse(parent),
+                        &LegacyArguments::parse(child),
+                    )
+                    .render(),
+                ),
+                (parent, child) => child.clone().or_else(|| parent.clone()),
+            },
             java_version: child
                 .java_version
                 .clone()
@@ -943,6 +1043,80 @@ mod tests {
         );
         // 比不出来的写法不能 panic，给个稳定的答案就行。
         assert_eq!(compare_versions("release", "1.0"), Ordering::Greater);
+    }
+
+    /// 旧参数串是一整个字符串，子整串覆盖父。只装一个加载器时看不出问题，
+    /// 叠第二个 LaunchWrapper 系加载器就会把前一个的 tweaker 整个吃掉。
+    #[test]
+    fn stacking_two_loaders_keeps_both_tweakers_in_order() {
+        let vanilla = VersionMetadata {
+            id: "1.7.10".to_owned(),
+            minecraft_arguments: Some(
+                "--username ${auth_player_name} --version ${version_name} \
+                 --gameDir ${game_directory}"
+                    .to_owned(),
+            ),
+            ..VersionMetadata::default()
+        };
+        let forge = VersionMetadata {
+            id: "1.7.10-Forge10.13.4.1614".to_owned(),
+            // Forge 把原版那一串抄了一遍，末尾缀上自己的 tweaker。
+            minecraft_arguments: Some(
+                "--username ${auth_player_name} --version ${version_name} \
+                 --gameDir ${game_directory} \
+                 --tweakClass cpw.mods.fml.common.launcher.FMLTweaker"
+                    .to_owned(),
+            ),
+            ..VersionMetadata::default()
+        };
+        let liteloader = VersionMetadata {
+            id: "1.7.10-LiteLoader".to_owned(),
+            minecraft_arguments: Some(
+                "--tweakClass com.mumfrey.liteloader.launch.LiteLoaderTweaker".to_owned(),
+            ),
+            ..VersionMetadata::default()
+        };
+
+        let modded = VersionMetadata::merge(&vanilla, &forge);
+        let stacked = VersionMetadata::merge(&modded, &liteloader);
+        assert_eq!(
+            stacked.minecraft_arguments.as_deref(),
+            Some(
+                "--username ${auth_player_name} --version ${version_name} \
+                 --gameDir ${game_directory} \
+                 --tweakClass cpw.mods.fml.common.launcher.FMLTweaker \
+                 --tweakClass com.mumfrey.liteloader.launch.LiteLoaderTweaker"
+            )
+        );
+        // 基础参数按 key 认同一项，抄了两遍也只出现一次。
+        let (_, game) = stacked.resolved_arguments(&RuleContext::linux_x64());
+        assert_eq!(
+            game.iter().filter(|token| *token == "--username").count(),
+            1
+        );
+    }
+
+    /// 1.6 之前的用户名和会话没有名字，只有位置。
+    #[test]
+    fn positional_arguments_stay_in_front() {
+        let parsed = LegacyArguments::parse(
+            "${auth_player_name} ${auth_session} --gameDir ${game_directory} --demo",
+        );
+        assert_eq!(
+            parsed.positional,
+            vec!["${auth_player_name}", "${auth_session}"]
+        );
+        assert_eq!(
+            parsed.options,
+            vec![
+                ("--gameDir".to_owned(), Some("${game_directory}".to_owned())),
+                ("--demo".to_owned(), None),
+            ]
+        );
+        assert_eq!(
+            parsed.render(),
+            "${auth_player_name} ${auth_session} --gameDir ${game_directory} --demo"
+        );
     }
 
     #[test]
