@@ -165,6 +165,12 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     stack: true,
   },
   {
+    id: 'about/automatic',
+    label: '自动检查更新',
+    note: '关闭后不会发出任何检查更新的请求。',
+    keywords: 'automatic auto update 自动 检查 更新',
+  },
+  {
     id: 'about/channel',
     label: '更新通道',
     note: '测试版可更早获得新功能，稳定性低于稳定版。',

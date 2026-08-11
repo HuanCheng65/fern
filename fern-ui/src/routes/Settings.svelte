@@ -1379,6 +1379,14 @@
                 {/if}
               {/if}
             </div>
+          </SettingRow>
+
+          <!--
+            自动检查是一个开关，不是「更新」那一行的一部分——上一版它挂在状态句
+            和「检查更新」下面，一颗没有名字的分段控件，读到它的人要先猜它管的是
+            什么。一个名字一个控件，它就该自己占一行。
+          -->
+          <SettingRow id="about/automatic" found={focused === 'about/automatic'}>
             <SegmentedControl
               aria-label={ui.about.update.automatic}
               value={updates.automatic ? 'on' : 'off'}
