@@ -7,7 +7,10 @@
 //! 体验上这一层必须是隐形的：点启动，没有合适的 Java，就去下，只在进度条上
 //! 体现。绝不能变成一句「请先安装 Java」然后把人丢回浏览器。
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, anyhow};
 use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
@@ -318,9 +321,118 @@ pub fn remove(paths: &DataPaths, home: &Path) -> Result<()> {
     Ok(())
 }
 
+/// 起不来的那个文件。Windows 的「不是有效的 Win32 应用程序」和 Unix 的
+/// ENOEXEC 说的是同一件事：它根本不是一个可执行程序。
+#[cfg(windows)]
+const NOT_A_PROGRAM: i32 = 193;
+#[cfg(not(windows))]
+const NOT_A_PROGRAM: i32 = 8;
+
+/// 启动一份 Java 失败了，把它变成一句说得清的话——顺便，如果坏的是我们自己
+/// 下的那一份，就地扔掉它。
+///
+/// 一份下坏了的运行时不会自己好：`probe` 只看目录结构（`bin/java` 在、虚拟机
+/// 在），它照样通过；`ensure_java` 看见「已经有一份能用的」就不再下载。于是
+/// 每一次启动都撞同一堵墙，而墙上写的是一句用户无从下手的系统错误。
+///
+/// 删掉它，下一次启动的补全会重新下一份。系统里自带的 Java 不归我们管，只
+/// 报出来。
+pub(crate) fn unrunnable(paths: &DataPaths, binary: &Path, error: std::io::Error) -> anyhow::Error {
+    if error.raw_os_error() != Some(NOT_A_PROGRAM) {
+        return anyhow::Error::new(error).context(format!("启动 {}", binary.display()));
+    }
+    let Some(root) = installed_root(&paths.runtimes, binary) else {
+        return anyhow!(
+            "{} 不是可执行文件，这份 Java 已损坏。请在实例设置中指定其他 Java。",
+            binary.display()
+        );
+    };
+    match remove(paths, &root) {
+        Ok(()) => anyhow!(
+            "{} 不是可执行文件，这份 Java 下载时已损坏。已将其删除，下次启动会重新下载。",
+            binary.display()
+        ),
+        Err(error) => anyhow!(
+            "{} 不是可执行文件，这份 Java 下载时已损坏，且无法删除：{error:#}",
+            binary.display()
+        ),
+    }
+}
+
+/// 这个可执行文件属于 `runtimes/` 下面的哪一份安装。
+///
+/// 要的是**那一层**，不是它的上两级：macOS 的运行时是
+/// `<组件>/jre.bundle/Contents/Home/bin/java`，按上两级删只会掏空一个壳。
+fn installed_root(runtimes: &Path, binary: &Path) -> Option<PathBuf> {
+    let runtimes = std::fs::canonicalize(runtimes).ok()?;
+    let binary = std::fs::canonicalize(binary).ok()?;
+    let first = binary.strip_prefix(&runtimes).ok()?.components().next()?;
+    Some(runtimes.join(first))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_broken_runtime_is_traced_back_to_the_installation_it_belongs_to() {
+        let root = std::env::temp_dir().join(format!("fern-unrunnable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+        paths.ensure_exists().expect("create layout");
+
+        // macOS 那种多包一层的结构也要认到组件那一层，不是它的上两级。
+        let bundled = paths
+            .runtimes
+            .join("jre-legacy/jre.bundle/Contents/Home/bin");
+        std::fs::create_dir_all(&bundled).expect("create runtime");
+        std::fs::write(bundled.join("java"), b"broken").expect("write");
+        assert_eq!(
+            installed_root(&paths.runtimes, &bundled.join("java")),
+            Some(std::fs::canonicalize(paths.runtimes.join("jre-legacy")).expect("canonicalize"))
+        );
+
+        // 系统自带的那些不归我们管，认不出来就该说认不出来。
+        let outside = root.join("usr/bin");
+        std::fs::create_dir_all(&outside).expect("create system java");
+        std::fs::write(outside.join("java"), b"fine").expect("write");
+        assert_eq!(installed_root(&paths.runtimes, &outside.join("java")), None);
+
+        std::fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    /// 只有「它不是一个程序」才该动磁盘。别的失败（权限、文件没了）原样报出去。
+    #[test]
+    fn only_a_bad_executable_format_discards_the_runtime() {
+        let root =
+            std::env::temp_dir().join(format!("fern-unrunnable-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+        paths.ensure_exists().expect("create layout");
+        let home = paths.runtimes.join("jre-legacy");
+        std::fs::create_dir_all(home.join("bin")).expect("create runtime");
+        let binary = home.join("bin/java");
+        std::fs::write(&binary, b"broken").expect("write");
+
+        unrunnable(
+            &paths,
+            &binary,
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert!(home.exists(), "权限不足不代表这份运行时坏了");
+
+        unrunnable(
+            &paths,
+            &binary,
+            std::io::Error::from_raw_os_error(NOT_A_PROGRAM),
+        );
+        assert!(
+            !home.exists(),
+            "坏掉的那份该被扔掉，否则下次启动还撞同一堵墙"
+        );
+
+        std::fs::remove_dir_all(root).expect("remove test root");
+    }
 
     #[test]
     fn components_follow_the_required_major() {

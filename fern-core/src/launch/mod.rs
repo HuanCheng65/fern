@@ -560,9 +560,11 @@ pub async fn launch_instance(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_process(&mut command, effective.process_priority);
+    // 起不来的原因可能是这份 Java 自己坏了。那件事只有在这里看得见——补全时
+    // 校验通过，`probe` 也认，直到真的去执行它。见 `java::runtime::unrunnable`。
     let mut child = command
         .spawn()
-        .with_context(|| format!("start Java from {}", java_binary.display()))?;
+        .map_err(|error| java::runtime::unrunnable(paths, &java_binary, error))?;
     append_launch_log(&launch_log, &format!("started pid={}", child.id()))?;
     // 进程起来了才算玩过。写不进去不该让已经跑起来的游戏被判失败——排序
     // 差一次，比启动被一个写盘错误打断好。
