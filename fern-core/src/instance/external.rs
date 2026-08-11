@@ -162,17 +162,26 @@ pub fn attach(
         display_name(version_id, &described),
         &described.game_version,
     );
-    profile.components.extend(
-        described
-            .loader
-            .ne(&LoaderKind::Vanilla)
-            .then(|| LoaderProfile {
-                kind: described.loader,
-                version: described.loader_version.clone().unwrap_or_default(),
-                version_id: version_id.to_owned(),
-                jar_mods: Vec::new(),
-            }),
-    );
+    // 整个实例只有这一层，而且**不管它是不是加载器**。
+    //
+    // 这个目录叫什么，只有这里知道——它是别人起的名字，认出来的版本号未必等
+    // 于它（`1.16.5-Fabric 0.14.11`、`1.16.5-OptiFine_HD_U_G8`、整合包的中文
+    // 名）。曾经只有认出加载器时才记，于是原版和 OptiFine 那类目录接进来之后
+    // 谁也不知道它在磁盘上叫什么：启动去读一份不存在的描述，版本隔离下的存档
+    // 被写进另一个目录，同一个目录还能被重复添加。
+    //
+    // 它自己那份描述往往已经合并好了（没有 `inheritsFrom`，自己就是根）；写
+    // 着 `inheritsFrom` 的那种，继承链会在同一个 `versions/` 里接着跟下去。
+    // 两种都不需要再有一层「游戏本体」。
+    profile.components = vec![LoaderProfile {
+        kind: described.loader,
+        version: described
+            .loader_version
+            .clone()
+            .unwrap_or_else(|| described.game_version.clone()),
+        version_id: version_id.to_owned(),
+        jar_mods: Vec::new(),
+    }];
     profile = profile.normalized();
     profile.external = Some(ExternalGame {
         root: root.clone(),
@@ -603,6 +612,126 @@ mod tests {
         assert_eq!(found[0].game_version, "25w14craftmine");
         assert_eq!(found[0].loader, LoaderKind::Fabric);
         assert_eq!(found[0].loader_version.as_deref(), Some("0.18.4"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// **没有一处可以拿版本号去拼路径。**
+    ///
+    /// 这是一条守到今天付出过三次代价的界线：版本号是从 client jar 里认出来的
+    /// 一个标签，而磁盘上那个目录叫什么是别人起的名字，两者对不上。每一次有
+    /// 人从标签推出一个文件名，就换一种面目回来一次——client jar 找不到、版本
+    /// 描述读不到、存档写进了另一个目录。
+    ///
+    /// 所以这里在 `versions/1.16.5/` 放一份**毒饵**：它能解析、字段齐全，但每
+    /// 个值都是错的。谁读了它，谁的结果里就会带着毒——用不着去数代码里还有几
+    /// 处 `join(game_version)`，这条测试红了就说明又多了一处。
+    #[test]
+    fn nothing_reads_a_directory_named_after_the_game_version() {
+        let root = temporary("poison");
+        // 别的启动器装的 Fabric：一份合并好的描述，名字是它起的。
+        write_version(
+            &root,
+            "1.16.5-Fabric 0.14.11",
+            serde_json::json!({
+                "id": "1.16.5-Fabric 0.14.11",
+                "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+                "javaVersion": {"component": "jre-legacy", "majorVersion": 8},
+                "libraries": [
+                    {"name": "net.fabricmc:fabric-loader:0.14.11"},
+                    {"name": "net.fabricmc:intermediary:1.16.5"}
+                ]
+            }),
+        );
+        // 同一个目录里还躺着一份原版 1.16.5——很常见，而它正是毒饵：读了它
+        // 的人会得到原版的主类、别人的 Java 需求。
+        write_version(
+            &root,
+            "1.16.5",
+            serde_json::json!({
+                "id": "1.16.5",
+                "mainClass": "poison.Main",
+                "javaVersion": {"component": "poison", "majorVersion": 99},
+                // 合并对参数和库是**追加**，所以这两样毒不掉：混进来就留在
+                // 结果里，而主类那种「子覆盖父」的字段反而看不出来。
+                "minecraftArguments": "--poison",
+                "libraries": [{"name": "poison:poison:1"}]
+            }),
+        );
+        // 版本隔离：存档在版本目录下。判断错了的话，游戏会在别处新建一份空的。
+        std::fs::create_dir_all(root.join("versions/1.16.5-Fabric 0.14.11/saves"))
+            .expect("create saves");
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let profile = attach(&paths, &root, "1.16.5-Fabric 0.14.11", true).expect("attach");
+        let scoped = crate::instance::paths_for(&paths, &profile);
+
+        // 标签仍然是标签：这个实例确实算 1.16.5。
+        assert_eq!(profile.game_version, "1.16.5");
+        // 但要读哪份文件，从头到尾只有一个答案。
+        assert_eq!(
+            crate::effective_version_id(&profile),
+            "1.16.5-Fabric 0.14.11"
+        );
+        let merged = crate::launch::version::resolve_profile(&scoped, &profile).expect("resolve");
+        assert_eq!(
+            merged.main_class.as_deref(),
+            Some("net.fabricmc.loader.impl.launch.knot.KnotClient")
+        );
+        assert_eq!(merged.minecraft_arguments, None, "毒饵混进了命令行");
+        assert!(
+            !merged
+                .libraries
+                .iter()
+                .any(|one| one.name.contains("poison")),
+            "毒饵混进了 classpath"
+        );
+        assert_eq!(
+            crate::launch::version::client_jar(&scoped, &profile),
+            root.join("versions/1.16.5-Fabric 0.14.11/1.16.5-Fabric 0.14.11.jar")
+        );
+        assert_eq!(
+            scoped.game_directory(profile.id.as_str()),
+            root.join("versions/1.16.5-Fabric 0.14.11")
+        );
+        assert_eq!(crate::declared_java_major(&paths, &profile), Some(8));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// 认不出加载器的目录也要记住自己叫什么。
+    ///
+    /// OptiFine 就是这样一种：它不是加载器，于是曾经整个添加过程里没有任何
+    /// 地方记下过那个目录名。后果不只是启动读不到描述——版本隔离下游戏目录
+    /// 也跟着算错，游戏会在一个空目录里从头开始。
+    #[test]
+    fn a_directory_we_cannot_name_a_loader_for_still_remembers_itself() {
+        let root = temporary("optifine");
+        write_version(
+            &root,
+            "1.16.5-OptiFine_HD_U_G8",
+            serde_json::json!({
+                "id": "1.16.5-OptiFine_HD_U_G8",
+                "inheritsFrom": "1.16.5",
+                "mainClass": "net.minecraft.client.main.Main"
+            }),
+        );
+        std::fs::create_dir_all(root.join("versions/1.16.5-OptiFine_HD_U_G8/saves"))
+            .expect("create saves");
+        let paths = DataPaths::new(root.join("fern-data"));
+
+        let profile = attach(&paths, &root, "1.16.5-OptiFine_HD_U_G8", true).expect("attach");
+        assert_eq!(profile.loader, LoaderKind::Vanilla);
+        assert_eq!(
+            crate::launch::version::layers(&profile),
+            vec!["1.16.5-OptiFine_HD_U_G8"]
+        );
+        assert_eq!(
+            crate::instance::paths_for(&paths, &profile).game_directory(profile.id.as_str()),
+            root.join("versions/1.16.5-OptiFine_HD_U_G8")
+        );
+        // 记住了名字，才认得出它已经被添加过。
+        assert!(scan(&paths, &root).expect("scan").versions[0].attached);
+
         std::fs::remove_dir_all(&root).ok();
     }
 

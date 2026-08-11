@@ -167,8 +167,7 @@ pub struct InstanceRuntime {
 /// 拿不到——那时候按版本号推，够用来填一个默认值。
 pub fn instance_runtime(paths: &DataPaths, instance_id: &str) -> Result<InstanceRuntime> {
     let profile = read_instance(paths, instance_id)?;
-    let declared = read_prepared_metadata(paths, &profile.game_version)
-        .and_then(|metadata| metadata.java_version.map(|version| version.major_version));
+    let declared = declared_java_major(paths, &profile);
     let game_directory = crate::instance::paths_for(paths, &profile).game_directory(instance_id);
     // 「自动会挑哪个 Java」要和真正启动时挑的是同一个，模组要求的那条下界也
     // 在其中——否则这一屏写着 21、启动用的是 25。
@@ -472,25 +471,19 @@ pub fn read_instance(paths: &DataPaths, instance_id: &str) -> Result<InstancePro
         .ok_or_else(|| anyhow!("instance {instance_id} does not exist"))
 }
 
-/// 已经落盘的版本元数据里声明的 Java 大版本。
+/// 这个实例已经落盘的版本描述里声明的 Java 大版本。
 ///
 /// 这是权威的**下限**。补全过的实例读得到，没补全过的读不到——那时只能按
 /// 版本号推，界面上要说明那是估计。
-pub fn read_prepared_java_major(paths: &DataPaths, version_id: &str) -> Option<u16> {
-    read_prepared_metadata(paths, version_id)
-        .and_then(|metadata| metadata.java_version)
+///
+/// 读的是这个实例合并出来的那一份，而不是「按版本号拼出来的那个文件」：加载
+/// 器那一层可以自己声明更高的 Java，而外部实例的版本号根本不是文件名。
+pub fn declared_java_major(paths: &DataPaths, profile: &InstanceProfile) -> Option<u16> {
+    let scoped = crate::instance::paths_for(paths, profile);
+    crate::launch::version::resolve_profile(&scoped, profile)
+        .ok()?
+        .java_version
         .map(|version| version.major_version)
-}
-
-fn read_prepared_metadata(
-    paths: &DataPaths,
-    version_id: &str,
-) -> Option<fern_meta::VersionMetadata> {
-    let path = paths
-        .versions
-        .join(version_id)
-        .join(format!("{version_id}.json"));
-    serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
 
 /// 能建实例的所有版本。

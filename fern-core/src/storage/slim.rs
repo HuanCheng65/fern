@@ -141,54 +141,59 @@ fn live_set(paths: &DataPaths) -> Result<LiveSet> {
             continue;
         }
 
-        // 实例记着的版本无条件算活：刚建好还没补全的实例，版本目录里可能
-        // 只有半份东西，删掉它等于把正要开始的补全拆台。
+        // 层表里记着的每一份都无条件算活：刚建好还没补全的实例，版本目录里
+        // 可能只有半份东西，删掉它等于把正要开始的补全拆台。
         if shares_versions {
-            live.versions.insert(profile.game_version.clone());
-            live.versions.insert(version::effective_id(&profile));
+            live.versions.extend(version::layers(&profile));
         }
 
-        let mut current = version::effective_id(&profile);
-        for _ in 0..MAX_DEPTH {
-            // 还没下载不算错——一份不存在的 JSON 不引用任何东西。存在却
-            // 读不了是另一回事：算不清就不删。
-            if !version::metadata_path(&scoped, &current).exists() {
-                break;
-            }
-            let metadata = version::read_one(&scoped, &current).with_context(|| {
-                format!("读不出「{}」引用的版本描述，瘦身没有开始", profile.name)
-            })?;
+        // **每一层都要跟一遍**，不只是最外面那一层的继承链：一个实例的层不
+        // 一定串在同一条链上（别人的实例是一摞互不相干的 patch），只跟一条
+        // 的话，其余几层引用的库会被当成没人要的删掉。
+        for layer in version::layers(&profile) {
+            let mut current = layer;
+            for _ in 0..MAX_DEPTH {
+                // 还没下载不算错——一份不存在的 JSON 不引用任何东西。存在却
+                // 读不了是另一回事：算不清就不删。
+                if !version::metadata_path(&scoped, &current).exists() {
+                    break;
+                }
+                let metadata = version::read_one(&scoped, &current).with_context(|| {
+                    format!("读不出「{}」引用的版本描述，瘦身没有开始", profile.name)
+                })?;
 
-            if shares_versions {
-                live.versions.insert(current.clone());
-            }
-            if shares_libraries {
-                for library in &metadata.libraries {
-                    // 全部载荷都算活，不按本机的 rules 挑：这块磁盘可能装在
-                    // 便携盘里换电脑用，别的系统要的 natives 删了就要重下。
-                    if let Some(path) = fern_meta::maven_path(&library.name) {
-                        live.libraries.insert(path);
-                    }
-                    if let Some(downloads) = &library.downloads {
-                        let classifiers = downloads.classifiers.iter().flat_map(|map| map.values());
-                        for info in downloads.artifact.iter().chain(classifiers) {
-                            if let Some(path) = &info.path {
-                                live.libraries.insert(path.clone());
+                if shares_versions {
+                    live.versions.insert(current.clone());
+                }
+                if shares_libraries {
+                    for library in &metadata.libraries {
+                        // 全部载荷都算活，不按本机的 rules 挑：这块磁盘可能装
+                        // 在便携盘里换电脑用，别的系统要的 natives 删了就要重下。
+                        if let Some(path) = fern_meta::maven_path(&library.name) {
+                            live.libraries.insert(path);
+                        }
+                        if let Some(downloads) = &library.downloads {
+                            let classifiers =
+                                downloads.classifiers.iter().flat_map(|map| map.values());
+                            for info in downloads.artifact.iter().chain(classifiers) {
+                                if let Some(path) = &info.path {
+                                    live.libraries.insert(path.clone());
+                                }
                             }
                         }
                     }
                 }
-            }
-            if shares_assets && let Some(index) = &metadata.asset_index {
-                live.indexes.insert(index.id.clone());
-            }
-            if let Some(java) = &metadata.java_version {
-                live.components.insert(java.component.clone());
-            }
+                if shares_assets && let Some(index) = &metadata.asset_index {
+                    live.indexes.insert(index.id.clone());
+                }
+                if let Some(java) = &metadata.java_version {
+                    live.components.insert(java.component.clone());
+                }
 
-            match metadata.inherits_from {
-                Some(parent) if !parent.is_empty() && parent != current => current = parent,
-                _ => break,
+                match metadata.inherits_from {
+                    Some(parent) if !parent.is_empty() && parent != current => current = parent,
+                    _ => break,
+                }
             }
         }
     }

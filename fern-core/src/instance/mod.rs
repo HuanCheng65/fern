@@ -53,7 +53,10 @@ pub fn paths_by_id(paths: &DataPaths, instance_id: &str) -> DataPaths {
     }
 }
 
-pub const INSTANCE_SCHEMA_VERSION: u32 = 1;
+/// 实例描述的形状版本。
+///
+/// 2：游戏本体进了层表（见 [`InstanceProfile::migrate`]）。
+pub const INSTANCE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -127,11 +130,19 @@ impl LoaderKind {
 /// （主类、库、tweaker、参数）写在它自己那份版本描述里，由
 /// [`crate::launch::version::resolve`] 按顺序合并——这也是 Prism 的做法，而
 /// 且免得我们再发明一套表达同一件事的结构。
+///
+/// **游戏本体是第 0 层，不是层表之外的东西。** 它一度不在表里——「实例记着
+/// 游戏版本号，那就是它那份描述的名字」——而那个等号只在我们自己建的实例里
+/// 成立。别人的目录里，一份合并好的描述叫着别人起的名字（`1.16.5-Fabric
+/// 0.14.11`、`Simply Craftmine`），版本号只是从 client jar 里认出来的一个标
+/// 签。等号不成立时，凡是从标签去拼路径的代码都指向一个不存在的文件，而它每
+/// 次都以不同的面目回来：客户端 jar 找不到、版本描述读不到、存档被写进另一个
+/// 目录。所以这里不留那个等号——**要读哪份文件，只能从层表里问出来**。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Component {
-    /// 这一层是哪个加载器。[`LoaderKind::Vanilla`] 表示它不是加载器，只是一
-    /// 份附加的版本描述（别人的实例里常有）。
+    /// 这一层是哪个加载器。[`LoaderKind::Vanilla`] 表示它不是加载器：游戏本
+    /// 体那一层，或者一份附加的版本描述（别人的实例里常有）。
     pub kind: LoaderKind,
     /// 这一层自己的版本号，界面上显示的那个（`0.16.5`）。
     pub version: String,
@@ -220,6 +231,12 @@ pub struct InstanceProfile {
     pub schema_version: u32,
     pub id: InstanceId,
     pub name: String,
+    /// 这是哪个 Minecraft 正式版。**一个标签，不是一个文件名。**
+    ///
+    /// 它回答的是「这个实例算 1.16.5」——Java 区间、模组按什么版本筛、崩溃
+    /// 往哪个版本上归因、导出的整合包声明依赖哪个版本，都只要这一个答案。要
+    /// 读哪份版本描述则要问 [`Self::components`]，两件事在别人的目录里对不上
+    /// （见 [`Component`]）。
     pub game_version: String,
     /// 主加载器。
     ///
@@ -229,8 +246,11 @@ pub struct InstanceProfile {
     /// 每个调用方都自己去遍历一遍层表。
     #[serde(default)]
     pub loader: LoaderKind,
-    /// 叠在游戏本体上的那些层，按顺序。游戏本体自己不在表里——它是
-    /// [`Self::game_version`]，换掉它就是换一个实例。
+    /// 这个实例的那一摞层，从游戏本体开始，按顺序。
+    ///
+    /// **游戏本体也在表里**（第 0 层，`kind` 是 Vanilla），因为只有它知道自己
+    /// 那份描述在磁盘上叫什么。启动、补全、找 client jar、算游戏目录读的都是
+    /// 这张表，没有一处再从 [`Self::game_version`] 去拼路径。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<Component>,
     pub cover: CoverSeed,
@@ -291,30 +311,65 @@ impl InstanceProfile {
         self
     }
 
-    /// 从旧形状迁移过来：`loaderProfile` 那一个变成层表里的第一层。
+    /// 从旧形状迁移过来。**只在读这一侧做**，写出去的永远是新形状，所以每一
+    /// 条都不会反复发生，磁盘上也不必留「已迁移」的标记。
     ///
-    /// 只认「层表是空的、而旧字段有值」这一种情况——迁移过一次之后旧字段就
-    /// 不再写盘了，所以它不会反复发生。
+    /// 两条：
+    ///
+    /// 1. 一个实例一个加载器的年代——`loaderProfile` 那一个变成层表里的一层。
+    ///    只认「层表是空的、而旧字段有值」这一种情况。
+    /// 2. 游戏本体不在层表里的年代（`schemaVersion` 1）——补上第 0 层。它那份
+    ///    描述叫什么，那时候只有一个来源可用：版本号。这对我们自己建的实例是
+    ///    对的（那份 JSON 正是按版本号下下来的），对**已经添加过的外部实例**
+    ///    则不一定，所以那些一个字也不补：有加载器层的，那一层已经写着真正的
+    ///    目录名；没有加载器层的（原版目录、OptiFine 目录），目录名当初根本没
+    ///    人记，谁也猜不出来——只能靠重新添加一次。补一个猜的进去，反而会让
+    ///    「层表里的 id 都是记下来的」这句话不再成立。
     pub(crate) fn migrate(raw: &mut serde_json::Value) {
         let Some(object) = raw.as_object_mut() else {
             return;
         };
-        let has_components = object
-            .get("components")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|components| !components.is_empty());
-        if has_components {
-            return;
-        }
-        if let Some(legacy) = object
-            .remove("loaderProfile")
-            .filter(|value| !value.is_null())
+        let components = |object: &serde_json::Map<String, serde_json::Value>| {
+            object
+                .get("components")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        };
+        if components(object).is_empty()
+            && let Some(legacy) = object
+                .remove("loaderProfile")
+                .filter(|value| !value.is_null())
         {
             object.insert(
                 "components".to_owned(),
                 serde_json::Value::Array(vec![legacy]),
             );
         }
+
+        let schema = object
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(1);
+        let external = object.get("external").is_some_and(|value| !value.is_null());
+        if schema < 2 && !external {
+            let game_version = object
+                .get("gameVersion")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let mut stack = vec![serde_json::json!({
+                "kind": "vanilla",
+                "version": game_version,
+                "versionId": game_version,
+            })];
+            stack.extend(components(object));
+            object.insert("components".to_owned(), serde_json::Value::Array(stack));
+        }
+        object.insert(
+            "schemaVersion".to_owned(),
+            serde_json::json!(INSTANCE_SCHEMA_VERSION),
+        );
     }
 
     pub fn vanilla(
@@ -323,13 +378,21 @@ impl InstanceProfile {
         game_version: impl Into<String>,
     ) -> Self {
         let cover_identity = id.as_str().to_owned();
+        let game_version = game_version.into();
         Self {
             schema_version: INSTANCE_SCHEMA_VERSION,
             id,
             name: name.into(),
-            game_version: game_version.into(),
             loader: LoaderKind::Vanilla,
-            components: Vec::new(),
+            // 游戏本体那一层。我们自己建的实例里它那份描述就叫版本号——因为
+            // 那份 JSON 正是按这个名字下下来的，不是因为两者天然相同。
+            components: vec![Component {
+                kind: LoaderKind::Vanilla,
+                version: game_version.clone(),
+                version_id: game_version.clone(),
+                jar_mods: Vec::new(),
+            }],
+            game_version,
             account_id: None,
             cover: CoverSeed {
                 identity: cover_identity,
@@ -346,7 +409,8 @@ impl InstanceProfile {
 mod tests {
     use super::*;
 
-    /// 旧实例读进来就是新形状：那一个加载器变成层表里唯一的一层。
+    /// 旧实例读进来就是新形状：那一个加载器变成层表里的一层，游戏本体补成第
+    /// 0 层。
     ///
     /// 迁移只发生在读这一侧，写出去的永远是新形状——所以它不会反复发生，也
     /// 不必在磁盘上留一个「已迁移」的标记。
@@ -367,7 +431,13 @@ mod tests {
         });
         InstanceProfile::migrate(&mut raw);
         let profile: InstanceProfile = serde_json::from_value(raw).expect("迁移之后要读得出来");
-        assert_eq!(profile.components.len(), 1);
+        // 游戏本体 + 加载器。第 0 层那份描述叫版本号——我们自己建的实例正是
+        // 按这个名字把它下下来的。
+        assert_eq!(profile.schema_version, INSTANCE_SCHEMA_VERSION);
+        assert_eq!(
+            crate::launch::version::layers(&profile),
+            vec!["1.20.1", "fabric-loader-0.16.5-1.20.1"]
+        );
         assert_eq!(
             profile.loader_component().map(|one| one.kind),
             Some(LoaderKind::Fabric)
@@ -382,15 +452,36 @@ mod tests {
         let written = serde_json::to_value(&profile).expect("serialize");
         assert!(written.get("loaderProfile").is_none());
 
-        // 原版实例没有那个字段，迁移之后层表是空的，不该凭空多出一层。
+        // 原版实例没有那个字段，层表里就只有游戏本体那一层，而且它不是加载器。
         let mut vanilla = serde_json::json!({
             "schemaVersion": 1, "id": "bare", "name": "Bare", "gameVersion": "1.21.1",
             "cover": { "identity": "bare", "growth": 0 }
         });
         InstanceProfile::migrate(&mut vanilla);
         let bare: InstanceProfile = serde_json::from_value(vanilla).expect("read");
-        assert!(bare.components.is_empty());
+        assert_eq!(crate::launch::version::layers(&bare), vec!["1.21.1"]);
         assert!(bare.loader_component().is_none());
+
+        // 外部实例一个字也不补：它那份描述叫什么，只有添加它的时候知道，而
+        // 版本号是从 client jar 里认出来的标签。猜一个填进去，等于把这个
+        // bug 写进磁盘。
+        let mut attached = serde_json::json!({
+            "schemaVersion": 1, "id": "theirs", "name": "1.16.5-Fabric 0.14.11",
+            "gameVersion": "1.16.5",
+            "loader": "fabric",
+            "components": [{
+                "kind": "fabric", "version": "0.14.11",
+                "versionId": "1.16.5-Fabric 0.14.11"
+            }],
+            "cover": { "identity": "theirs", "growth": 0 },
+            "external": { "root": "/games/.minecraft", "isolation": "perVersion" }
+        });
+        InstanceProfile::migrate(&mut attached);
+        let attached: InstanceProfile = serde_json::from_value(attached).expect("read");
+        assert_eq!(
+            crate::launch::version::layers(&attached),
+            vec!["1.16.5-Fabric 0.14.11"]
+        );
     }
 
     /// 主加载器是算出来的，不是另存一份。叠了两层时算的是最外面那一层。
@@ -469,10 +560,13 @@ mod tests {
         );
         let value = serde_json::to_value(&profile).expect("serialize profile");
 
-        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["schemaVersion"], 2);
         assert_eq!(value["gameVersion"], "1.21.1");
         assert_eq!(value["loader"], "vanilla");
         assert_eq!(value["cover"]["identity"], "cinder-valley");
+        // 游戏本体那一层，连同它那份描述在磁盘上的名字。
+        assert_eq!(value["components"][0]["kind"], "vanilla");
+        assert_eq!(value["components"][0]["versionId"], "1.21.1");
     }
 
     #[test]

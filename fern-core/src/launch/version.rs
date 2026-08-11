@@ -33,6 +33,9 @@ pub fn effective_id(profile: &InstanceProfile) -> String {
     // 最外面那一层说了算：越靠后的层越接近成品，主类由它给。还没装完
     // （version_id 为空）就先按原版走——能启动一个原版，比因为加载器没装好而
     // 完全打不开要好。
+    //
+    // 退回版本号是最后一条路，只有一种实例会走到：层表建立之前添加的、又没有
+    // 加载器的外部实例——它那个目录叫什么，当初根本没人记下来。
     layers(profile)
         .last()
         .cloned()
@@ -41,15 +44,21 @@ pub fn effective_id(profile: &InstanceProfile) -> String {
 
 /// 这个实例要按顺序合并的那几份版本描述，从游戏本体开始。
 ///
-/// 只收磁盘上真有的：还没装完的层没有 id 可读，跳过它比读一个不存在的文件好。
+/// **每一个 id 都是层表里记着的，没有一个是推出来的。** 游戏本体也是一层
+/// （见 [`crate::Component`]），所以这里读不到 `game_version`——那是一个标签
+/// （「这是 1.16.5」），不是磁盘上的一个目录名。两者在我们自己建的实例里恰好
+/// 相同，在别人的目录里不同，而每一次有人从标签去拼路径，得到的都是一个不存
+/// 在的文件。
+///
+/// 只收磁盘上可能真有的：还没装完的层没有 id 可读，跳过它比读一个不存在的文
+/// 件好。
 pub fn layers(profile: &InstanceProfile) -> Vec<String> {
-    let mut ids = vec![profile.game_version.clone()];
-    for component in &profile.components {
-        if !component.version_id.is_empty() {
-            ids.push(component.version_id.clone());
-        }
-    }
-    ids
+    profile
+        .components
+        .iter()
+        .filter(|component| !component.version_id.is_empty())
+        .map(|component| component.version_id.clone())
+        .collect()
 }
 
 /// 版本 id 能不能拿去当目录名。
@@ -257,22 +266,27 @@ mod tests {
         fs::write(path, serde_json::to_vec(&json).expect("serialize")).expect("write metadata");
     }
 
+    /// 我们自己建的那种实例：游戏本体那一层的描述就叫版本号。
     fn profile(loader: LoaderKind, loader_version: Option<&str>) -> InstanceProfile {
+        let mut components = vec![LoaderProfile {
+            kind: LoaderKind::Vanilla,
+            version: "1.21.1".to_owned(),
+            version_id: "1.21.1".to_owned(),
+            jar_mods: Vec::new(),
+        }];
+        components.extend(loader_version.map(|version_id| LoaderProfile {
+            kind: loader,
+            version: "0.16.5".to_owned(),
+            version_id: version_id.to_owned(),
+            jar_mods: Vec::new(),
+        }));
         InstanceProfile {
-            schema_version: 1,
+            schema_version: crate::instance::INSTANCE_SCHEMA_VERSION,
             id: InstanceId::parse("moss").expect("valid id"),
             name: "Moss".to_owned(),
             game_version: "1.21.1".to_owned(),
             loader,
-            components: loader_version
-                .map(|version_id| LoaderProfile {
-                    kind: loader,
-                    version: "0.16.5".to_owned(),
-                    version_id: version_id.to_owned(),
-                    jar_mods: Vec::new(),
-                })
-                .into_iter()
-                .collect(),
+            components,
             cover: CoverSeed {
                 identity: "moss".to_owned(),
                 growth: 0,
@@ -397,6 +411,12 @@ mod tests {
         stacked.game_version = "1.7.10".to_owned();
         stacked.components = vec![
             LoaderProfile {
+                kind: LoaderKind::Vanilla,
+                version: "1.7.10".to_owned(),
+                version_id: "1.7.10".to_owned(),
+                jar_mods: Vec::new(),
+            },
+            LoaderProfile {
                 kind: LoaderKind::Forge,
                 version: "10.13.4.1614".to_owned(),
                 version_id: "forge-10.13.4.1614".to_owned(),
@@ -440,12 +460,20 @@ mod tests {
         );
         let mut ours = profile(LoaderKind::Fabric, None);
         ours.game_version = "1.7.10".to_owned();
-        ours.components = vec![LoaderProfile {
-            kind: LoaderKind::Fabric,
-            version: "0.16.5".to_owned(),
-            version_id: "fabric-loader-0.16.5-1.7.10".to_owned(),
-            jar_mods: Vec::new(),
-        }];
+        ours.components = vec![
+            LoaderProfile {
+                kind: LoaderKind::Vanilla,
+                version: "1.7.10".to_owned(),
+                version_id: "1.7.10".to_owned(),
+                jar_mods: Vec::new(),
+            },
+            LoaderProfile {
+                kind: LoaderKind::Fabric,
+                version: "0.16.5".to_owned(),
+                version_id: "fabric-loader-0.16.5-1.7.10".to_owned(),
+                jar_mods: Vec::new(),
+            },
+        ];
         let merged = resolve_profile(&paths, &ours).expect("merge");
         let (_, game) = merged.resolved_arguments(&fern_meta::RuleContext::linux_x64());
         assert_eq!(
@@ -476,13 +504,32 @@ mod tests {
             }),
         );
 
-        let mut attached = profile(LoaderKind::Fabric, Some("1.16.5-Fabric 0.14.11"));
+        // 添加进来的那种：整摞层只有一层，就是那个目录。
+        let mut attached = profile(LoaderKind::Fabric, None);
         attached.game_version = "1.16.5".to_owned();
+        attached.components = vec![LoaderProfile {
+            kind: LoaderKind::Fabric,
+            version: "0.14.11".to_owned(),
+            version_id: "1.16.5-Fabric 0.14.11".to_owned(),
+            jar_mods: Vec::new(),
+        }];
+        let knot = Some("net.fabricmc.loader.impl.launch.knot.KnotClient");
         let merged = resolve_profile(&paths, &attached).expect("外部实例应当能合出版本描述");
-        assert_eq!(
-            merged.main_class.as_deref(),
-            Some("net.fabricmc.loader.impl.launch.knot.KnotClient")
+        assert_eq!(merged.main_class.as_deref(), knot);
+
+        // 层表里记着、磁盘上还没有的那一层同样不是错：补全前的实例、以及层
+        // 表建立之前添加的那些实例，都长这样。没人指着它，它就只是缺席。
+        attached.components.insert(
+            0,
+            LoaderProfile {
+                kind: LoaderKind::Vanilla,
+                version: "1.16.5".to_owned(),
+                version_id: "1.16.5".to_owned(),
+                jar_mods: Vec::new(),
+            },
         );
+        let merged = resolve_profile(&paths, &attached).expect("缺席的一层不该拦住启动");
+        assert_eq!(merged.main_class.as_deref(), knot);
 
         fs::remove_dir_all(root).expect("remove test root");
     }

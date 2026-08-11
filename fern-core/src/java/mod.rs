@@ -902,7 +902,7 @@ pub fn overview(paths: &DataPaths, instances: &[crate::InstanceProfile]) -> Vec<
     }
 
     for profile in instances {
-        let declared = crate::read_prepared_java_major(paths, &profile.game_version);
+        let declared = crate::declared_java_major(paths, profile);
         let requirement = requirement(&profile.game_version, profile.loader, declared);
         // 已经有能用的就记在那一组下面；一个都没有才记在「要装哪个」那一组，
         // 而要装的是下限——上限是我们避开已知坏组合用的，不是目标。

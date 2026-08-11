@@ -229,7 +229,7 @@ fn chosen_runtime(
     profile: &InstanceProfile,
     jars: &[ModJar],
 ) -> Option<crate::java::JavaRuntime> {
-    let declared = crate::read_prepared_java_major(paths, &profile.game_version);
+    let declared = crate::declared_java_major(paths, profile);
     let environment = super::compat::Environment::of(profile);
     let requirement = crate::java::requirement(&profile.game_version, profile.loader, declared)
         .preferring(java_floor(jars))

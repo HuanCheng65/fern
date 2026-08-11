@@ -187,7 +187,9 @@ pub fn import(paths: &DataPaths, directory: &Path) -> Result<InstanceProfile> {
     let id = crate::instance::catalog::allocate_id(paths)?;
     let mut profile =
         InstanceProfile::vanilla(InstanceId::parse(&id)?, &read.name, &read.game_version);
-    profile.components = read.components;
+    // 游戏本体那一层已经在（`vanilla` 建的），Prism 的那些 patch 叠在它上面：
+    // 版本描述归 Fern 管（`shared_versions`），原版那一份就是按版本号下下来的。
+    profile.components.extend(read.components);
     profile.settings.max_memory_mb = read.max_memory_mb;
     profile.external = Some(ExternalGame {
         root: game,
@@ -215,15 +217,10 @@ pub fn import(paths: &DataPaths, directory: &Path) -> Result<InstanceProfile> {
             copied.push(target);
         }
         // 挂在最外面那一层上：jar mod 改的是 client jar，而它要盖在加载器
-        // 之上才有意义（那个年代的 Forge 自己就是一份 jar mod）。
-        match profile.components.last_mut() {
-            Some(component) => component.jar_mods = copied,
-            None => profile.components.push(Component {
-                kind: LoaderKind::Vanilla,
-                version: read.game_version.clone(),
-                version_id: String::new(),
-                jar_mods: copied,
-            }),
+        // 之上才有意义（那个年代的 Forge 自己就是一份 jar mod）。没有加载器
+        // 层时最外面就是游戏本体那一层，那也正是它该待的地方。
+        if let Some(component) = profile.components.last_mut() {
+            component.jar_mods = copied;
         }
     }
 
