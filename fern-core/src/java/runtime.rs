@@ -84,6 +84,7 @@ pub async fn install(
         minimum: major,
         maximum: Some(major),
         preferred: None,
+        ceiling: None,
     };
     ensure_java(paths, None, &requirement, events).await
 }

@@ -55,10 +55,28 @@ pub struct JavaRuntime {
     /// JDK/JRE 根目录。
     pub home: PathBuf,
     pub major: u16,
+    /// 大版本之后的那一节：`1.8.0_492` 是 492，`21.0.5` 是 5。
+    ///
+    /// 有些已知会坏的组合卡在这一级上，大版本根本挡不住——见
+    /// [`JavaRequirement::ceiling`]。
+    #[serde(default)]
+    pub update: u32,
     /// 完整版本号，给用户看的那一份。
     pub version: String,
     /// 归一化后的架构（`x86_64` / `aarch64` / …）。
     pub arch: String,
+    /// 32 还是 64 位。32 位的 JVM 分配不到 1.5 GB 以上的堆，而现代整合包
+    /// 一开口就是 4 GB。
+    #[serde(default)]
+    pub bits: u16,
+    /// 这份运行时不带图形栈。
+    ///
+    /// Linux 发行版的 `-headless` 包就是这样：`java` 在、虚拟机在，
+    /// `libawt_xawt.so` 不在。拿它启动客户端，游戏会在初始化窗口时抛
+    /// `UnsatisfiedLinkError`，而报出来的东西和「你装的是 headless 包」毫无
+    /// 字面关系。
+    #[serde(default)]
+    pub headless: bool,
     pub vendor: String,
     /// 由启动器自己下载并管理，放在 `runtimes/` 下面。
     #[serde(default)]
@@ -98,6 +116,25 @@ pub struct JavaRequirement {
     /// 拒绝启动」。真正的硬下界只有一条——游戏自己跑不起来的那条。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred: Option<u16>,
+    /// 大版本之内还要卡到 update 一级的那条线。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<UpdateCeiling>,
+}
+
+/// 「这个大版本可以，但不能新过某个小版本」。
+///
+/// 大版本挡不住的问题真实存在：Forge 34.1.27–36.2.24（1.16.3–1.16.5）里的
+/// ModLauncher 8.1.x 反射了一个在 **8u321** 被改掉的 JDK 内部方法。「要 Java
+/// 8」这个条件完全满足，游戏照样崩在 `NoSuchMethodError`。
+///
+/// 这条线只在指定的那个大版本上生效：别的大版本本来就已经被区间挡掉了，再
+/// 拿一个 update 数去比毫无意义（`21.0.5` 的 5 和 `1.8.0_5` 的 5 不是一回事）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCeiling {
+    pub major: u16,
+    /// 允许的最大 update，含。
+    pub update: u32,
 }
 
 impl JavaRequirement {
@@ -105,9 +142,25 @@ impl JavaRequirement {
         major >= self.minimum && self.maximum.is_none_or(|maximum| major <= maximum)
     }
 
+    /// 连 update 一级也算上，这一份能不能用。
+    pub fn accepts_runtime(&self, runtime: &JavaRuntime) -> bool {
+        self.accepts(runtime.major)
+            && self.ceiling.is_none_or(|ceiling| {
+                ceiling.major != runtime.major || runtime.update <= ceiling.update
+            })
+    }
+
     /// 记下模组要求的那条下界。传 `None` 就是没有模组这么要求。
     pub fn preferring(mut self, preferred: Option<u16>) -> Self {
         self.preferred = preferred;
+        self
+    }
+
+    /// 加上兼容规则给出的那条 update 线。传 `None` 就是没有规则这么说。
+    pub fn capped(mut self, ceiling: Option<UpdateCeiling>) -> Self {
+        if ceiling.is_some() {
+            self.ceiling = ceiling;
+        }
         self
     }
 
@@ -149,27 +202,32 @@ pub fn requirement(
             minimum: 8,
             maximum: Some(8),
             preferred: None,
+            ceiling: None,
         },
         Some(version) if version < (1, 18, 0) => JavaRequirement {
             minimum: 16,
             maximum: Some(17),
             preferred: None,
+            ceiling: None,
         },
         Some(version) if version < (1, 20, 5) => JavaRequirement {
             minimum: 17,
             maximum: Some(21),
             preferred: None,
+            ceiling: None,
         },
         Some(_) => JavaRequirement {
             minimum: 21,
             maximum: None,
             preferred: None,
+            ceiling: None,
         },
         // 快照没有可比较的版本号，元数据的声明就是全部信息。
         None => JavaRequirement {
             minimum: declared.unwrap_or(21),
             maximum: None,
             preferred: None,
+            ceiling: None,
         },
     };
 
@@ -184,6 +242,10 @@ pub fn requirement(
             requirement.maximum = None;
         }
     }
+
+    // 卡到 update 一级的那些（1.16.5 的 Forge 在 8u321 之后崩）不在这里：
+    // 那要看加载器的具体版本，属于事前兼容规则表，见 `launch::compat` 与
+    // [`JavaRequirement::capped`]。这个函数只回答「哪个大版本」。
 
     match loader {
         // 旧 Forge 的 coremod 直接反射 JDK 内部类，新 Java 上必崩。
@@ -207,15 +269,19 @@ pub fn requirement(
 ///
 /// 模组那条下界排在游戏的区间之后：游戏的上限是「已知这个组合会坏」，一个模组
 /// 想要更新的 Java 不足以推翻它。
+/// 不带图形栈的那些排在最后，而不是直接踢出候选：只有它一个的时候，「用它
+/// 启动然后由预检查说清楚」比「一个 Java 都挑不出来」要好——后者的表现是去
+/// 下载一份两百兆的运行时，而下回来的那份可能还是同一个毛病。
 pub fn select(runtimes: &[JavaRuntime], requirement: &JavaRequirement) -> Option<JavaRuntime> {
     runtimes
         .iter()
-        .filter(|runtime| requirement.accepts(runtime.major))
+        .filter(|runtime| requirement.accepts_runtime(runtime))
         .min_by_key(|runtime| {
             (
                 requirement
                     .preferred
                     .is_some_and(|wanted| runtime.major < wanted),
+                runtime.headless,
                 !runtime.native,
                 runtime.major,
                 !runtime.managed,
@@ -342,12 +408,16 @@ pub fn probe(path: &Path) -> Result<JavaRuntime> {
     }
     let (major, version) = ask_java_itself(path)?;
     let image = detect_image(&home);
+    let arch = normalize_arch(env::consts::ARCH).to_owned();
     Ok(JavaRuntime {
         path: path.to_path_buf(),
-        home,
         major,
+        update: parse_update(&version),
         version,
-        arch: normalize_arch(env::consts::ARCH).to_owned(),
+        bits: arch_bits(&arch),
+        arch,
+        headless: detect_headless(&home),
+        home,
         vendor: String::new(),
         managed: false,
         added: false,
@@ -397,12 +467,16 @@ fn probe_home(home: &Path, managed: bool) -> Option<JavaRuntime> {
     // Ubuntu 打包的 openjdk-8 就没有 release 文件，只能问它自己。
     let (major, version) = ask_java_itself(&executable).ok()?;
     let image = detect_image(&home);
+    let arch = normalize_arch(env::consts::ARCH).to_owned();
     Some(JavaRuntime {
         path: executable,
-        home,
         major,
+        update: parse_update(&version),
         version,
-        arch: normalize_arch(env::consts::ARCH).to_owned(),
+        bits: arch_bits(&arch),
+        arch,
+        headless: detect_headless(&home),
+        home,
         vendor: String::new(),
         managed,
         added: false,
@@ -429,8 +503,11 @@ fn runtime_from_release(
         path: executable.to_path_buf(),
         home: home.to_path_buf(),
         major: parse_major(&version).unwrap_or_default(),
+        update: parse_update(&version),
         version,
         native: arch == normalize_arch(env::consts::ARCH),
+        bits: arch_bits(&arch),
+        headless: detect_headless(home),
         arch,
         vendor: release.implementor.unwrap_or_default(),
         managed,
@@ -567,6 +644,73 @@ fn parse_major(version: &str) -> Option<u16> {
     let version = version.strip_prefix("1.").unwrap_or(version);
     let head: String = version.chars().take_while(char::is_ascii_digit).collect();
     head.parse().ok()
+}
+
+/// 大版本之后的那一节：`1.8.0_402` → 402，`21.0.11` → 11，`17` → 0。
+///
+/// 两代版本号的写法完全不同（Java 8 把它写在下划线后面，9 之后写成第三段），
+/// 但要回答的是同一个问题：**这份安装比某个已知的分界点新还是旧**。所以两代
+/// 都归到一个数上，比较只在同一个大版本之内进行（见 [`UpdateCeiling`]）。
+///
+/// 带后缀的写法（`1.8.0_412-b08`、`21.0.5+11`）取到分隔符为止。
+fn parse_update(version: &str) -> u32 {
+    let version = version.trim();
+    if let Some((_, update)) = version.split_once('_') {
+        return leading_digits(update);
+    }
+    let version = version.strip_prefix("1.").unwrap_or(version);
+    // 21.0.11 → 第三段；21 → 没有第三段，就是 0。
+    version
+        .split('.')
+        .nth(2)
+        .map(leading_digits)
+        .unwrap_or_default()
+}
+
+fn leading_digits(text: &str) -> u32 {
+    text.chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .unwrap_or_default()
+}
+
+/// 这份运行时带不带图形栈。
+///
+/// 只在 Linux 上判断：`-headless` 那种打包方式是发行版的做法，Windows 和
+/// macOS 上的 JDK/JRE 一律完整。判据是 AWT 的那个原生库在不在——headless 包
+/// 恰恰就是把它去掉了。找不到 `lib` 目录（不该发生）时不下结论：把一份能用
+/// 的 Java 误判成 headless，比漏判更糟。
+fn detect_headless(home: &Path) -> bool {
+    if !cfg!(all(unix, not(target_os = "macos"))) {
+        return false;
+    }
+    let mut looked = false;
+    for base in [home.to_path_buf(), home.join("jre")] {
+        let library = base.join("lib");
+        if !library.is_dir() {
+            continue;
+        }
+        looked = true;
+        if library.join("libawt_xawt.so").is_file() {
+            return false;
+        }
+        // JDK 8 的 Unix 版把架构也写进路径：`jre/lib/amd64/libawt_xawt.so`。
+        for entry in fs::read_dir(&library).into_iter().flatten().flatten() {
+            if entry.path().join("libawt_xawt.so").is_file() {
+                return false;
+            }
+        }
+    }
+    looked
+}
+
+/// 归一化后的架构对应几位。
+fn arch_bits(arch: &str) -> u16 {
+    match arch {
+        "x86" | "arm" => 32,
+        _ => 64,
+    }
 }
 
 /// `amd64` / `x64` / `x86_64` 说的是同一件事，release 文件和 Rust 的写法不一致。
@@ -772,6 +916,7 @@ pub fn overview(paths: &DataPaths, instances: &[crate::InstanceProfile]) -> Vec<
             minimum: group.major,
             maximum: Some(group.major),
             preferred: Some(group.major),
+            ceiling: None,
         };
         group.preferred = select(&group.runtimes, &requirement).map(|runtime| runtime.home);
     }
@@ -789,8 +934,11 @@ mod tests {
             path: PathBuf::from(format!("/jvm/{major}/bin/java")),
             home: PathBuf::from(format!("/jvm/{major}")),
             major,
+            update: 1,
             version: format!("{major}.0.1"),
             native: arch == normalize_arch(env::consts::ARCH),
+            bits: arch_bits(arch),
+            headless: false,
             arch: arch.to_owned(),
             vendor: "Test".to_owned(),
             managed,
@@ -849,6 +997,7 @@ mod tests {
             minimum: 21,
             maximum: Some(21),
             preferred: Some(21),
+            ceiling: None,
         };
         assert_eq!(
             select(&group.runtimes, &requirement).map(|runtime| runtime.home),
@@ -864,6 +1013,80 @@ mod tests {
         assert_eq!(parse_major("1.8.0_402"), Some(8));
         assert_eq!(parse_major("17"), Some(17));
         assert_eq!(parse_major("not a version"), None);
+    }
+
+    /// 两代版本号把 update 写在不同的位置，但要回答的是同一个问题。
+    #[test]
+    fn the_update_number_comes_out_of_both_layouts() {
+        assert_eq!(parse_update("1.8.0_402"), 402);
+        assert_eq!(parse_update("1.8.0_412-b08"), 412);
+        assert_eq!(parse_update("1.8.0"), 0);
+        assert_eq!(parse_update("21.0.11"), 11);
+        assert_eq!(parse_update("21.0.5+11"), 5);
+        assert_eq!(parse_update("17"), 0);
+        assert_eq!(parse_update("说不清"), 0);
+    }
+
+    /// 大版本对了不等于能用。1.16.5 的 Forge 在 8u321 之后崩在
+    /// `NoSuchMethodError`，而「要 Java 8」这个条件它完全满足。
+    #[test]
+    fn a_system_java_8_that_is_too_new_is_not_a_candidate() {
+        let native = normalize_arch(env::consts::ARCH);
+        let mut modern = runtime(8, native, false);
+        modern.version = "1.8.0_492".to_owned();
+        modern.update = 492;
+        let mut legacy = runtime(8, native, true);
+        legacy.version = "1.8.0_202".to_owned();
+        legacy.update = 202;
+        legacy.home = PathBuf::from("/fern/runtimes/jre-legacy");
+
+        // 这条线由事前兼容规则给出（它才看得到加载器版本），这里只验它一旦
+        // 加上就真的起作用。
+        let capped =
+            requirement("1.16.5", LoaderKind::Forge, Some(8)).capped(Some(UpdateCeiling {
+                major: 8,
+                update: 320,
+            }));
+        // 只有那一份系统 Java 的话，一个候选都挑不出来——补全据此去下
+        // jre-legacy，而不是拿手边这个凑。
+        assert!(select(std::slice::from_ref(&modern), &capped).is_none());
+        assert_eq!(
+            select(&[modern.clone(), legacy.clone()], &capped)
+                .expect("jre-legacy 能用")
+                .home,
+            PathBuf::from("/fern/runtimes/jre-legacy")
+        );
+
+        // 没有规则说话的时候不该凭空多出一条线。
+        let untouched = requirement("1.12.2", LoaderKind::Forge, Some(8));
+        assert!(untouched.ceiling.is_none());
+        assert!(select(std::slice::from_ref(&modern), &untouched).is_some());
+    }
+
+    /// 不带图形栈的那一份能被认出来，而且排在能用的那些后面。
+    #[test]
+    fn a_headless_runtime_is_the_last_resort() {
+        let native = normalize_arch(env::consts::ARCH);
+        let mut headless = runtime(8, native, true);
+        headless.headless = true;
+        headless.home = PathBuf::from("/jvm/headless");
+        let full = runtime(8, native, false);
+
+        let wanted = requirement("1.12.2", LoaderKind::Vanilla, Some(8));
+        assert_eq!(
+            select(&[headless.clone(), full.clone()], &wanted)
+                .expect("有得挑")
+                .home,
+            full.home
+        );
+        // 只有它的时候还是要用：挑不出 Java 就去下一份两百兆的，而下回来的
+        // 那份未必更好——这件事该由预检查说清楚，不是在这里拦住。
+        assert_eq!(
+            select(std::slice::from_ref(&headless), &wanted)
+                .expect("只剩它")
+                .home,
+            headless.home
+        );
     }
 
     /// 一份完好的安装：启动器、版本文件、虚拟机，三样都在。

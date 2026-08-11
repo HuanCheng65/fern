@@ -13,9 +13,15 @@ export interface JavaRuntime {
   path: string
   home: string
   major: number
+  /** 大版本之后的那一节：`1.8.0_492` 是 492。已知会坏的组合有些卡在这一级。 */
+  update: number
   version: string
   vendor: string
   arch: string
+  /** 32 还是 64 位。32 位的 JVM 给不出 1.5 GB 以上的堆。 */
+  bits: number
+  /** 不带图形栈（Linux 发行版的 `-headless` 包），跑不了客户端。 */
+  headless: boolean
   /** 由 Fern 下载并管理，删得掉。 */
   managed: boolean
   /** 用户手动登记的位置，只能取消登记，不动磁盘。 */
