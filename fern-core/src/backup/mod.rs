@@ -391,6 +391,20 @@ fn describe(id: &str, manifest: &Manifest) -> Snapshot {
     }
 }
 
+/// 一张快照里的模组文件名单。
+///
+/// 详情页展开「模组」那一节时才要——不随列表下发：几十张快照各带几百个
+/// 文件名，列表就白白重了一个数量级。
+pub fn mod_files(paths: &DataPaths, instance_id: &str, snapshot: &str) -> Result<Vec<String>> {
+    let backups = root(paths);
+    let manifest = manifest::read(&manifest::path(&backups, instance_id, snapshot)?)?;
+    Ok(manifest
+        .mods
+        .into_iter()
+        .map(|record| record.file)
+        .collect())
+}
+
 /// 这个实例有哪些快照，从新到旧。
 pub fn list(paths: &DataPaths, instance_id: &str) -> Result<Vec<Snapshot>> {
     let backups = root(paths);

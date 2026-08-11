@@ -127,6 +127,10 @@ export const deleteSnapshot = (instanceId: string, snapshot: string) =>
 export const labelSnapshot = (instanceId: string, snapshot: string, label?: string) =>
   invoke<Snapshot>('label_snapshot', { instanceId, snapshot, label })
 
+/** 快照里的模组文件名单。详情页展开时才拉。 */
+export const snapshotMods = (instanceId: string, snapshot: string) =>
+  invoke<string[]>('snapshot_mods', { instanceId, snapshot })
+
 export const backupUsage = () => invoke<Usage>('backup_usage')
 
 export const exportWorld = (instanceId: string, save: string, destination: string) =>

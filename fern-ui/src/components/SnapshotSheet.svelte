@@ -25,6 +25,7 @@
     labelSnapshot,
     moment,
     restoreSnapshot,
+    snapshotMods,
     whySkipped,
     why,
     type Restored,
@@ -60,6 +61,16 @@
     name: copyName(snapshot.saves[0] ?? '', snapshot.takenAt),
     label: snapshot.label ?? '',
   }))
+
+  /**
+   * 先看，后决定。
+   *
+   * 点开一张快照，先回答「这是哪一刻、里面有什么」；恢复是从这里再进一层
+   * 的决定页。上一版点开直接是恢复表单——问都没让人看就要人做选择。
+   */
+  let view = $state<'info' | 'restore'>('info')
+  /** 模组名单，展开那一节才拉。undefined 表示还没拉过。 */
+  let modFiles = $state<string[] | undefined>(undefined)
 
   let part = $state<Part>(start.part)
   let save = $state(start.save)
@@ -178,6 +189,15 @@
       busy = ''
     }
   }
+
+  async function loadMods() {
+    if (modFiles !== undefined) return
+    try {
+      modFiles = await snapshotMods(instanceId, snapshot.id)
+    } catch (cause) {
+      error = String(cause)
+    }
+  }
 </script>
 
 <Dialog label={ui.snapshot.dialog} width="520px" {onclose}>
@@ -239,76 +259,111 @@
       <p class="warn">{ui.snapshot.inconsistent}</p>
     {/if}
 
-    <SegmentedControl
-      label={ui.snapshot.scope}
-      options={parts}
-      value={part}
-      onchange={(value) => (part = value)}
-    />
-
-    {#if part === 'save'}
-      {#if snapshot.saves.length > 1}
-        <Select
-          label={ui.snapshot.world}
-          options={snapshot.saves.map((world) => ({ value: world, label: world }))}
-          bind:value={save}
-          onchange={() => (name = copyName(save, snapshot.takenAt))}
-        />
+    {#if view === 'info'}
+      <!-- 里面有什么。恢复的决定要看着这份清单做，所以它排在决定之前。 -->
+      {#if snapshot.saves.length > 0}
+        <section class="content">
+          <h3 class="t-quiet">
+            {format(ui.snapshot.contentWorlds, { count: String(snapshot.saves.length) })}
+          </h3>
+          <ul>
+            {#each snapshot.saves as world (world)}
+              <li>{world}</li>
+            {/each}
+          </ul>
+        </section>
       {/if}
 
+      {#if snapshot.mods > 0}
+        <details class="skipped" ontoggle={(event) => {
+          if ((event.currentTarget as HTMLDetailsElement).open) void loadMods()
+        }}>
+          <summary>{format(ui.snapshot.contentMods, { count: String(snapshot.mods) })}</summary>
+          {#if modFiles === undefined}
+            <p class="t-quiet loading-note">{ui.snapshot.contentModsLoading}</p>
+          {:else}
+            <ul>
+              {#each modFiles as file (file)}
+                <li><span class="t-mono">{file}</span></li>
+              {/each}
+            </ul>
+          {/if}
+        </details>
+      {/if}
+
+      {#if snapshot.skipped.length > 0}
+        <details class="skipped">
+          <summary>
+            {format(ui.snapshot.skipped, { count: String(snapshot.skipped.length) })}
+          </summary>
+          <ul>
+            {#each snapshot.skipped as item (item.path)}
+              <li>
+                <span class="t-mono">{item.path}</span>
+                <span class="t-quiet">{whySkipped(item).title}</span>
+              </li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
+    {:else}
       <SegmentedControl
-        label={ui.snapshot.mode}
-        options={[
-          { value: 'copy' as const, label: ui.snapshot.modeCopy },
-          { value: 'replace' as const, label: ui.snapshot.modeReplace },
-        ]}
-        value={copy ? 'copy' : 'replace'}
-        onchange={(value) => (copy = value === 'copy')}
+        label={ui.snapshot.scope}
+        options={parts}
+        value={part}
+        onchange={(value) => (part = value)}
       />
 
-      {#if copy}
-        <Input label={ui.snapshot.copyName} bind:value={name} maxlength={60} />
-      {/if}
-    {/if}
+      {#if part === 'save'}
+        {#if snapshot.saves.length > 1}
+          <Select
+            label={ui.snapshot.world}
+            options={snapshot.saves.map((world) => ({ value: world, label: world }))}
+            bind:value={save}
+            onchange={() => (name = copyName(save, snapshot.takenAt))}
+          />
+        {/if}
 
-    <p class="consequence">
-      {consequence}
-      {#if !(part === 'save' && copy)}
-        <span class="t-quiet">{ui.snapshot.safety}</span>
-      {/if}
-    </p>
+        <SegmentedControl
+          label={ui.snapshot.mode}
+          options={[
+            { value: 'copy' as const, label: ui.snapshot.modeCopy },
+            { value: 'replace' as const, label: ui.snapshot.modeReplace },
+          ]}
+          value={copy ? 'copy' : 'replace'}
+          onchange={(value) => (copy = value === 'copy')}
+        />
 
-    {#if snapshot.skipped.length > 0}
-      <details class="skipped">
-        <summary>{format(ui.snapshot.skipped, { count: String(snapshot.skipped.length) })}</summary>
-        <ul>
-          {#each snapshot.skipped as item (item.path)}
-            <li>
-              <span class="t-mono">{item.path}</span>
-              <span class="t-quiet">{whySkipped(item).title}</span>
-            </li>
+        {#if copy}
+          <Input label={ui.snapshot.copyName} bind:value={name} maxlength={60} />
+        {/if}
+      {/if}
+
+      <p class="consequence">
+        {consequence}
+        {#if !(part === 'save' && copy)}
+          <span class="t-quiet">{ui.snapshot.safety}</span>
+        {/if}
+      </p>
+
+      {#if missing.length > 0}
+        <div class="alert">
+          {ui.snapshot.missingLead}
+          {#each missing as item (item.path)}
+            <div class="missing">
+              <span>{item.path}</span>
+              {#if item.sha1}
+                <!-- 对象仓库坏掉后的唯一退路：拿这个哈希去模组站反查。 -->
+                <span class="t-mono selectable">{item.sha1}</span>
+              {/if}
+            </div>
           {/each}
-        </ul>
-      </details>
-    {/if}
+        </div>
+      {/if}
 
-    {#if missing.length > 0}
-      <div class="alert">
-        {ui.snapshot.missingLead}
-        {#each missing as item (item.path)}
-          <div class="missing">
-            <span>{item.path}</span>
-            {#if item.sha1}
-              <!-- 对象仓库坏掉后的唯一退路：拿这个哈希去模组站反查。 -->
-              <span class="t-mono selectable">{item.sha1}</span>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    {#if running && !restored}
-      <p class="warn">{ui.snapshot.running}</p>
+      {#if running && !restored}
+        <p class="warn">{ui.snapshot.running}</p>
+      {/if}
     {/if}
 
     {#if error}<div class="alert">{error}</div>{/if}
@@ -319,22 +374,30 @@
       <span class="t-quiet">{ui.snapshot.missingDone}</span>
       <span class="spacer"></span>
       <Button variant="primary" onclick={onclose}>{ui.snapshot.close}</Button>
-    {:else if confirming}
-      <span class="confirm">
-        <span class="t-quiet">{ui.snapshot.deleteWarn}</span>
-        <Button variant="ghost" onclick={() => (confirming = false)}>
-          {ui.snapshot.cancel}
+    {:else if view === 'info'}
+      {#if confirming}
+        <span class="confirm">
+          <span class="t-quiet">{ui.snapshot.deleteWarn}</span>
+          <Button variant="ghost" onclick={() => (confirming = false)}>
+            {ui.snapshot.cancel}
+          </Button>
+          <Button tone="danger" disabled={busy !== ''} onclick={() => void remove()}>
+            {ui.snapshot.deleteConfirm}
+          </Button>
+        </span>
+      {:else}
+        <Button variant="link" tone="danger" onclick={() => (confirming = true)}>
+          {ui.snapshot.delete}
         </Button>
-        <Button tone="danger" disabled={busy !== ''} onclick={() => void remove()}>
-          {ui.snapshot.deleteConfirm}
+        <span class="spacer"></span>
+        <Button variant="ghost" onclick={onclose}>{ui.snapshot.cancel}</Button>
+        <Button variant="primary" onclick={() => (view = 'restore')}>
+          {ui.snapshot.enterRestore}
         </Button>
-      </span>
+      {/if}
     {:else}
-      <Button variant="link" tone="danger" onclick={() => (confirming = true)}>
-        {ui.snapshot.delete}
-      </Button>
+      <Button variant="ghost" onclick={() => (view = 'info')}>{ui.snapshot.back}</Button>
       <span class="spacer"></span>
-      <Button variant="ghost" onclick={onclose}>{ui.snapshot.cancel}</Button>
       <Button variant="primary" disabled={!ready} onclick={() => void restore()}>
         {busy === 'restore' ? ui.snapshot.restoring : ui.snapshot.restore}
       </Button>
@@ -413,6 +476,30 @@
     color: var(--danger);
     font-size: var(--t-small);
     line-height: 1.6;
+  }
+
+  /* 内容清单：不加卡片不加边框，靠留白和层级说清（Frond：仅在需要边界时
+     创造边界）。 */
+  .content h3 {
+    margin: 0 0 var(--s2);
+    font-size: var(--t-micro);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  .content ul {
+    display: grid;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--ink-2);
+    font-size: var(--t-small);
+  }
+
+  .loading-note {
+    margin: var(--s2) 0 0;
+    font-size: var(--t-micro);
   }
 
   .skipped {

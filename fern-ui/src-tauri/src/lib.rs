@@ -675,6 +675,16 @@ async fn take_snapshot(
     .await?
 }
 
+/// 一张快照里的模组名单。详情页展开「模组」那一节时才拉。
+#[tauri::command]
+async fn snapshot_mods(instance_id: String, snapshot: String) -> Result<Vec<String>, String> {
+    off_thread(move || {
+        fern_core::snapshot_mod_files(&paths()?, &instance_id, &snapshot)
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 /// 恢复。`scope` 与 `mode` 是带标签的枚举，形状由核心那边定。
 #[tauri::command]
 async fn restore_snapshot(
@@ -1477,6 +1487,7 @@ pub fn run() {
             integrity,
             list_snapshots,
             take_snapshot,
+            snapshot_mods,
             restore_snapshot,
             delete_snapshot,
             label_snapshot,
