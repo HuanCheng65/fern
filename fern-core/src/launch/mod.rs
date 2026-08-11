@@ -208,18 +208,6 @@ pub async fn launch_instance(
             )
         });
     }
-    // 距上一张太久了就补一张，兜住「上次退出时崩了没拍成」。放在占用检查之后：
-    // 别人正开着这个游戏目录的时候，拍到的是他正在写的文件。
-    if crate::backup::due_before_launch(launcher_paths, instance_id) {
-        // 第一次可能要读完整个存档，界面上不该是一段没有说明的停顿。
-        job.note(JobText::id("job.note.snapshot"));
-        crate::backup::quietly(
-            launcher_paths,
-            instance_id,
-            crate::SnapshotReason::BeforeLaunch,
-        );
-    }
-
     let metadata = version::resolve(paths, &version_id)
         .with_context(|| format!("读取 {version_id} 的版本描述"))?;
     // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。哪一份是
@@ -246,14 +234,6 @@ pub async fn launch_instance(
     });
     let natives_directory = paths.game_directory(instance_id).join("natives");
     tokio::fs::create_dir_all(&natives_directory).await?;
-    // 逐个解 zip，几十个 jar 要一两秒；说一声，别让上一句注脚挂在这段上。
-    job.note(JobText::id("job.note.natives"));
-    let classpath =
-        collect_classpath_and_extract_natives(paths, &metadata, &context, &natives_directory)
-            .await?;
-    if !tokio::fs::try_exists(&client_jar).await? {
-        return Err(anyhow!("client jar is missing: {}", client_jar.display()));
-    }
 
     // 这个实例钉住的那一个，没钉就跟当前账户走（见 account/roster.rs）。
     //
@@ -262,11 +242,66 @@ pub async fn launch_instance(
     // 这件事。钉住是一次表态，该由人自己做，不该是启动的副产品。
     let record = crate::account_for_instance(paths, &profile)
         .ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
-    let mut account = Account::load(&record)?;
-    // 一次网络往返，慢网络上能到几秒。
-    job.note(JobText::id("job.note.account"));
-    account.ensure_fresh(paths, &job.downloads()).await?;
-    let credentials = account.launch_credentials()?;
+
+    // 启动前剩下的重活分两条线并排跑：磁盘线（快照、解压、扫模组）和网络线
+    // （刷新登录）。碰磁盘的几件事**互相之间**保持串行——机械硬盘上两件事抢
+    // 磁头比排队还慢；和网络往返并行才是白捡的时间。
+    //
+    // 快照是尽力而为（backup::quietly 自己把失败降成通知，绝不拦启动）；
+    // 这条线上其余的事失败即启动失败。
+    let disk_line = async {
+        // 距上一张太久了就补一张，兜住「上次退出时崩了没拍成」。放在占用
+        // 检查之后：别人正开着这个游戏目录时，拍到的是他正在写的文件。
+        if crate::backup::due_before_launch(launcher_paths, instance_id) {
+            // 第一次可能要读完整个存档，界面上不该是一段没有说明的停顿。
+            let _track = job.track(JobText::id("job.track.snapshot"));
+            let snapshot_paths = launcher_paths.clone();
+            let snapshot_instance = instance_id.to_owned();
+            // 读盘十几秒的同步活，别占着异步线程。
+            tokio::task::spawn_blocking(move || {
+                crate::backup::quietly(
+                    &snapshot_paths,
+                    &snapshot_instance,
+                    crate::SnapshotReason::BeforeLaunch,
+                );
+            })
+            .await?;
+        }
+        let classpath = {
+            // 逐个解 zip，几十个 jar 要一两秒。
+            let _track = job.track(JobText::id("job.track.natives"));
+            collect_classpath_and_extract_natives(paths, &metadata, &context, &natives_directory)
+                .await?
+        };
+        if !tokio::fs::try_exists(&client_jar).await? {
+            return Err(anyhow!("client jar is missing: {}", client_jar.display()));
+        }
+        // 模组那条 `depends: { "java": ">=25" }` 也算数。它不改下限（游戏本身
+        // 跑得动），但手上同时有 21 和 25 时，该挑的是 25——否则加载器会因为
+        // 这一条拒绝加载，而预检查早就说过同一句话。两边算的必须是同一件事。
+        // 大整合包这里要开几百个 zip，是此前「卡住没反馈」的主要一段。
+        let mods_floor = {
+            let _track = job.track(JobText::id("job.track.mods"));
+            let mods_directory = crate::instance::jar::directory(paths, instance_id);
+            tokio::task::spawn_blocking(move || {
+                preflight::java_floor(&crate::instance::jar::read_all(&mods_directory))
+            })
+            .await?
+        };
+        Ok((classpath, mods_floor))
+    };
+    let account_line = async {
+        // 一次网络往返，慢网络上能到几秒；外置登录第一次还要取一份 injector。
+        let track = job.track(JobText::id("job.track.account"));
+        let mut account = Account::load(&record)?;
+        account.ensure_fresh(paths, &track.downloads()).await?;
+        let credentials = account.launch_credentials()?;
+        Ok((account, credentials))
+    };
+    let (disk_outcome, account_outcome): (Result<_>, Result<_>) =
+        tokio::join!(disk_line, account_line);
+    let (classpath, mods_floor) = disk_outcome?;
+    let (account, credentials) = account_outcome?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
     let legacy_assets = metadata
         .asset_index
@@ -377,14 +412,6 @@ pub async fn launch_instance(
         .as_ref()
         .map(|version| version.major_version);
     stage(LaunchStage::PreparingJava);
-    // 模组那条 `depends: { "java": ">=25" }` 也算数。它不改下限（游戏本身跑得
-    // 动），但手上同时有 21 和 25 时，该挑的是 25——否则加载器会因为这一条拒绝
-    // 加载，而预检查早就说过同一句话。两边算的必须是同一件事。
-    // 大整合包这里要开几百个 zip，是下载结束后「卡住没反馈」的主要一段。
-    job.note(JobText::id("job.note.mods"));
-    let mods_floor = preflight::java_floor(&crate::instance::jar::read_all(
-        &crate::instance::jar::directory(paths, instance_id),
-    ));
     let requirement = java::requirement(&profile.game_version, profile.loader, required_java_major)
         .preferring(mods_floor);
     let runtime = resolve_java_runtime(paths, &profile, &requirement)?;

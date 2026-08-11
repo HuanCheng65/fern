@@ -95,7 +95,6 @@ impl From<String> for JobText {
 /// 少一条是编译错误。新用一个 id 必须同时写进这里——否则界面只能把 id 本身
 /// 显示出来。
 pub(crate) const TEXT_IDS: &[&str] = &[
-    "job.note.account",
     "job.note.asset-index",
     "job.note.authlib",
     "job.note.downloading",
@@ -110,15 +109,17 @@ pub(crate) const TEXT_IDS: &[&str] = &[
     "job.note.legacy-assets",
     "job.note.loader-inspect",
     "job.note.loader-profile",
-    "job.note.mods",
-    "job.note.natives",
     "job.note.retry",
-    "job.note.snapshot",
     "job.stage.download-files",
     "job.stage.install-loader",
-    "job.stage.prepare-java",
     "job.stage.prepare-launch",
     "job.stage.resolve-version",
+    "job.track.account",
+    "job.track.download",
+    "job.track.java-runtime",
+    "job.track.mods",
+    "job.track.natives",
+    "job.track.snapshot",
 ];
 
 /// 作业的一生。类型标签 snake_case、数据字段 camelCase，和别的事件同一条规则。
@@ -779,7 +780,7 @@ mod tests {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let job = Job::begin(&sender, "准备 Sundial", Vec::new());
         {
-            let track = job.track(JobText::id("job.note.snapshot"));
+            let track = job.track(JobText::id("job.track.snapshot"));
             track.note(JobText::from("正在读取存档"));
             // 离开作用域即收工——支线的一生比它承载的那件事短不了。
         }

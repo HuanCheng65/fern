@@ -107,14 +107,17 @@ export function measure(job: Job): string {
 }
 
 /**
- * 阶段名旁边那一小行该说什么：这一步有字节在动就报数，没有就说注脚。
+ * 阶段名旁边那一小行该说什么：这一步有字节在动就报数，没有就报正在跑的
+ * 支线，再没有才轮到注脚或一行不动的合计。
  *
- * 只做二选一。下载时字节比「检查并下载 N 个文件」有信息量；下载完之后字节
- * 停住了，还挂着一行不动的数字，等于把「卡住没反馈」又演一遍——那时该说话
- * 的是「拍摄快照」「检查模组」这些注脚。
+ * 下载时字节比「检查并下载 N 个文件」有信息量；下载完之后字节停住了，还挂
+ * 着一行不动的数字，等于把「卡住没反馈」又演一遍——那时该说话的是「拍摄
+ * 快照 · 刷新账户凭据」这些还在干活的支线。
  */
 export function aside(job: Job): string {
-  return job.done > job.stageDone ? measure(job) : job.note || measure(job)
+  if (job.done > job.stageDone) return measure(job)
+  const tracks = job.tracks.map((track) => track.label).join(' · ')
+  return tracks || job.note || measure(job)
 }
 
 let rehearsals = 0

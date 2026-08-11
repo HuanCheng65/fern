@@ -87,9 +87,10 @@ pub async fn prepare_instance(
                     .join(format!("{id}.json"))
                     .is_file()
             });
-    // 原版没有加载器要装，那一步就不该出现在分母里。
+    // 原版没有加载器要装，那一步就不该出现在分母里。装 Java 不再单占一步：
+    // 它和下载游戏文件是「补全文件」这一步里并排的两条支线。
     let needs_loader = profile.loader != crate::LoaderKind::Vanilla && !loader_ready;
-    job.expect(if needs_loader { 4 } else { 3 });
+    job.expect(if needs_loader { 3 } else { 2 });
 
     let version_id = profile.game_version.clone();
     let version_id = version_id.as_str();
@@ -144,7 +145,6 @@ pub async fn prepare_instance(
         }
     }
     job.step(JobText::id("job.stage.download-files"));
-    let events = &job.downloads();
     let effective_id = crate::effective_version_id(&profile);
     let metadata: VersionMetadata = version::resolve(paths, &effective_id)
         .with_context(|| format!("读取 {effective_id} 的版本描述"))?;
@@ -186,10 +186,7 @@ pub async fn prepare_instance(
         // 只是此刻的细节：下载一开始，桥会用「检查并下载 N 个文件」换掉它。
         // 上一版这句话被当成阶段名顶上去、再也没人撤，整批下载的几分钟里
         // 界面一直写着「读取资源索引」。
-        let _ = events.send(DownloadEvent::StatusId {
-            id: "job.note.asset-index".to_owned(),
-            params: Vec::new(),
-        });
+        job.note(JobText::id("job.note.asset-index"));
         // 索引 id 来自版本 JSON，也就是来自网络，而它要直接变成文件名。
         if !version::is_safe_id(&index.id) {
             return Err(anyhow!("资源索引名无法作为文件名：{}", index.id));
@@ -236,15 +233,10 @@ pub async fn prepare_instance(
         total_files: tasks.len() as u64,
         total_bytes: tasks.iter().filter_map(|task| task.size).sum(),
     };
-    downloader.download_all(tasks, events).await?;
 
-    if let Some((index_id, index)) = legacy_assets {
-        materialize_legacy_assets(paths, instance_id, &index_id, &index, events).await?;
-    }
-
-    job.step(JobText::id("job.stage.prepare-java"));
-    // Java 也是这个实例缺的文件之一，补全就该把它补上。放在这里而不是启动
-    // 时：启动那一步不该再有几百兆的下载，而补全本来就是「跑一遍直到齐活」。
+    // Java 也是这个实例缺的文件之一，补全就该把它补上。而且它和游戏文件
+    // 走的是两条互不相干的网络流——串行等于把两段下载时间相加。两条支线
+    // 并排跑，字节都记在同一本账上；哪条失败整个补全就失败。
     let requirement = java::requirement(
         &profile.game_version,
         profile.loader,
@@ -257,7 +249,22 @@ pub async fn prepare_instance(
         .java_version
         .as_ref()
         .map(|version| version.component.as_str());
-    runtime::ensure_java(paths, component, &requirement, &job.downloads()).await?;
+    let files_track = job.track(JobText::id("job.track.download"));
+    let java_track = job.track(JobText::id("job.track.java-runtime"));
+    let events = &files_track.downloads();
+    let java_events = java_track.downloads();
+    let (files_outcome, java_outcome) = tokio::join!(
+        downloader.download_all(tasks, events),
+        runtime::ensure_java(paths, component, &requirement, &java_events),
+    );
+    files_outcome?;
+    java_outcome?;
+    java_track.done();
+
+    if let Some((index_id, index)) = legacy_assets {
+        materialize_legacy_assets(paths, instance_id, &index_id, &index, events).await?;
+    }
+    files_track.done();
 
     Ok(result)
 }

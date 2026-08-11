@@ -246,13 +246,19 @@ const backend = {
   },
 
   // ── 启动进度 ────────────────────────────────────────────────────────────
-  // 标题是进度条上那一行字。stage 是阶段名，note 是阶段下随做随换的注脚，
-  // 都不需要 detail——进度不解释自己，说完这一刻就翻篇。
+  // 标题是进度条上那一行字。stage 是阶段名，track 是阶段里并排跑的支线，
+  // note 是随做随换的注脚——都不需要 detail：进度不解释自己，说完这一刻
+  // 就翻篇。
   'job.stage.resolve-version': { title: '读取版本信息', detail: '' },
   'job.stage.install-loader': { title: '安装 {loader} {version}', detail: '' },
   'job.stage.download-files': { title: '补全游戏文件', detail: '' },
-  'job.stage.prepare-java': { title: '准备 Java', detail: '' },
   'job.stage.prepare-launch': { title: '准备启动', detail: '' },
+  'job.track.download': { title: '下载游戏文件', detail: '' },
+  'job.track.java-runtime': { title: '准备 Java', detail: '' },
+  'job.track.snapshot': { title: '拍摄快照', detail: '' },
+  'job.track.natives': { title: '解压平台组件', detail: '' },
+  'job.track.account': { title: '刷新账户凭据', detail: '' },
+  'job.track.mods': { title: '检查模组', detail: '' },
   'job.note.downloading': { title: '检查并下载 {count} 个文件', detail: '' },
   'job.note.retry': { title: '重试 {count} 个文件', detail: '' },
   'job.note.asset-index': { title: '读取资源索引', detail: '' },
@@ -268,10 +274,6 @@ const backend = {
   'job.note.java-adoptium-download': { title: '下载 Temurin {name}（{size} MB）', detail: '' },
   'job.note.java-extract': { title: '解压 Java 运行时', detail: '' },
   'job.note.authlib': { title: '下载 authlib-injector {version}', detail: '' },
-  'job.note.snapshot': { title: '拍摄快照', detail: '' },
-  'job.note.natives': { title: '解压平台组件', detail: '' },
-  'job.note.account': { title: '刷新账户凭据', detail: '' },
-  'job.note.mods': { title: '检查模组', detail: '' },
 } satisfies Record<BackendMessage, Message>
 
 /**
