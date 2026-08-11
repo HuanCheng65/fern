@@ -36,6 +36,22 @@ export function label(action: FixAction | undefined): string {
 }
 
 /**
+ * 按下去会丢东西的动作，先把后果说出来，等第二次确认。返回空表示不必确认。
+ *
+ * 在快照页做同样的恢复要经过「选范围、读后果句、点恢复」，诊断卡片上这颗
+ * 按钮没有理由更轻率——相同的事情使用相同的方式完成。
+ */
+export function consequence(action: FixAction | undefined): string {
+  if (!action) return ''
+  switch (action.kind) {
+    case 'restore-mods':
+      return '会把模组还原到快照那一刻，之后新装的会被删除；恢复前会自动拍一张快照。'
+    default:
+      return ''
+  }
+}
+
+/**
  * 这颗按钮要动的是哪一样东西。
  *
  * 给已经把问题说清楚了的地方用——崩溃面板的标题就是那句诊断，动作那一行再把

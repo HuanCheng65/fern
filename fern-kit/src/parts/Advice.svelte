@@ -10,7 +10,7 @@
    */
   import { AlertTriangle, CircleAlert } from 'lucide-svelte'
   import Button from '../ui/Button.svelte'
-  import { label, type FixAction } from './advice'
+  import { consequence, label, type FixAction } from './advice'
 
   interface Props {
     title: string
@@ -26,15 +26,23 @@
 
   let busy = $state(false)
   let error = $state('')
+  /** 破坏性动作的第一次点击只把后果摆出来，第二次才做。 */
+  let confirming = $state(false)
 
   const actionLabel = $derived(label(action))
+  const warning = $derived(consequence(action))
 
   async function run() {
     if (!onfix) return
+    if (warning && !confirming) {
+      confirming = true
+      return
+    }
     busy = true
     error = ''
     try {
       await onfix()
+      confirming = false
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -54,12 +62,18 @@
   <div class="text">
     <strong>{title}</strong>
     {#if detail}<p>{detail}</p>{/if}
+    {#if confirming}<p class="consequence">{warning}</p>{/if}
     {#if error}<p class="failed">{error}</p>{/if}
   </div>
   {#if actionLabel}
     <div class="fix">
+      {#if confirming}
+        <Button variant="ghost" disabled={busy} onclick={() => (confirming = false)}>
+          取消
+        </Button>
+      {/if}
       <Button variant="ghost" disabled={busy} onclick={() => void run()}>
-        {busy ? '处理中' : actionLabel}
+        {busy ? '处理中' : confirming ? `确认${actionLabel}` : actionLabel}
       </Button>
     </div>
   {/if}
@@ -113,7 +127,13 @@
     color: var(--danger, var(--ink-2));
   }
 
+  .consequence {
+    color: var(--ink-2);
+  }
+
   .fix {
     flex: none;
+    display: flex;
+    gap: var(--s2);
   }
 </style>
