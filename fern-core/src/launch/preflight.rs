@@ -201,15 +201,7 @@ fn stale_arguments(arguments: &[String], java: u16) -> Vec<Finding> {
 /// 补丁）是启动器该自己解决的事，把它们也念出来，用户就得读一串和自己无关的
 /// 话，真正拦路的那条反而被淹掉。
 fn refusals(profile: &InstanceProfile, runtime: Option<&crate::java::JavaRuntime>) -> Vec<Finding> {
-    let environment = super::compat::Environment::here(
-        &profile.game_version,
-        profile.loader,
-        profile
-            .loader_component()
-            .map(|loader| loader.version.as_str())
-            .unwrap_or_default(),
-    )
-    .with_java(runtime.map(Into::into));
+    let environment = super::compat::Environment::of(profile).with_java(runtime.map(Into::into));
     super::compat::notices(&super::compat::apply(&environment))
         .into_iter()
         .map(|notice| Finding {
@@ -237,14 +229,7 @@ fn chosen_runtime(
     jars: &[ModJar],
 ) -> Option<crate::java::JavaRuntime> {
     let declared = crate::read_prepared_java_major(paths, &profile.game_version);
-    let environment = super::compat::Environment::here(
-        &profile.game_version,
-        profile.loader,
-        profile
-            .loader_component()
-            .map(|loader| loader.version.as_str())
-            .unwrap_or_default(),
-    );
+    let environment = super::compat::Environment::of(profile);
     let requirement = crate::java::requirement(&profile.game_version, profile.loader, declared)
         .preferring(java_floor(jars))
         .capped(super::compat::runtime_ceiling(&super::compat::apply(

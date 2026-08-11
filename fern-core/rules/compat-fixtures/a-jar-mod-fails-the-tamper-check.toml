@@ -1,0 +1,10 @@
+# 从 Prism 导进来的老整合包：Forge 1.7.10 加一份 jar mod。client jar 一旦被
+# 改过，FML 就会在 LaunchWrapper 那一步停下来。
+minecraft = "1.7.10"
+loader = "forge"
+loader-version = "10.13.4.1614"
+jar-mods = true
+
+[java]
+major = 8
+update = 492

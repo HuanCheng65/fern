@@ -139,6 +139,63 @@ fn strip_digests(bytes: &[u8]) -> Vec<u8> {
     output.into_bytes()
 }
 
+/// 把一批条目叠到一个 jar 上，写出新的一份。
+///
+/// 和 [`rewrite`] 的区别有两处：同名的换掉、**没有的追加**，而且不管有没有
+/// 改动都会写出产物——调用方要的就是这一份。签名照剥。
+pub(crate) fn overlay(
+    source: &Path,
+    destination: &Path,
+    entries: &std::collections::HashMap<String, Vec<u8>>,
+) -> Result<()> {
+    let reader =
+        std::fs::File::open(source).with_context(|| format!("打开 {}", source.display()))?;
+    let mut archive =
+        zip::ZipArchive::new(reader).with_context(|| format!("读取 {}", source.display()))?;
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = destination.with_extension("part");
+    let mut writer = zip::ZipWriter::new(
+        std::fs::File::create(&temporary)
+            .with_context(|| format!("创建 {}", temporary.display()))?,
+    );
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let mut left = entries.clone();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let name = entry.name().to_owned();
+        if entry.is_dir() {
+            writer.add_directory(&name, options)?;
+            continue;
+        }
+        if is_signature_file(&name) {
+            continue;
+        }
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        entry.read_to_end(&mut bytes)?;
+        if name.eq_ignore_ascii_case("META-INF/MANIFEST.MF") {
+            bytes = strip_digests(&bytes);
+        } else if let Some(replacement) = left.remove(&name) {
+            bytes = replacement;
+        }
+        writer.start_file(&name, options)?;
+        writer.write_all(&bytes)?;
+    }
+    // 原 jar 里没有的那些追加在后面。名字排一遍，同样的输入要得到同样的产物。
+    let mut names: Vec<&String> = left.keys().collect();
+    names.sort();
+    for name in names {
+        writer.start_file(name, options)?;
+        writer.write_all(&left[name])?;
+    }
+    writer.finish()?;
+    std::fs::rename(&temporary, destination)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

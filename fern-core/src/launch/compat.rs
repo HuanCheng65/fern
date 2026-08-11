@@ -52,6 +52,8 @@ pub struct Environment {
     pub os: String,
     /// 归一化后的架构：`x86_64` / `aarch64` / `x86`。
     pub arch: String,
+    /// 这个实例有 jar mod——也就是 client jar 会被我们改过。
+    pub jar_mods: bool,
     pub java: Option<JavaFacts>,
 }
 
@@ -84,8 +86,26 @@ impl Environment {
             loader_version: loader_version.to_owned(),
             os: super::rules::os_name().to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
+            jar_mods: false,
             java: None,
         }
+    }
+
+    /// 这个实例的样子。层表里有没有 jar mod 也是规则要看的一件事。
+    pub fn of(profile: &crate::InstanceProfile) -> Self {
+        let mut environment = Self::here(
+            &profile.game_version,
+            profile.loader,
+            profile
+                .loader_component()
+                .map(|loader| loader.version.as_str())
+                .unwrap_or_default(),
+        );
+        environment.jar_mods = profile
+            .components
+            .iter()
+            .any(|component| !component.jar_mods.is_empty());
+        environment
     }
 
     pub fn with_java(mut self, java: Option<JavaFacts>) -> Self {
@@ -146,6 +166,8 @@ struct RawRule {
     os: Vec<String>,
     #[serde(default)]
     arch: Vec<String>,
+    #[serde(rename = "jar-mods", default)]
+    jar_mods: Option<bool>,
     #[serde(rename = "java-major", default)]
     java_major: Option<u16>,
     #[serde(rename = "java-update", default)]
@@ -259,6 +281,12 @@ fn matches(rule: &RawRule, environment: &Environment) -> bool {
         return false;
     }
     if !rule.arch.is_empty() && !rule.arch.iter().any(|name| name == &environment.arch) {
+        return false;
+    }
+    if rule
+        .jar_mods
+        .is_some_and(|wanted| wanted != environment.jar_mods)
+    {
         return false;
     }
 
@@ -400,6 +428,8 @@ mod tests {
         #[serde(default = "x86_64")]
         arch: String,
         #[serde(default)]
+        jar_mods: bool,
+        #[serde(default)]
         java: Option<RawJava>,
     }
 
@@ -440,6 +470,7 @@ mod tests {
             loader_version: fixture.loader_version,
             os: fixture.os,
             arch: fixture.arch,
+            jar_mods: fixture.jar_mods,
             java: fixture.java.map(|java| JavaFacts {
                 major: java.major,
                 update: java.update,

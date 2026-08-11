@@ -59,6 +59,7 @@ export const BACKEND_MESSAGES = [
   'job.track.snapshot',
   'preflight.compat.a-32-bit-java-cannot-hold-a-large-heap',
   'preflight.compat.a-headless-java-cannot-open-a-window',
+  'preflight.compat.a-jar-mod-fails-the-tamper-check',
   'preflight.compat.modlauncher-8-breaks-on-a-new-java-8',
   'preflight.compat.old-fml-refuses-an-unsigned-client',
   'preflight.compat.old-fml-sorts-while-iterating',

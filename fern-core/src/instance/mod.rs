@@ -19,6 +19,7 @@ pub(crate) mod integrity;
 pub(crate) mod jar;
 pub(crate) mod mods;
 pub(crate) mod origin;
+pub(crate) mod prism;
 pub(crate) mod saves;
 pub(crate) mod servers;
 
@@ -125,6 +126,13 @@ pub struct Component {
     /// 要读的是这个 id 对应的文件。装完之后以这里写的为准。
     #[serde(default)]
     pub version_id: String,
+    /// 这一层要叠进 client jar 的那些文件，按顺序（jar mod）。
+    ///
+    /// 1.6 之前的模组就是这么装的：把 class 覆盖进游戏本体，再删掉
+    /// `META-INF/`。它没有加载器，所以也没有别的地方能表达它——只能是一层。
+    /// 路径指向 Fern 自己实例目录下的副本，不是用户原来那一份。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jar_mods: Vec<std::path::PathBuf>,
 }
 
 /// 旧名字。外面还这么叫的地方留着，省得一次改动横跨太多文件。
@@ -370,12 +378,14 @@ mod tests {
             kind: LoaderKind::Forge,
             version: "10.13.4.1614".to_owned(),
             version_id: "1.7.10-Forge10.13.4.1614".to_owned(),
+            jar_mods: Vec::new(),
         });
         // 一份没有加载器身份的附加描述不该顶替主加载器。
         profile.components.push(Component {
             kind: LoaderKind::Vanilla,
             version: "1".to_owned(),
             version_id: "extra".to_owned(),
+            jar_mods: Vec::new(),
         });
         let profile = profile.normalized();
         assert_eq!(profile.loader, LoaderKind::Forge);

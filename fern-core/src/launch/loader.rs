@@ -215,6 +215,39 @@ pub async fn list_versions(
         .collect())
 }
 
+/// 把一个「差不多对」的 Forge 版本号补成 maven 上那个目录名。
+///
+/// Forge 有一段时期在版本号后面缀了游戏版本：1.7.10 那批叫
+/// `10.13.4.1614-1.7.10`，1.7.2 那批叫 `10.12.2.1161-mc172`。别处记的往往是
+/// 规范化之后的 `10.13.4.1614`——Prism 的 `mmc-pack.json` 就是——照着它拼出
+/// 来的地址是 404，而报出来只有一句「下载安装器失败」。
+///
+/// 列表里能对上就用列表里那一个，对不上就原样返回：这条路只是把话补全，不该
+/// 因为列表拉不下来而挡住一次本来能成的安装。
+async fn canonical_version(
+    paths: &DataPaths,
+    kind: LoaderKind,
+    game_version: &str,
+    loader_version: &str,
+) -> String {
+    let Ok(versions) = list_versions(paths, kind, game_version).await else {
+        return loader_version.to_owned();
+    };
+    if versions.iter().any(|entry| entry.version == loader_version) {
+        return loader_version.to_owned();
+    }
+    versions
+        .iter()
+        .map(|entry| entry.version.as_str())
+        .find(|version| {
+            version
+                .strip_prefix(loader_version)
+                .is_some_and(|rest| rest.starts_with('-'))
+        })
+        .unwrap_or(loader_version)
+        .to_owned()
+}
+
 /// 最新的稳定版；一个稳定的都没有就退回最新的那个。
 pub async fn latest_version(
     paths: &DataPaths,
@@ -243,7 +276,8 @@ pub async fn install(
 ) -> Result<String> {
     // NeoForge 和 Forge 要在本地跑安装器，是完全不同的一条路。
     if matches!(kind, LoaderKind::NeoForge | LoaderKind::Forge) {
-        return crate::launch::forge::install(paths, kind, game_version, loader_version, events)
+        let loader_version = canonical_version(paths, kind, game_version, loader_version).await;
+        return crate::launch::forge::install(paths, kind, game_version, &loader_version, events)
             .await;
     }
     let expected_id = version_id(kind, game_version, loader_version);

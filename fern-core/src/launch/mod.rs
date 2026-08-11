@@ -239,14 +239,7 @@ pub async fn launch_instance(
     // 已知会坏的那些组合，以及该怎么绕开（见 launch::compat）。这一轮还没挑
     // Java，所以只拿得到不依赖 Java 的那几条——它们正是要用来**决定**挑哪个
     // Java 的。挑完之后还会再问一次。
-    let environment = compat::Environment::here(
-        &profile.game_version,
-        profile.loader,
-        profile
-            .loader_component()
-            .map(|loader| loader.version.as_str())
-            .unwrap_or_default(),
-    );
+    let environment = compat::Environment::of(&profile);
     let advice = compat::apply(&environment);
     let patches = compat::patches(&advice);
 
@@ -523,9 +516,15 @@ pub async fn launch_instance(
         java_binary: java_binary.clone(),
         working_directory: game_directory,
         jvm_arguments,
+        // jar mod 改的是 client jar 本身，所以进 classpath 的是叠好的那一份
+        // （见 patch::with_jar_mods）。没有 jar mod 时它就是原件。
         classpath: classpath
             .into_iter()
-            .chain(std::iter::once(client_jar))
+            .chain(std::iter::once(patch::with_jar_mods(
+                paths,
+                &profile,
+                &client_jar,
+            )?))
             .collect(),
         main_class,
         game_arguments,

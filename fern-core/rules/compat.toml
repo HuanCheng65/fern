@@ -81,3 +81,19 @@ actions = [{ kind = "heap-ceiling", mb = 1024 }]
 id = "a-headless-java-cannot-open-a-window"
 java-headless = true
 actions = [{ kind = "block" }]
+
+# 一旦叠了 jar mod，改的就是 client jar 本身，FML 那套防篡改检查必然失败——
+# 它报的是「CRITICAL TAMPERING」，还劝人去重装 Forge，而实际上什么都没坏。
+#
+# 这一条和上面那条 old-fml-refuses-an-unsigned-client 是同一件事的两种触发
+# 方式：那一条按版本（那些年代的 client jar 自带的签名现代 JVM 已经不认），
+# 这一条按事实（我们真的改了那个 jar）。分成两条是因为守卫不同，而合成一条
+# 就要在版本区间里塞进一个和版本无关的条件。
+[[rule]]
+id = "a-jar-mod-fails-the-tamper-check"
+minecraft = "<1.13"
+loader = ["forge"]
+jar-mods = true
+actions = [
+  { kind = "jvm-arg-add", argument = "-Dfml.ignoreInvalidMinecraftCertificates=true" },
+]

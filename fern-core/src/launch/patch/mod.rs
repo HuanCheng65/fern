@@ -190,6 +190,75 @@ pub(crate) fn applied(
     Ok(current)
 }
 
+/// 把这个实例的 jar mod 叠进 client jar，产出另一份。没有 jar mod 就返回原件。
+///
+/// 1.6 之前的模组就是这么装的：把 class 覆盖进游戏本体。规矩有两条，缺一条
+/// 游戏就起不来——**后叠的盖住先叠的**（层的顺序是有语义的），以及**叠完要
+/// 删掉 `META-INF/`**：那里面是 Mojang 对每个条目的签名，class 一换就对不上，
+/// JVM 会在加载第一个被改过的类时抛 `SecurityException`。剥签名这件事
+/// [`jar::rewrite`] 本来就在做。
+///
+/// 产物和别的补丁产物摆在一起，缓存 key 是 client jar 的 sha1 加上每一份
+/// jar mod 的 sha1——换掉其中任何一个都要重做。
+pub(crate) fn with_jar_mods(
+    paths: &DataPaths,
+    profile: &crate::InstanceProfile,
+    client_jar: &Path,
+) -> Result<PathBuf> {
+    let mods: Vec<&Path> = profile
+        .components
+        .iter()
+        .flat_map(|component| component.jar_mods.iter())
+        .map(PathBuf::as_path)
+        .collect();
+    if mods.is_empty() || !client_jar.is_file() {
+        return Ok(client_jar.to_owned());
+    }
+
+    // 先把要叠的内容读进来，顺带算出缓存 key。
+    let mut key = fern_download::sha1_hex(
+        &std::fs::read(client_jar).with_context(|| format!("读取 {}", client_jar.display()))?,
+    );
+    let mut overlay: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    for path in &mods {
+        let bytes =
+            std::fs::read(path).with_context(|| format!("读取 jar mod {}", path.display()))?;
+        key.push('-');
+        key.push_str(&fern_download::sha1_hex(&bytes));
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+            .with_context(|| format!("读取 jar mod {}", path.display()))?;
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index)?;
+            if entry.is_dir() {
+                continue;
+            }
+            let name = entry.name().to_owned();
+            // jar mod 里那份 META-INF 同样不要：它是模组作者打包时留下的，
+            // 盖到 client jar 上只会让签名更乱。
+            if name.starts_with("META-INF/") {
+                continue;
+            }
+            let mut bytes = Vec::with_capacity(entry.size() as usize);
+            std::io::Read::read_to_end(&mut entry, &mut bytes)?;
+            // 后叠的盖住先叠的。
+            overlay.insert(name, bytes);
+        }
+    }
+
+    let name = client_jar
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "client.jar".to_owned());
+    let key = fern_download::sha1_hex(key.as_bytes());
+    let output = root(paths).join("jar-mods").join(&key).join(name);
+    if output.is_file() {
+        return Ok(output);
+    }
+
+    jar::overlay(client_jar, &output, &overlay)?;
+    Ok(output)
+}
+
 /// 补全时把该做的产物都做出来。
 ///
 /// 启动那一刻再做也不会错（[`applied`] 是幂等的），但那是在用户按下按钮之后

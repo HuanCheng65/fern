@@ -237,6 +237,7 @@ mod tests {
                     kind: loader,
                     version: "0.16.5".to_owned(),
                     version_id: version_id.to_owned(),
+                    jar_mods: Vec::new(),
                 })
                 .into_iter()
                 .collect(),
@@ -367,11 +368,13 @@ mod tests {
                 kind: LoaderKind::Forge,
                 version: "10.13.4.1614".to_owned(),
                 version_id: "forge-10.13.4.1614".to_owned(),
+                jar_mods: Vec::new(),
             },
             LoaderProfile {
                 kind: LoaderKind::Vanilla,
                 version: "1.7.10".to_owned(),
                 version_id: "liteloader-1.7.10".to_owned(),
+                jar_mods: Vec::new(),
             },
         ];
 
@@ -409,6 +412,7 @@ mod tests {
             kind: LoaderKind::Fabric,
             version: "0.16.5".to_owned(),
             version_id: "fabric-loader-0.16.5-1.7.10".to_owned(),
+            jar_mods: Vec::new(),
         }];
         let merged = resolve_profile(&paths, &ours).expect("merge");
         let (_, game) = merged.resolved_arguments(&fern_meta::RuleContext::linux_x64());

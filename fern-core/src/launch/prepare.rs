@@ -276,22 +276,21 @@ pub async fn prepare_instance(
         let patch_metadata = metadata.clone();
         let patch_context = context.clone();
         // 打哪几个补丁由兼容规则说了算，补全和启动问的是同一张表。
-        let advice = crate::launch::compat::apply(&crate::launch::compat::Environment::here(
-            &profile.game_version,
-            profile.loader,
-            profile
-                .loader_component()
-                .map(|loader| loader.version.as_str())
-                .unwrap_or_default(),
-        ));
-        tokio::task::spawn_blocking(move || {
+        let advice =
+            crate::launch::compat::apply(&crate::launch::compat::Environment::of(&profile));
+        let patch_profile = profile.clone();
+        let patch_client_jar = client_jar.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
             let patches = crate::launch::compat::patches(&advice);
             crate::launch::patch::prepare_all(
                 &patch_paths,
                 &patch_metadata,
                 &patch_context,
                 &patches,
-            )
+            )?;
+            // jar mod 那一份同样在这里做完，启动时直接拿现成的。
+            crate::launch::patch::with_jar_mods(&patch_paths, &patch_profile, &patch_client_jar)?;
+            Ok(())
         })
         .await??;
     }

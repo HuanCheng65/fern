@@ -170,6 +170,7 @@ pub fn attach(
                 kind: described.loader,
                 version: described.loader_version.clone().unwrap_or_default(),
                 version_id: version_id.to_owned(),
+                jar_mods: Vec::new(),
             }),
     );
     profile = profile.normalized();
@@ -177,6 +178,8 @@ pub fn attach(
         root: root.clone(),
         isolation: detect_isolation(&root, version_id),
         shared_libraries,
+        // 官方启动器那一系的目录里本来就有 versions/，接手的就是那一份。
+        shared_versions: false,
     });
 
     // 实例目录里只有一份描述，没有 `.minecraft`：游戏文件在那个外部目录里。

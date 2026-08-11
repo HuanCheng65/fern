@@ -114,6 +114,7 @@ fn a_fully_referenced_setup_has_nothing_to_slim() {
         kind: LoaderKind::Fabric,
         version: "0.16.5".to_owned(),
         version_id: "fabric-loader-0.16.5-1.20.1".to_owned(),
+        jar_mods: Vec::new(),
     });
 
     crate::write_instance_profile(&paths, &profile).expect("write profile");

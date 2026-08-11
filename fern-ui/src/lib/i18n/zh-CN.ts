@@ -215,6 +215,11 @@ const backend = {
     detail:
       '1.7.10 之前的 Forge 存在一处缺陷，在现有的 Java 8 上启动时必然中断。Fern 会在安装时修改对应的类文件，而这一步没有完成。',
   },
+  'preflight.compat.a-jar-mod-fails-the-tamper-check': {
+    title: '这个实例的游戏文件被模组修改过',
+    detail:
+      '1.6 之前那种模组会直接改写游戏本体，Forge 检查到之后会拒绝启动。Fern 会在启动时关闭这项检查，而这一步没有完成。',
+  },
   'preflight.compat.old-fml-refuses-an-unsigned-client': {
     title: '这个 Forge 版本会拒绝启动游戏',
     detail:

@@ -1077,6 +1077,26 @@ async fn attach_game_version(
     .await?
 }
 
+/// 看一眼一个 Prism / MultiMC 实例目录里有什么。什么都不改。
+#[tauri::command]
+async fn read_prism_instance(path: String) -> Result<fern_core::PrismInstance, String> {
+    off_thread(move || {
+        fern_core::read_prism_instance(&paths()?, std::path::Path::new(&path))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
+/// 把它导进来。游戏文件留在原地，只有 jar mod 会复制一份过来。
+#[tauri::command]
+async fn import_prism_instance(path: String) -> Result<fern_core::InstanceProfile, String> {
+    off_thread(move || {
+        fern_core::import_prism_instance(&paths()?, std::path::Path::new(&path))
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 /// 从 Modrinth 装一个整合包。它建的是一个**新实例**，不是装进已有的实例。
 #[tauri::command]
 async fn install_modpack(
@@ -1569,6 +1589,8 @@ pub fn run() {
             nearby_game_directory,
             scan_game_directory,
             attach_game_version,
+            read_prism_instance,
+            import_prism_instance,
             install_modpack,
             inspect_modpack,
             import_modpack,

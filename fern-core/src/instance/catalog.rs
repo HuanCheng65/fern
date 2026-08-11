@@ -121,6 +121,7 @@ pub fn create_instance_with_loader(
             kind: loader,
             version,
             version_id: String::new(),
+            jar_mods: Vec::new(),
         });
         profile = profile.normalized();
     }

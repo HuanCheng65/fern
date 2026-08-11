@@ -36,6 +36,14 @@ pub struct ExternalGame {
     /// `false` 的理由只有一个——那个目录要能被原来的启动器继续单独打开。
     #[serde(default = "yes")]
     pub shared_libraries: bool,
+    /// 版本描述也放在 Fern 这边，不放进那个游戏目录。
+    ///
+    /// 官方启动器那一系的目录里本来就有 `versions/`，接手它就该用那一份
+    /// （默认 `false`）。Prism 那一系不是：它的实例目录下只有游戏文件，版本
+    /// 描述在启动器自己的全局缓存里。往别人的 `.minecraft` 里凭空造一个
+    /// `versions/` 既不是它的约定，也违背这个模块「不动别人的文件」的底线。
+    #[serde(default)]
+    pub shared_versions: bool,
 }
 
 fn yes() -> bool {
@@ -143,7 +151,11 @@ impl DataPaths {
             logs: self.logs.clone(),
             cache: self.cache.clone(),
             runtimes: self.runtimes.clone(),
-            versions,
+            versions: if external.shared_versions {
+                self.versions.clone()
+            } else {
+                versions
+            },
             assets: if external.shared_libraries {
                 self.assets.clone()
             } else {
