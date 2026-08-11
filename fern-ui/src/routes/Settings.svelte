@@ -582,7 +582,7 @@
       二级页。整块换掉而不是挤在右栏里：左侧那列锚点回答的是「这一长页我要看
       哪一段」，而这里已经不是那一页了——留着它只会让人以为自己还站在表单上。
     -->
-    <div class="sub scroll" data-page-scroll in:expand>
+    <div class="subpage scroll" data-page-scroll in:expand>
       <header>
         <div class="crumbs">
           <!-- 返回到它所属的那一节，名字从目录里取——这一级是通用机制，不是
@@ -1416,8 +1416,14 @@
 </div>
 
 <style>
-  /* 二级页和根页共用同一套头部与列宽，只是没有左边那列锚点。 */
-  .sub {
+  /*
+   * 二级页和根页共用同一套头部与列宽，只是没有左边那列锚点。
+   *
+   * 类名不叫 `.sub`：占用那张表里每一桶的第二行也是这个名字，而这一条的
+   * `height: 100%` 会一起落到那些行上——栅格项被拉伸后高度是确定的，于是每
+   * 一条注解都撑成整桶那么高，一桶展开就叠到下一桶身上。
+   */
+  .subpage {
     height: 100%;
     min-height: 0;
     padding-right: var(--s2);
