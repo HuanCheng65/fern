@@ -1575,27 +1575,45 @@
     min-width: 0;
   }
 
-  /* 比例条：大头在哪一眼看出来，数字是确认用的。 */
+  /*
+   * 比例条：大头在哪一眼看出来，数字是确认用的。
+   *
+   * 段与段之间留缝，不靠颜色去承担「这里是分界」——两段挨着的时候，再大的
+   * 色差也要先被认出是两段才谈得上分辨。
+   */
   .bar {
     display: flex;
-    height: 6px;
-    margin: 0 0 var(--s2);
-    border-radius: 3px;
-    overflow: hidden;
+    gap: 2px;
+    height: 10px;
+    margin: 0 0 var(--s3);
+    border-radius: 999px;
   }
 
   .seg {
-    min-width: 1px;
+    min-width: 3px;
+    border-radius: 999px;
   }
 
-  /* 同一支色阶从强到弱：桶有固定次序，颜色跟着次序走，不各自抢戏。 */
-  .tone-0 { background: color-mix(in srgb, var(--accent) 90%, transparent); }
-  .tone-1 { background: color-mix(in srgb, var(--accent) 68%, transparent); }
-  .tone-2 { background: color-mix(in srgb, var(--accent) 50%, transparent); }
-  .tone-3 { background: color-mix(in srgb, var(--accent) 36%, transparent); }
-  .tone-4 { background: color-mix(in srgb, var(--accent) 25%, transparent); }
-  .tone-5 { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-  .tone-6 { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  /*
+   * 七桶的颜色。
+   *
+   * 上一版是强调色按透明度递减的七档。两处都错：透明度叠在这块模糊的浮层上，
+   * 相邻两档的差全被背景吃掉；而**强调色本身可深可浅**——它是从背景学来的，
+   * 夜里的群系给出的就是一支近乎发黑的橄榄色，于是整支色阶挤在明度最低的
+   * 一小段里，七档看上去是同一个颜色。
+   *
+   * 现在明度是自己排的：从近白到近底色铺满可用的那一段，七档均分，谁也不靠
+   * 强调色碰巧有多亮。强调色只负责给前四档上色——实例、快照、共享文件、运行
+   * 时是玩家的东西，缓存、日志、其他是杂务，后三档保持中性灰。于是分辨这七
+   * 档有两个独立的维度：明度排队，彩度分族。
+   */
+  .tone-0 { background: color-mix(in oklab, var(--accent) 35%, color-mix(in oklab, var(--ink) 90%, var(--c0))); }
+  .tone-1 { background: color-mix(in oklab, var(--accent) 35%, color-mix(in oklab, var(--ink) 70%, var(--c0))); }
+  .tone-2 { background: color-mix(in oklab, var(--accent) 35%, color-mix(in oklab, var(--ink) 52%, var(--c0))); }
+  .tone-3 { background: color-mix(in oklab, var(--accent) 35%, color-mix(in oklab, var(--ink) 38%, var(--c0))); }
+  .tone-4 { background: color-mix(in oklab, var(--ink) 27%, var(--c0)); }
+  .tone-5 { background: color-mix(in oklab, var(--ink) 18%, var(--c0)); }
+  .tone-6 { background: color-mix(in oklab, var(--ink) 11%, var(--c0)); }
 
   /* 桶表：每桶一行，形状完全一样——色点、名字、数字；注解和动作长在
      自己的行上，「看、可省多少、删」不再分家。 */
@@ -1624,12 +1642,15 @@
     font-size: var(--t-body);
   }
 
+  /* 和条上那一段是同一个颜色，所以它就是那一段的钥匙。描一圈发丝线，最暗的
+     两档在这个尺寸上才还看得出边。 */
   .dot {
     flex: none;
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     align-self: center;
+    box-shadow: inset 0 0 0 1px var(--hairline);
   }
 
   .bucket-name {
@@ -1713,6 +1734,12 @@
     color: var(--ink-2);
     font-size: var(--t-small);
     cursor: pointer;
+  }
+
+  /* 勾选框是系统控件，不接管它的形状，只把选中态的颜色交给这套界面——默认
+     那个亮蓝（某些系统上是亮红）不属于这里的任何一支色。 */
+  .expand input[type='checkbox'] {
+    accent-color: var(--accent);
   }
 
   .pick-name {
