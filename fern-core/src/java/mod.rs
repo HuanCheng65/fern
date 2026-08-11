@@ -81,8 +81,11 @@ pub struct JavaRuntime {
 
 /// 一个版本能接受的 Java 区间。
 ///
-/// 下限是硬的：Java 比它旧，游戏根本起不来。上限是软的，用来表达「这个组合
-/// 已知会出问题」——手上只有更新的 Java 时我们仍然让他启动，而不是拦住。
+/// 两头都是硬的：比下限旧起不来，比上限新同样起不来——1.16.5 在 Java 21 上
+/// 不是慢一点，是 LWJGL 2 和旧 launchwrapper 依赖的内部 API 已经没了。区间外
+/// 的不算候选（见 [`select`]）；缺一个合适的就去下一个，而不是拿手边这个凑。
+///
+/// 唯一软的是 `preferred`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaRequirement {
@@ -116,6 +119,17 @@ impl JavaRequirement {
     fn tighten_maximum(mut self, maximum: u16) -> Self {
         self.maximum = Some(self.maximum.map_or(maximum, |current| current.min(maximum)));
         self
+    }
+}
+
+/// 这个区间怎么念给人听。
+///
+/// 上下限相等时是「Java 8」而不是「Java 8–8」——那是把一个数据结构念了出来。
+pub fn describe(requirement: &JavaRequirement) -> String {
+    match requirement.maximum {
+        Some(maximum) if maximum == requirement.minimum => format!("Java {maximum}"),
+        Some(maximum) => format!("Java {}–{maximum}", requirement.minimum),
+        None => format!("Java {} 或更高版本", requirement.minimum),
     }
 }
 
@@ -181,19 +195,24 @@ pub fn requirement(
 
 /// 从候选里挑一个。挑不出来返回 `None`——调用方再决定是去下载还是报错。
 ///
-/// 排序意图：能跑 > 跑得好 > 跑得对。先滤掉低于下限的（那是硬伤），再优先
-/// 落在推荐区间内的、够得着模组那条下界的、原生架构的，最后在合格的里面选
-/// **最小**的那个大版本：1.20.1 有 17 和 25 可选时，17 才是游戏被测试过的环境。
+/// **只在区间内挑。** 上限不是偏好，是「已知这个组合会坏」：1.16.5 在 Java 21
+/// 上不是慢一点，是起不来。曾经把上限当偏好——区间外的也算候选，只是排在
+/// 后面——于是一台只装了 Java 11 的机器上，1.7.2 挑中的是 11，
+/// [`runtime::ensure_java`] 看见「已经有能用的」就不再去下 Java 8，而设置页
+/// 一边把 11 显示成自动选中、一边把它列进「不兼容的版本」。
+///
+/// 区间内再排：优先够得着模组那条下界的、原生架构的，然后选**最小**的那个大
+/// 版本（1.20.1 有 17 和 21 可选时，17 才是游戏被测试过的环境），同版本优先
+/// 我们自己管的那份。
 ///
 /// 模组那条下界排在游戏的区间之后：游戏的上限是「已知这个组合会坏」，一个模组
 /// 想要更新的 Java 不足以推翻它。
 pub fn select(runtimes: &[JavaRuntime], requirement: &JavaRequirement) -> Option<JavaRuntime> {
     runtimes
         .iter()
-        .filter(|runtime| runtime.major >= requirement.minimum)
+        .filter(|runtime| requirement.accepts(runtime.major))
         .min_by_key(|runtime| {
             (
-                !requirement.accepts(runtime.major),
                 requirement
                     .preferred
                     .is_some_and(|wanted| runtime.major < wanted),
@@ -482,7 +501,6 @@ fn detect_image(home: &Path) -> JavaImage {
 fn javac_executable_name() -> &'static str {
     if cfg!(windows) { "javac.exe" } else { "javac" }
 }
-
 
 #[derive(Debug, Default)]
 struct ReleaseFile {
@@ -1010,16 +1028,30 @@ mod tests {
         );
     }
 
+    /// 区间外的不是「次一等的候选」，是不能用。挑不出来就该返回 `None`，
+    /// 让补全那一步去下一个对的——上一版把上限当偏好，一台只装了 Java 11 的
+    /// 机器上 1.7.2 就选中了 11，`ensure_java` 看见「已经有能用的」再也不去
+    /// 下 Java 8，而设置页一边显示自动选中 11、一边把它列进不兼容。
     #[test]
-    fn selection_never_returns_a_runtime_below_the_hard_minimum() {
+    fn selection_stays_inside_the_interval_at_both_ends() {
         let native = normalize_arch(env::consts::ARCH);
         let runtimes = vec![runtime(8, native, false), runtime(17, native, false)];
-        // 区间之外仍然要给出答案：拦住启动比用一个更新的 Java 试一次更糟。
-        let chosen = select(
-            &runtimes,
-            &requirement("1.21.1", LoaderKind::Vanilla, Some(21)),
+        // 太旧：1.21.1 要 21。
+        assert!(
+            select(
+                &runtimes,
+                &requirement("1.21.1", LoaderKind::Vanilla, Some(21))
+            )
+            .is_none()
         );
-        assert!(chosen.is_none());
+        // 太新：1.7.2 只能跑在 Java 8 上，手上这两个都不行。
+        assert!(
+            select(
+                &[runtime(11, native, false), runtime(17, native, false)],
+                &requirement("1.7.2", LoaderKind::Forge, None)
+            )
+            .is_none()
+        );
     }
 
     #[test]

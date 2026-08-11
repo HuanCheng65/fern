@@ -202,6 +202,14 @@
   )
   const fitting = $derived(runtimes.filter((item) => !javaMismatch(item, requirement)))
   const unfit = $derived(runtimes.filter((item) => javaMismatch(item, requirement)))
+  /** 上下限相等时是「Java 8」，不是「Java 8–8」——那是把一个区间念了出来。 */
+  const wanted = $derived(
+    requirement.maximum === null
+      ? `Java ${requirement.minimum} 或更高版本`
+      : requirement.maximum === requirement.minimum
+        ? `Java ${requirement.minimum}`
+        : `Java ${requirement.minimum}–${requirement.maximum}`,
+  )
 
   async function installJava() {
     installing = true
@@ -423,9 +431,7 @@
 
         <div class="row-foot">
           <span class="t-quiet">
-            这个版本要求 Java {requirement.minimum}{requirement.maximum
-              ? `–${requirement.maximum}`
-              : ' 或更高'}
+            这个版本要求 {wanted}
           </span>
           <Button variant="link" onclick={() => (picking = !picking)}>
             {picking ? '收起' : '改用其他版本'}
