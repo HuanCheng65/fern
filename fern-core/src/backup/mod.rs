@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DataPaths, InstanceProfile,
     backup::{
-        manifest::{FileRecord, GameStamp, Manifest, ModRecord, Reason},
+        manifest::{About, FileRecord, GameStamp, Manifest, ModRecord, Reason},
         select::Skipped,
         store::Store,
     },
@@ -66,6 +66,10 @@ pub struct Snapshot {
     pub taken_at: u64,
     /// 文案 id 的后半段，`manual`、`before-mod-change` 之类。句子在界面里。
     pub reason: String,
+    /// 触发它的那件事（`snapshot.about.<id>` 加参数）。reason 是类别，这个
+    /// 才是身份——「装 Create 之前」。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<About>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub files: usize,
@@ -208,6 +212,7 @@ pub fn take(
     instance_id: &str,
     reason: Reason,
     label: Option<String>,
+    about: Option<About>,
 ) -> Result<Snapshot> {
     let (profile, directory) = situate(paths, instance_id)?;
     if let Some(occupant) = running::occupant(&directory) {
@@ -298,6 +303,7 @@ pub fn take(
         game_directory: directory,
         taken_at,
         reason,
+        about,
         label,
         game: stamp(&profile),
         mods,
@@ -371,6 +377,7 @@ fn describe(id: &str, manifest: &Manifest) -> Snapshot {
         instance: manifest.instance.clone(),
         taken_at: manifest.taken_at,
         reason: manifest.reason.tag().to_owned(),
+        about: manifest.about.clone(),
         label: manifest.label.clone(),
         files: manifest.files.len(),
         bytes: manifest.bytes(),
@@ -476,7 +483,7 @@ pub fn restore(
 
     // 恢复本身也是一次不可逆操作，所以先替用户拍一张。拍不成就停下——
     // 没有退路的恢复不该开始。
-    let safety = take(paths, instance_id, Reason::BeforeRestore, None)
+    let safety = take(paths, instance_id, Reason::BeforeRestore, None, None)
         .context("恢复前的快照没有拍成，恢复未开始")?;
 
     let sha1s: HashMap<&str, &str> = manifest
@@ -667,21 +674,31 @@ pub fn prune(paths: &DataPaths, instance_id: &str) -> Result<Vec<String>> {
 ///
 /// 这是整个功能里最有价值的那一张：**用户以为自己只是装了个模组**，而这是一次
 /// 会破坏存档的操作（§1）。所以不问，直接拍。
-pub(crate) fn before_mod_change(paths: &DataPaths, instance_id: &str) {
+pub(crate) fn before_mod_change(paths: &DataPaths, instance_id: &str, about: Option<About>) {
     if recent(
         paths,
         instance_id,
         Some(Reason::BeforeModChange),
         MOD_CHANGE_GRACE,
     ) {
+        // 十分钟内的第一张记的才是这串操作之前的状态，它的事件名也跟着
+        // 第一张走——「装 Create 之前」顺手又装了两个前置，仍然是那一张。
         return;
     }
-    quietly(paths, instance_id, Reason::BeforeModChange);
+    quietly_about(paths, instance_id, Reason::BeforeModChange, about);
 }
 
 /// 游戏正常退出之后。此时文件没被占用，而且这一次的成果就在那里。
-pub(crate) fn after_session(paths: &DataPaths, instance_id: &str) {
-    quietly(paths, instance_id, Reason::AfterSession);
+///
+/// `minutes` 是这一场玩了多久——「游玩 3 小时之后」比「游戏结束之后」更像
+/// 用户记忆里的那个锚点。
+pub(crate) fn after_session(paths: &DataPaths, instance_id: &str, minutes: u64) {
+    quietly_about(
+        paths,
+        instance_id,
+        Reason::AfterSession,
+        Some(About::new("session").with("minutes", minutes.to_string())),
+    );
 }
 
 /// 这次启动之前该不该拍一张。
@@ -693,7 +710,11 @@ pub(crate) fn due_before_launch(paths: &DataPaths, instance_id: &str) -> bool {
 }
 
 pub(crate) fn quietly(paths: &DataPaths, instance_id: &str, reason: Reason) {
-    if let Err(error) = take(paths, instance_id, reason, None) {
+    quietly_about(paths, instance_id, reason, None);
+}
+
+fn quietly_about(paths: &DataPaths, instance_id: &str, reason: Reason, about: Option<About>) {
+    if let Err(error) = take(paths, instance_id, reason, None, about) {
         let _ = paths.append_log(&format!(
             "snapshot {} for {instance_id} skipped: {error:#}",
             reason.tag()

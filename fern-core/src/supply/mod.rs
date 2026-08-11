@@ -770,17 +770,29 @@ pub async fn install(
         .ok_or_else(|| anyhow!("整合包要用来新建实例，不能装进已有的实例"))?;
     // 装到这个实例真正的游戏目录里去——外部实例的那个在别人的目录树下。
     let profile = crate::read_instance(paths, instance_id)?;
-    if kind == ResourceKind::Mod {
-        // 改模组之前先拍一张。用户以为自己只是装了个模组，而这一步可能让
-        // 存档打不开（docs/fern-backup-design.md §1）。
-        crate::backup::before_mod_change(paths, instance_id);
-    }
     let directory = crate::instance::paths_for(paths, &profile)
         .game_directory(instance_id)
         .join(subdirectory);
     tokio::fs::create_dir_all(&directory).await?;
 
     let plan = plan::resolve(paths, instance_id, version_id, kind).await?;
+    if kind == ResourceKind::Mod {
+        // 改模组之前先拍一张。用户以为自己只是装了个模组，而这一步可能让
+        // 存档打不开（docs/fern-backup-design.md §1）。放在解析计划之后、
+        // 写盘之前：解析是只读的，而它知道装的叫什么名字——快照因此记得住
+        // 「装 Create 之前」，而不只是「改动模组之前」。
+        let name = plan
+            .files
+            .iter()
+            .find(|file| file.primary)
+            .or(plan.files.first())
+            .map(|file| file.title.clone());
+        crate::backup::before_mod_change(
+            paths,
+            instance_id,
+            name.map(|name| crate::backup::manifest::About::new("install").with("name", name)),
+        );
+    }
     if let Some(missing) = plan.requirements.iter().find(|item| {
         item.kind == plan::DependencyKind::Required
             && item.state == plan::RequirementState::Unavailable

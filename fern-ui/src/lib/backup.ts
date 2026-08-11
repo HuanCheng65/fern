@@ -24,6 +24,8 @@ export interface Snapshot {
   takenAt: number
   /** `manual`、`before-mod-change`……句子在文案表里。 */
   reason: string
+  /** 触发它的那件事（`snapshot.about.<id>` 加参数）。reason 是类别，这个才是身份。 */
+  about?: { id: string; params?: Record<string, string> }
   /** 用户起的名字。有名字的永久保留。 */
   label?: string
   files: number
@@ -145,8 +147,29 @@ export const exportMrpack = (
 export const exportInventory = (instanceId: string) =>
   invoke<ExportInventory>('export_inventory', { instanceId })
 
-/** 这一张为什么在这里。 */
-export const why = (snapshot: Snapshot) => describe(`snapshot.${snapshot.reason}`)
+/** 「2 小时 40 分钟」。给「游玩 {duration}之后」那句用。 */
+function durationText(minutes: number): string {
+  if (!Number.isFinite(minutes) || minutes < 1) return '片刻'
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest > 0 ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`
+}
+
+/**
+ * 这一张为什么在这里。
+ *
+ * 标题优先说触发它的那件事（「安装 Create 之前」），说不出才退回类别名
+ * （「改动模组之前」）；说明始终用类别的那句——事件不需要再被解释一遍。
+ */
+export function why(snapshot: Snapshot) {
+  const category = describe(`snapshot.${snapshot.reason}`)
+  if (!snapshot.about) return category
+  const params = { ...(snapshot.about.params ?? {}) }
+  if (params.minutes !== undefined) params.duration = durationText(Number(params.minutes))
+  const event = describe(`snapshot.about.${snapshot.about.id}`, params)
+  return { title: event.title, detail: category.detail }
+}
 
 /** 某一项为什么没进快照。 */
 export const whySkipped = (skipped: Skipped) => describe(`snapshot.skipped.${skipped.reason}`)

@@ -232,6 +232,14 @@ const backend = {
     title: '恢复之前',
     detail: '恢复其他快照前自动拍下，用来撤销那次恢复。',
   },
+  // 触发快照的那件事。类别（上面五条）回答「哪一类时刻」，这里回答「那一次
+  // 是什么」——列表行的标题优先用这几句，人找快照找的是事件，不是类别。
+  'snapshot.about.install': { title: '安装 {name} 之前', detail: '' },
+  'snapshot.about.remove': { title: '删除 {name} 之前', detail: '' },
+  'snapshot.about.enable': { title: '启用 {name} 之前', detail: '' },
+  'snapshot.about.disable': { title: '停用 {name} 之前', detail: '' },
+  'snapshot.about.session': { title: '游玩 {duration}之后', detail: '' },
+
   'snapshot.skipped.too-large': {
     title: '文件过大',
     detail: '单个文件超过 512 MB，未纳入快照。',

@@ -907,7 +907,7 @@ mod tests {
         let path = game.join("mods/sodium.jar");
         jar(&path, "0.6.13", "");
         adopt(&paths, &id);
-        let wanted = crate::take_snapshot(&paths, &id, crate::SnapshotReason::Manual, None)
+        let wanted = crate::take_snapshot(&paths, &id, crate::SnapshotReason::Manual, None, None)
             .expect("snapshot");
 
         // 改动的修改时间必须晚于快照，否则挑不到它。

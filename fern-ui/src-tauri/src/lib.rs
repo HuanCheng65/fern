@@ -668,6 +668,7 @@ async fn take_snapshot(
             &instance_id,
             fern_core::SnapshotReason::Manual,
             label.filter(|text| !text.trim().is_empty()),
+            None,
         )
         .map_err(|error| format!("{error:#}"))
     })

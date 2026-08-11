@@ -50,8 +50,14 @@ fn a_snapshot_records_what_matters_and_says_what_it_skipped() {
     put(&paths, "logs/latest.log", b"noise");
     put(&paths, "journeymap/tiles/x", b"cache");
 
-    let snapshot =
-        take(&paths, "moss", Reason::Manual, Some("第一张".to_owned())).expect("take snapshot");
+    let snapshot = take(
+        &paths,
+        "moss",
+        Reason::Manual,
+        Some("第一张".to_owned()),
+        None,
+    )
+    .expect("take snapshot");
     assert_eq!(snapshot.files, 5);
     assert_eq!(snapshot.mods, 1);
     assert_eq!(snapshot.saves, vec!["家".to_owned()]);
@@ -106,17 +112,17 @@ fn unchanged_files_are_not_read_again() {
     let region = put(&paths, "saves/家/region/r.0.0.mca", &[1u8; 4096]);
     set_mtime(&region, 1_700_000_000);
 
-    let first = take(&paths, "moss", Reason::Manual, None).expect("first");
+    let first = take(&paths, "moss", Reason::Manual, None, None).expect("first");
     let original = chunk_of(&paths, &first.id, "r.0.0.mca");
 
     fs::write(&region, [2u8; 4096]).expect("rewrite");
     set_mtime(&region, 1_700_000_000);
-    let second = take(&paths, "moss", Reason::Manual, None).expect("second");
+    let second = take(&paths, "moss", Reason::Manual, None, None).expect("second");
     assert_eq!(chunk_of(&paths, &second.id, "r.0.0.mca"), original);
 
     // mtime 一变就必须重新读，于是换一个 id。
     set_mtime(&region, 1_700_000_600);
-    let third = take(&paths, "moss", Reason::Manual, None).expect("third");
+    let third = take(&paths, "moss", Reason::Manual, None, None).expect("third");
     assert_ne!(chunk_of(&paths, &third.id, "r.0.0.mca"), original);
 
     fs::remove_dir_all(root).expect("clean up");
@@ -130,7 +136,7 @@ fn restoring_one_world_leaves_the_rest_alone() {
     put(&paths, "saves/别处/level.dat", b"untouched");
     put(&paths, "config/create.toml", b"old config");
 
-    let snapshot = take(&paths, "moss", Reason::Manual, None).expect("take");
+    let snapshot = take(&paths, "moss", Reason::Manual, None, None).expect("take");
 
     put(&paths, "saves/家/level.dat", b"today");
     put(&paths, "saves/家/region/new.mca", b"generated today");
@@ -175,7 +181,7 @@ fn a_world_can_be_restored_beside_the_current_one() {
     let root = scratch("restore-copy");
     let paths = instance(&root);
     put(&paths, "saves/家/level.dat", b"yesterday");
-    let snapshot = take(&paths, "moss", Reason::Manual, None).expect("take");
+    let snapshot = take(&paths, "moss", Reason::Manual, None, None).expect("take");
     put(&paths, "saves/家/level.dat", b"today");
 
     let restored = restore(
@@ -231,7 +237,7 @@ fn a_missing_object_is_reported_and_the_rest_still_lands() {
     let paths = instance(&root);
     put(&paths, "config/a.toml", b"first");
     put(&paths, "config/b.toml", b"second");
-    let snapshot = take(&paths, "moss", Reason::Manual, None).expect("take");
+    let snapshot = take(&paths, "moss", Reason::Manual, None, None).expect("take");
 
     let backups = super::root(&paths);
     let manifest = manifest::read(&manifest::path(&backups, "moss", &snapshot.id).expect("path"))
@@ -282,10 +288,10 @@ fn deleting_a_snapshot_frees_only_what_nothing_else_uses() {
     let paths = instance(&root);
     put(&paths, "config/shared.toml", b"in both snapshots");
     put(&paths, "config/only-first.toml", b"about to be deleted");
-    let first = take(&paths, "moss", Reason::Manual, None).expect("first");
+    let first = take(&paths, "moss", Reason::Manual, None, None).expect("first");
 
     fs::remove_file(paths.game_directory("moss").join("config/only-first.toml")).expect("remove");
-    take(&paths, "moss", Reason::Manual, None).expect("second");
+    take(&paths, "moss", Reason::Manual, None, None).expect("second");
 
     remove(&paths, "moss", &first.id).expect("remove snapshot");
     // 宽限期挡着新对象，所以这一次什么都收不掉——这是对的：正在写入的那一批
@@ -311,8 +317,8 @@ fn usage_counts_shared_content_once() {
     let paths = instance(&root);
     put(&paths, "mods/create.jar", &[9u8; 2048]);
     put(&paths, "config/a.toml", b"x");
-    take(&paths, "moss", Reason::Manual, None).expect("take");
-    take(&paths, "moss", Reason::Manual, None).expect("take again");
+    take(&paths, "moss", Reason::Manual, None, None).expect("take");
+    take(&paths, "moss", Reason::Manual, None, None).expect("take again");
 
     let usage = usage(&paths).expect("usage");
     assert_eq!(usage.snapshots, 2);
@@ -336,10 +342,10 @@ fn taking_a_snapshot_while_the_game_runs_is_refused() {
     let directory = paths.game_directory("moss");
 
     let guard = running::testing::occupy("moss", &directory);
-    assert!(take(&paths, "moss", Reason::Manual, None).is_err());
+    assert!(take(&paths, "moss", Reason::Manual, None, None).is_err());
     drop(guard);
 
-    assert!(take(&paths, "moss", Reason::Manual, None).is_ok());
+    assert!(take(&paths, "moss", Reason::Manual, None, None).is_ok());
     fs::remove_dir_all(root).expect("clean up");
 }
 
@@ -350,9 +356,9 @@ fn repeated_mod_changes_share_one_snapshot() {
     let paths = instance(&root);
     put(&paths, "mods/a.jar", b"one");
 
-    before_mod_change(&paths, "moss");
-    before_mod_change(&paths, "moss");
-    before_mod_change(&paths, "moss");
+    before_mod_change(&paths, "moss", None);
+    before_mod_change(&paths, "moss", None);
+    before_mod_change(&paths, "moss", None);
     assert_eq!(list(&paths, "moss").expect("list").len(), 1);
 
     fs::remove_dir_all(root).expect("clean up");
@@ -386,6 +392,7 @@ fn the_interface_sees_the_field_names_it_expects() {
         instance: "moss".to_owned(),
         taken_at: 1_786_152_000,
         reason: Reason::BeforeModChange.tag().to_owned(),
+        about: Some(manifest::About::new("install").with("name", "Create")),
         label: None,
         files: 3,
         bytes: 4096,
@@ -406,6 +413,9 @@ fn the_interface_sees_the_field_names_it_expects() {
     assert_eq!(json["takenAt"], 1_786_152_000_u64);
     assert_eq!(json["reason"], "before-mod-change");
     assert_eq!(json["loaderVersion"], "21.1.77");
+    // 事件上下文的形状：界面按 snapshot.about.<id> 查文案表。
+    assert_eq!(json["about"]["id"], "install");
+    assert_eq!(json["about"]["params"]["name"], "Create");
     assert_eq!(json["skipped"][0]["reason"], "transient");
 
     let restored = serde_json::to_value(Restored {
@@ -465,7 +475,7 @@ fn an_automatic_snapshot_prunes_the_expired_ones_behind_it() {
     let mut backdated = Vec::new();
     for (offset, body) in [(40u64, b"day one"), (39, b"day two")] {
         put(&paths, "saves/家/level.dat", body);
-        let snapshot = take(&paths, "moss", Reason::AfterSession, None).expect("take");
+        let snapshot = take(&paths, "moss", Reason::AfterSession, None, None).expect("take");
         let path = manifest::path(&backups, "moss", &snapshot.id).expect("path");
         let mut manifest = manifest::read(&path).expect("read");
         manifest.taken_at = now() - offset * 86_400;
@@ -499,7 +509,14 @@ fn deleting_an_instance_forgets_its_snapshots() {
     let root = scratch("forget");
     let paths = instance(&root);
     put(&paths, "saves/家/level.dat", b"a world");
-    take(&paths, "moss", Reason::Manual, Some("留念".to_owned())).expect("take");
+    take(
+        &paths,
+        "moss",
+        Reason::Manual,
+        Some("留念".to_owned()),
+        None,
+    )
+    .expect("take");
     assert_eq!(usage(&paths).expect("usage").instances.len(), 1);
 
     crate::delete_instance(&paths, "moss").expect("delete instance");

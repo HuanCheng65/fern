@@ -13,6 +13,7 @@
 //! 清单是 gzip 过的 JSON：一万个文件的清单纯文本有几 MB，压完不到十分之一，
 //! 而它每拍一张就要写一份。
 
+use std::collections::BTreeMap;
 use std::{
     collections::HashSet,
     fs::{self, File},
@@ -127,6 +128,36 @@ pub struct ModRecord {
     pub sha1: String,
 }
 
+/// 触发这张快照的那件事的具体所指。
+///
+/// `reason` 回答「哪一类时刻」（改模组之前），这里回答「那一次是什么」
+/// （装 Create 之前）。人找快照找的是事件，不是类别——一列相同的类别名
+/// 只能靠时间戳区分。`id` 是文案 id 的后半段（`snapshot.about.<id>`），
+/// 句子在界面的文案表里。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct About {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, String>,
+}
+
+impl About {
+    pub fn new(id: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            params: BTreeMap::new(),
+        }
+    }
+
+    pub fn with(mut self, key: &str, value: impl Into<String>) -> Self {
+        self.params.insert(key.to_owned(), value.into());
+        self
+    }
+}
+
+/// About 会用到的全部 id。进 `message_ids()` 的契约，文案表少一条是编译错误。
+pub const ABOUT_IDS: &[&str] = &["disable", "enable", "install", "remove", "session"];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -137,6 +168,9 @@ pub struct Manifest {
     pub game_directory: PathBuf,
     pub taken_at: u64,
     pub reason: Reason,
+    /// 触发它的那件事。老清单没有这个字段，读出来就是 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<About>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub game: GameStamp,
@@ -282,6 +316,7 @@ mod tests {
     fn sample() -> Manifest {
         Manifest {
             version: FORMAT,
+            about: None,
             instance: "moss".to_owned(),
             game_directory: PathBuf::from("/tmp/moss/.minecraft"),
             taken_at: 1_786_152_000,

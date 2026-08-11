@@ -54,7 +54,7 @@ pub use backup::export::{
     fernpack as export_fernpack, inventory as export_inventory, mrpack as export_mrpack,
     world as export_world,
 };
-pub use backup::manifest::Reason as SnapshotReason;
+pub use backup::manifest::{About as SnapshotAbout, Reason as SnapshotReason};
 pub use backup::select::{SkipReason, Skipped};
 pub use backup::{
     InstanceUsage, Missing, Mode as RestoreMode, Restored, Scope as RestoreScope, Snapshot, Usage,
@@ -169,6 +169,11 @@ pub fn message_ids() -> Vec<String> {
             instance::integrity::kind::ALL
                 .iter()
                 .map(|kind| format!("integrity.{kind}")),
+        )
+        .chain(
+            backup::manifest::ABOUT_IDS
+                .iter()
+                .map(|id| format!("snapshot.about.{id}")),
         )
         .chain(job::TEXT_IDS.iter().map(|id| (*id).to_owned()))
         .collect();

@@ -664,7 +664,11 @@ pub async fn launch_instance(
         // 崩了的那一次不拍：拍到的可能是一个写到一半的世界，而这恰恰是最需要
         // 「上一张还好着的快照」的时刻——不能让一张坏的把它挤下去。
         if exit_code == Some(0) {
-            crate::backup::after_session(&snapshot_paths, &wait_instance);
+            let minutes = started_at
+                .elapsed()
+                .map(|elapsed| elapsed.as_secs() / 60)
+                .unwrap_or(0);
+            crate::backup::after_session(&snapshot_paths, &wait_instance, minutes);
         }
 
         // 对一次账，**不管这一次是怎么结束的**。
