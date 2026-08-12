@@ -419,11 +419,21 @@ fn describe_failures(failures: &[Failure]) -> String {
     lines.join("；")
 }
 
+/// 全局同时开几个文件。
+///
+/// 一条线上的每个调用点都从同一个客户端分出去，所以这个数是**整台机器上真正
+/// 同时开着的连接数**，不是某一处的上限。以前它是十几个各写各的常量：补全游戏
+/// 文件 64、准备 Java 64，两条并排跑，加起来 128，谁也没打算要这个数。
+const GLOBAL_CONCURRENCY: usize = 64;
+
 #[derive(Clone)]
 pub struct DownloadClient {
     client: reqwest::Client,
     sources: Vec<Arc<dyn DownloadSource>>,
+    /// 全局闸门，所有分支共用一个。
     semaphore: Arc<Semaphore>,
+    /// 这一支自己的上限，比全局更紧。见 [`Self::lane`]。
+    lane: Option<Arc<Semaphore>>,
     health: Arc<SourceHealth>,
     /// 验过的文件。默认是关着的一本空账，[`Self::with_verified`] 才给它落盘位置。
     verified: Arc<Verified>,
@@ -450,9 +460,31 @@ impl DownloadClient {
                 sources
             },
             semaphore: Arc::new(Semaphore::new(concurrency.max(1))),
+            lane: None,
             health: Arc::new(SourceHealth::default()),
             verified: Arc::new(Verified::default()),
             recheck: false,
+        }
+    }
+
+    /// 全进程共用的那一个。
+    ///
+    /// 连接池、源健康度、全局闸门都在这里，所以每一处调用都从它分支出去，
+    /// 而不是各建各的：各建各的意味着每个阶段重新握一遍 TLS，也意味着没有
+    /// 任何地方回答得了「现在一共开着多少条」。
+    pub fn shared(sources: Vec<Arc<dyn DownloadSource>>) -> Self {
+        Self::new(sources, GLOBAL_CONCURRENCY)
+    }
+
+    /// 分出一支，最多同时开 `concurrency` 个文件。
+    ///
+    /// 共用连接池、源健康度和账本，只是自己再紧一道：元数据那种「顺带一两个
+    /// 请求」的活不该在补全整个实例的时候抢满全局配额。全局闸门仍然在外面，
+    /// 各支加起来也超不过它。
+    pub fn lane(&self, concurrency: usize) -> Self {
+        Self {
+            lane: Some(Arc::new(Semaphore::new(concurrency.max(1)))),
+            ..self.clone()
         }
     }
 
@@ -717,6 +749,16 @@ impl DownloadClient {
         progress: &BatchProgress,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> std::result::Result<(), Refusal> {
+        // 先过自己那一支，再过全局。反过来的话，一支拿满了全局配额却卡在自己
+        // 的上限上，那些握着全局名额的任务什么也没干，别的支一个也进不来。
+        let _lane = match &self.lane {
+            Some(lane) => Some(
+                lane.acquire()
+                    .await
+                    .map_err(|error| Refusal::fatal(format!("下载信号量已关闭：{error}")))?,
+            ),
+            None => None,
+        };
         let _permit = self
             .semaphore
             .acquire()
@@ -1200,6 +1242,99 @@ mod tests {
             }
         });
         Url::parse(&format!("http://{address}/client.jar")).expect("server url")
+    }
+
+    /// 一个会记下「同时有几个请求压在身上」的服务器。
+    ///
+    /// 每个请求先压住 60ms 再答，不然并发根本来不及重叠，量出来的峰值只会是 1。
+    async fn counting_server(body: &'static [u8]) -> (Url, Arc<AtomicU64>) {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let address = listener.local_addr().expect("local address");
+        let peak = Arc::new(AtomicU64::new(0));
+        let reported = peak.clone();
+        tokio::spawn(async move {
+            let live = Arc::new(AtomicU64::new(0));
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let (peak, live) = (peak.clone(), live.clone());
+                tokio::spawn(async move {
+                    let mut buffer = [0u8; 1024];
+                    let _ = stream.read(&mut buffer).await;
+                    let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes()).await;
+                    let _ = stream.write_all(body).await;
+                    let _ = stream.flush().await;
+                    live.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        (
+            Url::parse(&format!("http://{address}/")).expect("server url"),
+            reported,
+        )
+    }
+
+    /// 分支各有各的上限，但全局那道闸在它们外面。
+    ///
+    /// 这正是把十几个各写各的并发数收成一个客户端要换来的东西：以前补全游戏
+    /// 文件 64、准备 Java 64，两条并排跑就是 128，没有任何地方拦得住。
+    #[tokio::test]
+    async fn lanes_are_bounded_by_themselves_and_by_the_shared_limit() {
+        const BODY: &[u8] = b"fern";
+        const SHA1: &str = "654edb122a04602f918500d59b1d6fc37b9d0c01";
+        let root = scratch("lanes");
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+
+        let batch = |base: &Url, tag: &str| {
+            (0..6)
+                .map(|i| {
+                    let name = format!("{tag}{i}");
+                    DownloadTask::new(
+                        root.join(&name),
+                        base.join(&name).expect("task url").as_str(),
+                        SHA1,
+                        BODY.len() as u64,
+                    )
+                    .expect("build task")
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // 两支各允许 4 个，全局只允许 3 个。
+        let (base, peak) = counting_server(BODY).await;
+        let shared = DownloadClient::new(vec![Arc::new(OfficialSource)], 3);
+        let (one, two) = (shared.lane(4), shared.lane(4));
+        let (first, second) = tokio::join!(
+            one.download_all(batch(&base, "a"), &events),
+            two.download_all(batch(&base, "b"), &events),
+        );
+        first.expect("first lane");
+        second.expect("second lane");
+        let peak = peak.load(Ordering::SeqCst);
+        assert!(peak > 1, "该并发的没并发起来，峰值只有 {peak}");
+        assert!(peak <= 3, "两支加起来越过了全局那道闸，峰值到了 {peak}");
+
+        // 反过来，全局宽松而分支收紧时，收紧的那一个说了算。
+        let (base, peak) = counting_server(BODY).await;
+        let shared = DownloadClient::new(vec![Arc::new(OfficialSource)], 16);
+        shared
+            .lane(1)
+            .download_all(batch(&base, "c"), &events)
+            .await
+            .expect("single-file lane");
+        assert_eq!(peak.load(Ordering::SeqCst), 1, "这一支只该一个一个来");
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     fn scratch(name: &str) -> PathBuf {

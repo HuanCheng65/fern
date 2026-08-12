@@ -201,6 +201,20 @@ impl Default for Settings {
 
 static CACHE: RwLock<Option<Settings>> = RwLock::new(None);
 
+/// 设置换过几回。
+///
+/// 有些东西是**按设置配出来的**而不是每次现读的——下载器就是一个：它带着连接池、
+/// 源顺序和全局闸门，全进程共用一个。这个数一变，那份配好的就该重配。
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn generation() -> u64 {
+    GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn bump() {
+    GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// 从磁盘读一份。文件不存在是正常的第一次启动；读坏了也不该让启动器打不开，
 /// 退回默认值，下一次保存会把它写回成能读的样子。
 pub fn load(paths: &DataPaths) -> Settings {
@@ -209,6 +223,7 @@ pub fn load(paths: &DataPaths) -> Settings {
         .and_then(|bytes| serde_json::from_slice::<Settings>(&bytes).ok())
         .unwrap_or_default();
     *CACHE.write().expect("settings cache poisoned") = Some(settings.clone());
+    bump();
     settings
 }
 
@@ -217,6 +232,7 @@ pub fn save(paths: &DataPaths, settings: &Settings) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(settings).context("serialize settings")?;
     fs::write(paths.settings_path(), bytes).context("write settings")?;
     *CACHE.write().expect("settings cache poisoned") = Some(settings.clone());
+    bump();
     // 手动登记的 Java 路径存在设置里，改了设置就可能改了发现结果。
     crate::java::invalidate_discovery();
     Ok(())

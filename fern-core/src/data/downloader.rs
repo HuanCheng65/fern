@@ -3,17 +3,21 @@
 //! 以前每个调用点自己 `DownloadClient::new(source_order(), 某个数)`——十几处，
 //! 每处一个数字，谁也不知道别人那边同时开着几条。真正的问题不在数字选得对不对，
 //! 而在于**没有一个地方能回答「现在一共开着多少条」**：补全游戏文件和准备 Java
-//! 是并排跑的两条线，各自 64，加起来就是 128。
+//! 是并排跑的两条线，各自 64，加起来就是 128。而每处各建一个客户端还意味着
+//! 每个阶段重新握一遍 TLS——连接池是跟着客户端走的。
 //!
-//! 所以入口收到这里。眼下这个函数仍然每次新建一个客户端，只把「验过的文件」
-//! 那本账做成全进程共用一本——两条线各记各的会互相覆盖，而它正是省下每次启动
-//! 重算几百兆哈希的那本账。剩下的（共用连接池、全局并发上限、限速）接着往这里加。
+//! 所以全进程一个客户端，连接池、源健康度、验过的文件、全局闸门都挂在它身上；
+//! 调用点要的那个数字变成从它分出去的一支（[`DownloadClient::lane`]），仍然管着
+//! 「这件事最多同时开几个」，但各支加起来超不过全局那道闸。
+//!
+//! 客户端是按设置配出来的，所以设置一改就得重配。判据是 `settings::generation()`，
+//! 不是逐个字段比对：多配一次的代价只是一个空连接池。
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use fern_download::{DownloadClient, Verified};
 
-use super::settings::source_order;
+use super::settings::{self, source_order};
 use crate::DataPaths;
 
 /// 验过的文件，全进程一本。
@@ -30,9 +34,27 @@ fn ledger() -> Arc<Verified> {
         .clone()
 }
 
-/// 一个下载器，最多同时开 `concurrency` 个文件。
+/// 全进程那一个，按当前设置配好的。
+///
+/// 已经在跑的那些请求还挂在旧的那个上，随它们跑完——正在下载的文件不该因为
+/// 用户在设置里换了下载源就断在半路。
+fn shared() -> DownloadClient {
+    static SHARED: RwLock<Option<(u64, DownloadClient)>> = RwLock::new(None);
+
+    let generation = settings::generation();
+    if let Some((configured, client)) = SHARED.read().expect("downloader poisoned").as_ref()
+        && *configured == generation
+    {
+        return client.clone();
+    }
+    let client = DownloadClient::shared(source_order()).with_verified(ledger());
+    *SHARED.write().expect("downloader poisoned") = Some((generation, client.clone()));
+    client
+}
+
+/// 一支下载器，最多同时开 `concurrency` 个文件。
 pub(crate) fn client(concurrency: usize) -> DownloadClient {
-    DownloadClient::new(source_order(), concurrency).with_verified(ledger())
+    shared().lane(concurrency)
 }
 
 /// 不认账本的那一个。用户点「校验」时用，见 [`DownloadClient::rechecking`]。
