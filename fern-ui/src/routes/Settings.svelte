@@ -33,6 +33,7 @@
   import AboutHero from '../components/AboutHero.svelte'
   import JavaRuntimeProfile from 'fern-kit/parts/JavaRuntimeProfile.svelte'
   import MemoryMeter from 'fern-kit/ui/MemoryMeter.svelte'
+  import Slider from 'fern-kit/ui/Slider.svelte'
   import SettingRow from '../components/SettingRow.svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import { javaLabel, megabytes, type JavaGroup } from 'fern-kit/parts/java'
@@ -238,6 +239,10 @@
   /** 滑杆读的是 GB：内存这件事上没人以 MB 为单位思考。 */
   const gigabytes = (mb: number) => Math.round((mb / GIGABYTE) * 10) / 10
   const ceilingGb = $derived(gigabytes(prefs.game.memoryCeilingMb ?? budget.ceilingMb))
+
+  /** 同时下载数。没设过就是内置默认值，尺上要停在那个数上而不是最左端。 */
+  const DEFAULT_CONCURRENCY = 64
+  const concurrency = $derived(prefs.download.concurrency ?? DEFAULT_CONCURRENCY)
   const custom = $derived(prefs.game.memoryCeilingMb !== null)
   const resolution = $derived(prefs.game.resolution)
 
@@ -994,20 +999,26 @@
           </SettingRow>
 
           <SettingRow id="download/concurrency" found={focused === 'download/concurrency'}>
-            <div class="figure-row">
-              <Input
-                class="figure"
-                type="number"
-                min="1"
-                max="128"
-                aria-label="同时下载数"
-                placeholder="64"
-                value={prefs.download.concurrency ?? ''}
-                oninput={(event) =>
-                  prefs.setDownload({ concurrency: countOrNull(event.currentTarget.value) })}
-              />
-              <span class="t-quiet">个文件</span>
+            <!-- 和内存上限那一行同一个写法：结论在上、尺在下，右边留一个退路。 -->
+            <div class="ceiling-row">
+              <span class="t-mono amount">{concurrency} 个文件</span>
+              <Button
+                variant="link"
+                disabled={prefs.download.concurrency === null}
+                onclick={() => prefs.setDownload({ concurrency: null })}
+              >
+                恢复默认
+              </Button>
             </div>
+            <Slider
+              label="同时下载数"
+              min={1}
+              max={128}
+              page={8}
+              value={concurrency}
+              text={`${concurrency} 个文件`}
+              onchange={(value) => prefs.setDownload({ concurrency: value })}
+            />
           </SettingRow>
 
           <SettingRow id="download/rate-limit" found={focused === 'download/rate-limit'}>

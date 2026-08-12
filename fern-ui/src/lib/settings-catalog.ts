@@ -131,8 +131,9 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   {
     id: 'download/concurrency',
     label: '同时下载数',
-    note: '同时下载的文件数量上限，最多 128。留空使用默认值 64。网络设备承受不住大量连接时可调低。',
+    note: '同时下载的文件数量上限。网络设备承受不住大量连接时可调低。',
     keywords: 'concurrency parallel connections 并发 线程 连接数 同时',
+    stack: true,
   },
   {
     id: 'download/rate-limit',
