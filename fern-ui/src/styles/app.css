@@ -54,7 +54,7 @@ body.frameless {
 }
 
 /*
- * 性能红线：窗口失焦立刻停掉所有动态背景和特效（见 docs/UI_DESIGN.md 八）。
+ * 性能红线：窗口失焦立刻停掉所有动态背景和特效（见 docs/frond-design-system.md）。
  * 用一个 class 统一关，比让每个组件各自监听可靠。
  */
 body.paused *,

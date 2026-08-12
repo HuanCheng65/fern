@@ -74,13 +74,13 @@ print('没注册:', sorted(c-r), '| 没定义:', sorted(r-c))"
 
 ## 设计与文案
 
-约束在 [docs/UI_DESIGN.md](docs/UI_DESIGN.md)，核心链路在
+约束在 [docs/frond-design-system.md](docs/frond-design-system.md)，核心链路在
 [docs/launcher-core-dev.md](docs/launcher-core-dev.md)。几条容易违反的：
 
 - **不编造数据。** 没有数据源就不要在界面上留位置，功能没做就说没做。
-- **`src/styles/tokens.css` 是设计系统的唯一来源**，组件里不写魔数；浮层统一用
-  `Overlay.svelte`。
-- **标志几何是算出来的**（`fern-ui/src/lib/mark.ts`），改了走线跑
+- **`fern-kit/src/styles/` 是设计系统的唯一来源**（尺度在 `scale.css`，配色在
+  `surface-dark.css` 与 `brand.css`），组件里不写魔数；浮层统一用 `ui/Dialog.svelte`。
+- **标志几何是算出来的**（`fern-kit/src/ui/mark.ts`），改了走线跑
   `python3 .github/make-icons.py`，不手工导 PNG。**macOS 是例外**：
   `icons/macos/compiled/` 下的产物要在 macOS 上用 Icon Composer 重新导出。
 - **平台专属的东西不进 `tauri.conf.json`。** `bundle.icon` 安全，`bundle.resources`

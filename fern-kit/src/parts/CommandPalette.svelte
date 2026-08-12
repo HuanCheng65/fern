@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * 命令面板（见 docs/UI_DESIGN.md 五、十四）。
+   * 命令面板（见 docs/frond-design-system.md）。
    *
    * 全局唯一：点实例名呼出的「切换器」和 ⌘K 呼出的面板是同一个东西，区别只是
    * 前者带着一枚锁定实例类型的 chip 进来。下钻（「校验哪个实例」）和预过滤

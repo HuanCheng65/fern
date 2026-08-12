@@ -40,7 +40,7 @@ export interface SettingsRow {
 }
 
 /**
- * 分区按「你为了什么来这一页」切，不按功能模块切（见 docs/UI_DESIGN.md 十三）。
+ * 分区按「你为了什么来这一页」切，不按功能模块切（见 docs/frond-design-system.md）。
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: 'appearance', label: '外观' },

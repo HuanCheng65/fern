@@ -1,5 +1,5 @@
 /**
- * 导航（见 docs/UI_DESIGN.md 四）。
+ * 导航（见 docs/frond-design-system.md）。
  *
  * ## 一个地址，一个栈
  *

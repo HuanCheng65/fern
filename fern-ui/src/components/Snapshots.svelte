@@ -186,7 +186,7 @@
     line-height: 1.6;
   }
 
-  /* 空状态靠排版撑住，不是一行灰字加一个耸肩（见 docs/UI_DESIGN.md 一）。 */
+  /* 空状态靠排版撑住，不是一行灰字加一个耸肩（见 docs/frond-design-system.md）。 */
   .empty {
     max-width: 46ch;
     padding: var(--s6) 0 var(--s7);

@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * 背景层，四层结构（见 docs/UI_DESIGN.md 六）。自下而上：
+   * 背景层，四层结构（见 docs/frond-design-system.md）。自下而上：
    *
    *   背景层  一块 WebGL 画布，场在片元着色器里逐帧实时算
    *   特效层  粒子、视差

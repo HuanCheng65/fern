@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * 顶栏（见 docs/UI_DESIGN.md 四）。
+   * 顶栏（见 docs/frond-design-system.md）。
    *
    * 全应用唯一常驻的 UI，所以它的克制程度直接定义整个产品的气质。坚决单行：
    * 双行意味着导航自成一个区域、有自己的背景，那是网站页头的做法；桌面应用
