@@ -1,7 +1,7 @@
 //! 实例里的存档。
 //!
-//! 只读。删存档这种事交给文件管理器——启动器误删一个世界是不可挽回的，
-//! 而「打开存档目录」已经能满足所有真实需求。
+//! 读，加上一个删——而那个删是**移到系统回收站**（[`trash`]）。真删一个世界
+//! 是不可挽回的，而回收站把这件事变成可挽回的，所以它才敢出现在界面上。
 //!
 //! 显示的是**目录名**，不是 `level.dat` 里的 `LevelName`。两个原因：目录名
 //! 是这个世界在磁盘上的真实身份，而 `LevelName` 允许重名——两个都叫「新的
@@ -14,7 +14,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::DataPaths;
@@ -105,6 +105,33 @@ pub fn list(paths: &DataPaths, instance_id: &str) -> Result<Vec<SaveEntry>> {
     Ok(saves)
 }
 
+/// 把一个存档移到系统回收站。
+///
+/// **不真删。** 一个世界是玩家投入最多的那样东西，而这一屏上「删」和它旁边
+/// 那些只读的动作只差几个像素。移到回收站之后，删错了在文件管理器里就能还
+/// 原，我们不必再为此设计一套自己的撤销。
+///
+/// 回收站用不了（跨文件系统、沙箱里没有权限、系统没有这个概念）就直说，
+/// **不退回 `remove_dir_all`**——那正是这个函数存在的理由。
+pub fn trash(paths: &DataPaths, instance_id: &str, name: &str) -> Result<()> {
+    let scoped = crate::instance::paths_by_id(paths, instance_id);
+    let game_directory = scoped.game_directory(instance_id);
+    // 游戏开着的时候那个世界正被写入。此刻把目录挪走，Unix 上会成功，而游戏
+    // 拿着已经不在原处的文件句柄继续存档，最后两边都不完整。
+    if crate::launch::running::occupant(&game_directory).is_some() {
+        return Err(anyhow!("这个实例正在运行，先结束它"));
+    }
+    let root = game_directory.join("saves");
+    // 名字来自界面，但界面上的列表来自磁盘——即便如此也过一遍关口，路径拼接
+    // 只要有一处不过就够了。
+    let path = fern_download::safe_join(&root, Path::new(name))?;
+    if !path.join("level.dat").is_file() {
+        return Err(anyhow!("{name} 不是这个实例里的存档"));
+    }
+    trash::delete(&path).with_context(|| format!("把 {name} 移到回收站"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +167,26 @@ mod tests {
         assert_eq!(listed[0].name, "world");
         // 3 字节的 level.dat 加 512 字节的区块。
         assert_eq!(listed[0].bytes, 515);
+
+        fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    /// 删之前的两道关口都不许放行——它们后面那一步会真的动文件。
+    #[test]
+    fn only_a_real_world_inside_this_instance_can_be_trashed() {
+        let root = temp_root("trash-guard");
+        let paths = DataPaths::new(&root);
+        let saves = paths.game_directory("moss").join("saves");
+        fs::create_dir_all(saves.join("backup")).expect("create backup");
+        fs::write(saves.join("backup/readme.txt"), b"x").expect("readme");
+
+        // 没有 level.dat 的目录不是世界。
+        assert!(trash(&paths, "moss", "backup").is_err());
+        // 名字里带路径的，一律拦在 safe_join 上。
+        assert!(trash(&paths, "moss", "../mods").is_err());
+        assert!(trash(&paths, "moss", "/etc").is_err());
+        // 一个字节都没动过。
+        assert!(saves.join("backup/readme.txt").is_file());
 
         fs::remove_dir_all(root).expect("remove test root");
     }

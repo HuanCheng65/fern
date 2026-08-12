@@ -2,21 +2,28 @@
   /**
    * 实例里的存档。
    *
-   * 只读。删一个世界是不可挽回的，而「打开存档目录」已经能满足所有真实
-   * 需求——文件管理器里删，至少还有回收站。
+   * 三个动作长在行上：进入、导出、删除。
+   *
+   * 「进入」是这一屏最该有的那一个——人在这里盯着的就是那个世界的名字，而
+   * 游戏本来就支持直接进去（quickPlay），此前只有命令面板用得上它。
+   *
+   * 「删除」移到系统回收站，不真删：一个世界是玩家投入最多的东西，而它旁边
+   * 那两个动作都是无害的。移到回收站之后，删错了在文件管理器里就能还原。
    *
    * 显示的是目录名而不是世界名：目录名是它在磁盘上的真实身份，两个都叫
    * 「新的世界」的存档在列表里长得一模一样反而认不出来。
    */
   import { invoke } from '@tauri-apps/api/core'
   import { save as pickPath } from '@tauri-apps/plugin-dialog'
-  import { FolderOpen } from 'lucide-svelte'
+  import { FolderOpen, Play } from 'lucide-svelte'
   import Loading from './Loading.svelte'
   import { inTauri } from '../lib/instances.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
+  import { launch } from '../lib/launch.svelte'
   import { notices } from '../lib/notices.svelte'
   import { exportWorld, fileStem } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
+  import Dialog from 'fern-kit/ui/Dialog.svelte'
 
   interface SaveEntry {
     name: string
@@ -85,6 +92,38 @@
       exporting = ''
     }
   }
+
+  /**
+   * 直接进这个世界。
+   *
+   * 走的是启动那条正路，只是多带一个参数——所以补全、预检查、账户这些一样
+   * 会发生，界面上也是同一套进度。
+   */
+  function enter(name: string) {
+    void launch.launch(instanceId, { world: name })
+  }
+
+  /** 正在问「要删吗」的那个世界。空字符串是没在问。 */
+  let removing = $state('')
+  let trashing = $state(false)
+
+  async function trash() {
+    const name = removing
+    trashing = true
+    try {
+      await invoke('trash_save', { instanceId, save: name })
+      error = ''
+      removing = ''
+      notices.say({ title: `已删除「${name}」`, detail: '文件在系统回收站中，可以还原。' })
+      await load()
+    } catch (cause) {
+      // 回收站用不上时（跨文件系统、沙箱里没有权限）后端会直说，不会退回真删。
+      error = String(cause)
+      removing = ''
+    } finally {
+      trashing = false
+    }
+  }
 </script>
 
 <section class="saves">
@@ -109,13 +148,21 @@
           <span class="name">{item.name}</span>
           <span class="t-mono when">{day(item.modified)}</span>
           <span class="t-mono size">{formatBytes(item.bytes)}</span>
-          <Button
-            variant="link"
-            class="share"
-            disabled={exporting !== ''}
-            onclick={() => void shareWorld(item.name)}>
-            {exporting === item.name ? '导出中' : '导出'}
-          </Button>
+          <span class="acts" class:busy={exporting === item.name}>
+            <Button
+              variant="link"
+              disabled={launch.occupied(instanceId)}
+              onclick={() => enter(item.name)}>
+              <Play size={12} fill="currentColor" strokeWidth={0} />进入
+            </Button>
+            <Button
+              variant="link"
+              disabled={exporting !== ''}
+              onclick={() => void shareWorld(item.name)}>
+              {exporting === item.name ? '导出中' : '导出'}
+            </Button>
+            <Button variant="link" tone="quiet" onclick={() => (removing = item.name)}>删除</Button>
+          </span>
         </li>
       {/each}
     </ul>
@@ -123,6 +170,21 @@
 
   {#if error}<div class="alert">{error}</div>{/if}
 </section>
+
+{#if removing}
+  <Dialog label="删除存档" width="400px" onclose={() => (removing = '')}>
+    <div class="ask">
+      <h2>删除「{removing}」</h2>
+      <p>这个世界将被移到系统回收站，可以在文件管理器中还原。</p>
+      <div class="ask-acts">
+        <Button variant="ghost" onclick={() => (removing = '')}>取消</Button>
+        <Button variant="primary" loading={trashing} onclick={() => void trash()}>
+          移到回收站
+        </Button>
+      </div>
+    </div>
+  </Dialog>
+{/if}
 
 <style>
   .head {
@@ -190,19 +252,49 @@
     text-align: right;
   }
 
-  /* 一行一个动作，平时收着——列表是用来认出那个世界的，不是一排按钮。 */
-  /* 布局归调用方，但 Svelte 的作用域样式进不了组件，所以罩一层自己的祖先。 */
-  .row :global(.share) {
+  /* 动作平时收着——列表是用来认出那个世界的，不是一排按钮。 */
+  .acts {
+    display: flex;
     flex: none;
-    width: 4ch;
+    align-items: center;
+    gap: var(--s3);
     opacity: 0;
     transition: opacity var(--t-fast) var(--ease);
   }
 
-  .row:hover :global(.share),
-  .row :global(.share:focus-visible),
-  .row :global(.share:disabled) {
+  .row:hover .acts,
+  .acts:focus-within,
+  /* 正在导出的那一行始终露着：鼠标移开不该让「导出中」跟着消失。 */
+  .acts.busy {
     opacity: 1;
+  }
+
+  .ask {
+    display: grid;
+    gap: var(--s3);
+    padding: var(--s5);
+  }
+
+  .ask h2 {
+    margin: 0;
+    color: var(--ink);
+    font-size: var(--t-h3);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  .ask p {
+    margin: 0;
+    color: var(--ink-3);
+    font-size: var(--t-body);
+    line-height: 1.6;
+  }
+
+  .ask-acts {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s3);
+    margin-top: var(--s2);
   }
 
   .alert {

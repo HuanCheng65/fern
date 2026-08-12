@@ -28,6 +28,7 @@ tokio.workspace = true
 zip.workspace = true
 regex.workspace = true
 toml.workspace = true
+trash.workspace = true
 
 # 只为设置游戏进程的 nice 值。Windows 那边用 std 的 creation_flags，不需要它。
 [target.'cfg(unix)'.dependencies]

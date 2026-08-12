@@ -108,7 +108,9 @@ pub use instance::prism::{
     PrismInstance, import as import_prism_instance, looks_like_one as is_prism_instance,
     read as read_prism_instance,
 };
-pub use instance::saves::{SaveEntry, list as list_saves, names as save_names};
+pub use instance::saves::{
+    SaveEntry, list as list_saves, names as save_names, trash as trash_save,
+};
 pub use instance::servers::{ServerEntry, list as list_servers};
 pub use instance::{
     Component, CoverSeed, GarbageCollector, InstanceId, InstanceProfile, InstanceSettings,

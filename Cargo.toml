@@ -37,6 +37,10 @@ tar = "0.4"
 # 规则表与 Forge 的 mods.toml。后者有 `[[dependencies.x]]` 这样的嵌套表，
 # 手写行解析扛不住。
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
+# 删存档走系统回收站。三个平台各有一套（XDG trash、Finder、资源管理器），
+# 而「删错了还能捞回来」这件事只有系统那一份做得到——自己搬到某个目录里，
+# 用户在文件管理器里是找不到还原按钮的。
+trash = "5.2"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tokio = { version = "1.46.1", features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
