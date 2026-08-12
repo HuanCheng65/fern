@@ -20,13 +20,21 @@ fern-download = { path = "fern-download" }
 fern-meta = { path = "fern-meta" }
 getrandom = "0.3"
 libc = "0.2"
+# Java 运行时清单每个文件都发一份 lzma 变体，体积通常只有原文件的四分之一。
+# 纯 Rust 的解码器，和 `zip` 那条「不为压缩格式拖 C 依赖」的理由是同一条。
+lzma-rs = "0.3"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 md-5 = "0.10.6"
 pearl-core = { git = "https://github.com/HuanCheng65/pearl.git", rev = "15b47647b02f55bcd07365bf90a73256ea825e3a" }
 # `socks` 不是可选的：Clash、v2ray 这类工具在本机开的就是 socks5，而
 # `Proxy::all` 在没有这个 feature 时照样接受 `socks5://` 地址，只在真的发请求时
 # 才失败——设置界面会说地址没问题，下载却一个也下不动。
-reqwest = { version = "0.12.22", default-features = false, features = ["json", "rustls-tls", "socks"] }
+#
+# `http2` 也不是可选的。`default-features = false` 曾经把它一起关掉了，于是
+# 「同时下 64 个文件」在网络上的样子是**同时开 64 条 TCP、握 64 次 TLS**。补全
+# 一个实例要下四千个资源文件，这笔握手钱按连接数收。开了之后几条连接就能跑
+# 几百条流；服务器不支持的话 ALPN 自己会退回 HTTP/1.1，没有需要兜底的分支。
+reqwest = { version = "0.12.22", default-features = false, features = ["http2", "json", "rustls-tls", "socks"] }
 regex = "1.11.1"
 # 版本号要能被反序列化（清单里是字符串），也要能按 SemVer 的规则比大小——
 # 预发布版小于同号正式版这一条，是通道之间不需要额外逻辑的全部原因。

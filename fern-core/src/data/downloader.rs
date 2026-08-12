@@ -15,7 +15,7 @@
 
 use std::sync::{Arc, OnceLock, RwLock};
 
-use fern_download::{DownloadClient, Verified};
+use fern_download::{DownloadClient, LogSink, Verified};
 
 use super::settings::{self, network, source_order};
 use crate::DataPaths;
@@ -34,6 +34,19 @@ fn ledger() -> Arc<Verified> {
         .clone()
 }
 
+/// 每批下完那行账写到 `fern.log` 去。
+///
+/// 「下载很慢」这句报告，光看进度条分不出慢在对账、传输还是一路重试。这一行
+/// 就是为了让下一次「慢」有据可查——它是诊断，写不进去不该影响任何事。
+fn log_sink() -> LogSink {
+    match DataPaths::for_current_user() {
+        Ok(paths) => Arc::new(move |line: &str| {
+            let _ = paths.append_log(line);
+        }),
+        Err(_) => Arc::new(|_: &str| {}),
+    }
+}
+
 /// 全进程那一个，按当前设置配好的。
 ///
 /// 已经在跑的那些请求还挂在旧的那个上，随它们跑完——正在下载的文件不该因为
@@ -47,7 +60,9 @@ fn shared() -> DownloadClient {
     {
         return client.clone();
     }
-    let client = DownloadClient::configured(source_order(), &network()).with_verified(ledger());
+    let client = DownloadClient::configured(source_order(), &network())
+        .with_verified(ledger())
+        .with_log(log_sink());
     *SHARED.write().expect("downloader poisoned") = Some((generation, client.clone()));
     client
 }

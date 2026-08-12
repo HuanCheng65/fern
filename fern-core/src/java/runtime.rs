@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{DownloadEvent, DownloadTask};
+use fern_download::{Codec, DownloadEvent, DownloadTask};
 use serde::Deserialize;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -63,6 +63,15 @@ enum RuntimeFile {
 #[derive(Debug, Deserialize)]
 struct RuntimeDownloads {
     raw: RuntimeArtifact,
+    /// 同一个文件的 lzma 变体。**不是每个文件都有**（java-runtime-gamma 的 133
+    /// 个文件里有 7 个没有），所以这里是 `Option`，没有就照原样下。
+    ///
+    /// 有的那些省得很可观——`lib/server/libjvm.so` 是 23.1 MB 对 5.3 MB。整体
+    /// 省不到那么多，因为最大的 `lib/modules`（55.5 MB）恰恰是没有变体的那个：
+    /// 它本身就是压好的 jimage。gamma 全组算下来是 95.2 MB 变 68.2 MB。
+    ///
+    /// `raw` 仍然是这个任务描述的东西：落盘的、校验的、记进账本的都是它。
+    lzma: Option<RuntimeArtifact>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,12 +183,18 @@ pub async fn ensure_java(
                 downloads,
                 executable,
             } => {
-                tasks.push(DownloadTask::new(
+                let mut task = DownloadTask::new(
                     destination.clone(),
                     &downloads.raw.url,
                     &downloads.raw.sha1,
                     downloads.raw.size,
-                )?);
+                )?;
+                // 有压缩变体就走压缩那条线。落盘的仍然是 `raw` 描述的那份，
+                // 而且它的 sha1 在解压之后照验不误。
+                if let Some(lzma) = &downloads.lzma {
+                    task = task.via(Codec::Lzma, &lzma.url, &lzma.sha1, lzma.size)?;
+                }
+                tasks.push(task);
                 if *executable {
                     executables.push(destination);
                 }
@@ -475,6 +490,29 @@ mod tests {
             manifest.files["lib/libjvm.so"],
             RuntimeFile::Link { .. }
         ));
+
+        // 压缩变体要读出来。丢掉它等于让每个用户白下三四倍的字节，而这件事
+        // 编译得过、测试全绿，只有账单上看得见。
+        let RuntimeFile::File { downloads, .. } = &manifest.files["bin/java"] else {
+            panic!("bin/java 该是个文件");
+        };
+        let lzma = downloads.lzma.as_ref().expect("清单里的 lzma 变体");
+        assert_eq!(lzma.url, "https://example.invalid/a");
+        assert_eq!(downloads.raw.url, "https://example.invalid/b");
+
+        // 落盘的仍然是 raw 描述的那一份：压缩只是运输方式。
+        let task = DownloadTask::new(
+            "/fern/bin/java",
+            &downloads.raw.url,
+            &downloads.raw.sha1,
+            downloads.raw.size,
+        )
+        .expect("build task")
+        .via(Codec::Lzma, &lzma.url, &lzma.sha1, lzma.size)
+        .expect("attach the compressed variant");
+        assert_eq!(task.sha1.as_deref(), Some("bb"));
+        assert_eq!(task.size, Some(2));
+        assert_eq!(task.wire.expect("compressed variant").sha1, "aa");
     }
 
     #[test]
