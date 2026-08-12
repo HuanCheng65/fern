@@ -457,8 +457,8 @@
 
             {#if fitting.length === 0}
               <div class="install">
-                <Button variant="ghost" disabled={installing} onclick={() => void installJava()}>
-                  {installing ? '正在下载…' : `下载 Java ${requirement.minimum}`}
+                <Button variant="ghost" loading={installing} onclick={() => void installJava()}>
+                  下载 Java {requirement.minimum}
                 </Button>
               </div>
             {/if}

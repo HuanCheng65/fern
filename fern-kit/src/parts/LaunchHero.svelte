@@ -113,28 +113,23 @@
        存档目录。 -->
   <Button
     variant="primary"
-    class="go {working ? 'busy' : ''}"
+    class="go"
     onclick={() => onlaunch?.()}
+    loading={working}
+    progress={working ? done : undefined}
     disabled={phase !== undefined || jobLabel !== undefined}
   >
-    <span
-      class="fill"
-      class:pulse={working && done === undefined}
-      style:width={done === undefined ? '100%' : `${done * 100}%`}
-    ></span>
-    <span class="go-text">
-      {#if phase === 'running'}
-        游戏运行中
-      {:else if phase === 'starting'}
-        等待游戏窗口
-      {:else if jobLabel}
-        {jobLabel}
-      {:else if working}
-        准备中
-      {:else}
-        <Play size={16} fill="currentColor" strokeWidth={0} />启动游戏
-      {/if}
-    </span>
+    {#if phase === 'running'}
+      游戏运行中
+    {:else if phase === 'starting'}
+      等待游戏窗口
+    {:else if jobLabel}
+      {jobLabel}
+    {:else if working}
+      准备中
+    {:else}
+      <Play size={16} fill="currentColor" strokeWidth={0} />启动游戏
+    {/if}
   </Button>
 
   <!-- 结束只在游戏真的起来之后出现，而且说的是「强制」：这是 kill，没存的进度会丢。
@@ -284,45 +279,10 @@
     margin-top: var(--s5);
   }
 
+  /* 进度长在按钮内部那套画法已经收进 ui/Button.svelte，这里只管它占多大。 */
   .go-row :global(.go) {
-    position: relative;
-    isolation: isolate;
     min-width: 190px;
     min-height: var(--control-lg);
-    overflow: hidden;
-  }
-
-  .go-row :global(.go.busy) {
-    cursor: progress;
-  }
-
-  .fill {
-    position: absolute;
-    inset: 0 auto 0 0;
-    z-index: -1;
-    background: rgba(0, 0, 0, 0.24);
-    transition: width var(--t-slow) var(--ease);
-  }
-
-  /* 进度未知时不停在 0%，让一道暗光自己走一趟。 */
-  .fill.pulse {
-    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.26) 50%, transparent);
-    animation: sweep 1.6s var(--ease) infinite;
-  }
-
-  @keyframes sweep {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(100%);
-    }
-  }
-
-  .go-text {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s2);
   }
 
   /* 不是错误，是一条提醒——所以它安静，但点得开。 */

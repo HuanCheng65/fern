@@ -72,8 +72,8 @@
           取消
         </Button>
       {/if}
-      <Button variant="ghost" disabled={busy} onclick={() => void run()}>
-        {busy ? '处理中' : confirming ? `确认${actionLabel}` : actionLabel}
+      <Button variant="ghost" loading={busy} onclick={() => void run()}>
+        {confirming ? `确认${actionLabel}` : actionLabel}
       </Button>
     </div>
   {/if}

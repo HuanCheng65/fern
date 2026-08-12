@@ -22,6 +22,8 @@
    */
   import type { Snippet } from 'svelte'
   import type { HTMLButtonAttributes } from 'svelte/elements'
+  import Mark from './Mark.svelte'
+  import { host } from '../host.svelte'
 
   interface Props extends HTMLButtonAttributes {
     /** 重量。default 是最轻的那档实体按钮，link 只有一个词。 */
@@ -36,6 +38,20 @@
      * link 上只是 hover 变红（那是**要求确认**的那一颗）。两者重量本来就不同。
      */
     tone?: 'default' | 'quiet' | 'danger'
+    /**
+     * 这颗按钮正在做它那件事。
+     *
+     * 隐含 disabled，但**不改标签**：把「清除」换成「正在清除……」会让按钮当场
+     * 变宽，一排按钮跟着动，而且各处的省略号还各写各的。动的是标志和掠过表面的
+     * 那道光——它们比一句话更能说明「还活着」，也更安静。
+     */
+    loading?: boolean
+    /**
+     * 0–1。给了就是一道跟着走的填充，不给就是一道自己走一趟的扫光。
+     *
+     * 不必和 `loading` 一起给：知道进度本来就意味着在忙。
+     */
+    progress?: number
     /** 布局用。见上面为什么调用方要配 `:global`。 */
     class?: string
     children?: Snippet
@@ -44,15 +60,40 @@
   let {
     variant = 'default',
     tone = 'default',
+    loading = false,
+    progress,
     class: extra = '',
     // HTML 的默认值是 submit，但这套界面里绝大多数按钮不在表单里，
     // 一个漏写 type 的按钮会把最近的表单提交掉。真要提交的地方都显式写了。
     type = 'button',
+    disabled,
     children,
     ...rest
   }: Props = $props()
 
   const solid = $derived(variant === 'default' || variant === 'primary')
+  const working = $derived(loading || progress !== undefined)
+
+  /**
+   * 忙着，而且已经忙了一会儿。
+   *
+   * 拦住点击是立刻的事——连点两下会把同一件事做两遍。**画出来**要等 160ms：
+   * 本地读盘和缓存命中往往几十毫秒就回来了，立刻亮一下再灭掉，那一闪比等待
+   * 本身更烦人。和 Loading 那一处是同一条规矩。
+   */
+  const SETTLE = 160
+  let shown = $state(false)
+  $effect(() => {
+    if (!working) {
+      shown = false
+      return
+    }
+    const timer = setTimeout(() => (shown = true), SETTLE)
+    return () => clearTimeout(timer)
+  })
+
+  /** 标志多大。图标按钮里没有文字，跟着它自己的尺寸走。 */
+  const markSize = $derived(variant === 'link' ? 12 : 14)
 </script>
 
 <!--
@@ -72,8 +113,36 @@
   class:quiet={tone === 'quiet'}
   class:danger-solid={tone === 'danger' && solid}
   class:danger-hover={tone === 'danger' && !solid}
+  class:busy={working}
+  class:shown
+  disabled={disabled || loading}
+  aria-busy={working ? 'true' : undefined}
+  style:--mark="{markSize}px"
   {...rest}
 >
+  <!--
+    进度长在按钮内部，不另起一根条：这件事就是这颗按钮在做，它的位置就该是
+    答案的位置。这套画法原本只长在启动键上（parts/LaunchHero.svelte），现在
+    是所有按钮共有的。
+  -->
+  {#if working}
+    <span
+      class="fill"
+      class:sweep={progress === undefined && host.motionScale > 0}
+      style:width={progress === undefined ? '100%' : `${Math.min(1, Math.max(0, progress)) * 100}%`}
+    ></span>
+  {/if}
+  <!--
+    标志从零宽长出来，而不是「啪」地占一格。间距自己带着走，收起来时一并
+    收掉——`gap` 对零宽的孩子照样生效，不这样处理就会留下一道空隙。
+
+    只在忙的时候才挂上去：标志是 33 个 rect，而这个界面上同时存在几十颗按钮。
+  -->
+  {#if working}
+    <span class="spinner" aria-hidden="true">
+      <Mark size={markSize} spinning={shown} />
+    </span>
+  {/if}
   {@render children?.()}
 </button>
 
@@ -82,7 +151,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--s2);
+    /* 标志收起来时要靠一个负外边距把这道间距抵掉，所以两处必须是同一个数。 */
+    --btn-gap: var(--s2);
+    gap: var(--btn-gap);
     min-height: var(--control);
     padding: 0 var(--s4);
     border-radius: var(--r1);
@@ -115,6 +186,94 @@
   .btn:disabled {
     opacity: 0.4;
     pointer-events: none;
+  }
+
+  /* ── 忙 ── */
+
+  /*
+   * 忙着的按钮不是「不可用」，是「正在做」。压到 0.4 的灰会让它读起来像被
+   * 关掉了，而它恰恰是这一刻唯一在动的东西。
+   */
+  .btn.busy:disabled {
+    opacity: 1;
+    cursor: progress;
+  }
+
+  /* 填充要盖在底色之上、文字之下，所以这一层容器只在忙的时候立起来。 */
+  .btn.busy {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  .fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: -1;
+    /* 实心按钮上压暗，其余的用一层淡色垫底——透明底色上压黑什么也看不见。 */
+    background: var(--tint-2);
+    opacity: 0;
+    transition:
+      width var(--t-slow) var(--ease),
+      opacity var(--t-base) var(--ease);
+  }
+
+  .btn--primary .fill,
+  .danger-solid .fill {
+    background: rgba(0, 0, 0, 0.24);
+  }
+
+  .btn.shown .fill {
+    opacity: 1;
+  }
+
+  /* 进度未知时不停在 0%，让一道暗光自己走一趟。 */
+  .fill.sweep {
+    background: linear-gradient(90deg, transparent, var(--tint-3) 50%, transparent);
+    animation: btn-sweep calc(1600ms * var(--motion, 1)) var(--ease) infinite;
+  }
+
+  .btn--primary .fill.sweep,
+  .danger-solid .fill.sweep {
+    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.26) 50%, transparent);
+  }
+
+  @keyframes btn-sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  /*
+   * 标志占的宽度从 0 长到一格。间距连同宽度一起收，所以不忙的时候它对布局
+   * 完全没有影响——包括那些从来不传 loading 的按钮。
+   */
+  .spinner {
+    display: inline-flex;
+    align-items: center;
+    overflow: hidden;
+    width: 0;
+    margin-right: calc(var(--btn-gap) * -1);
+    opacity: 0;
+    transition:
+      width var(--t-base) var(--ease),
+      margin-right var(--t-base) var(--ease),
+      opacity var(--t-fast) var(--ease);
+  }
+
+  .btn.shown .spinner {
+    width: var(--mark);
+    margin-right: 0;
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fill.sweep {
+      animation: none;
+    }
   }
 
   .btn--primary {
@@ -161,7 +320,7 @@
     padding: 0;
     /* 前导箭头和字要贴得比实体按钮紧。四个调用方各自调过这个数（2/4/6px），
        说明它是系统该回答的，不是每处自己拿捏的。 */
-    gap: var(--s1);
+    --btn-gap: var(--s1);
     font-size: var(--t-small);
     color: var(--accent);
   }

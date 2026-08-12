@@ -236,8 +236,8 @@
 
   <footer>
     <Button variant="ghost" onclick={onclose}>{ui.export.cancel}</Button>
-    <Button variant="primary" disabled={busy} onclick={() => void run()}>
-      {busy ? ui.export.running : ui.export.run}
+    <Button variant="primary" loading={busy} onclick={() => void run()}>
+      {ui.export.run}
     </Button>
   </footer>
 </Dialog>

@@ -391,8 +391,8 @@
           <div class="back">
             <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
           </div>
-          <Button variant="primary" disabled={javaChecking} onclick={submitSource}>
-            {javaChecking ? '检查环境' : '继续'}<ArrowRight size={15} />
+          <Button variant="primary" loading={javaChecking} onclick={submitSource}>
+            继续<ArrowRight size={15} />
           </Button>
         </div>
       {:else if step === 'java'}
@@ -402,8 +402,8 @@
           <div class="back">
             <Button variant="link" tone="quiet" onclick={() => go(-1)}><ArrowLeft size={14} />上一步</Button>
           </div>
-          <Button variant="ghost" disabled={javaChecking} onclick={() => void checkJava()}>
-            {javaChecking ? '检测中' : '重新检测'}
+          <Button variant="ghost" loading={javaChecking} onclick={() => void checkJava()}>
+            重新检测
           </Button>
           <Button variant="primary" onclick={() => go(1)}>稍后处理<ArrowRight size={15} /></Button>
         </div>

@@ -476,7 +476,12 @@
           <Button variant="ghost" onclick={() => (confirming = false)}>
             {ui.snapshot.cancel}
           </Button>
-          <Button tone="danger" disabled={busy !== ''} onclick={() => void remove()}>
+          <Button
+            tone="danger"
+            loading={busy === 'delete'}
+            disabled={busy !== ''}
+            onclick={() => void remove()}
+          >
             {ui.snapshot.deleteConfirm}
           </Button>
         </span>
@@ -493,8 +498,13 @@
     {:else}
       <Button variant="ghost" onclick={() => (view = 'info')}>{ui.snapshot.back}</Button>
       <span class="spacer"></span>
-      <Button variant="primary" disabled={!ready} onclick={() => void restore()}>
-        {busy === 'restore' ? ui.snapshot.restoring : ui.snapshot.restore}
+      <Button
+        variant="primary"
+        loading={busy === 'restore'}
+        disabled={!ready}
+        onclick={() => void restore()}
+      >
+        {ui.snapshot.restore}
       </Button>
     {/if}
   </footer>

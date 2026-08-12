@@ -315,7 +315,7 @@
   {/if}
 
   <div class="picker">
-    <Button variant="ghost" disabled={busy !== ''} onclick={() => void choose()}>
+    <Button variant="ghost" loading={busy === 'scan'} disabled={busy !== ''} onclick={() => void choose()}>
       <FolderOpen size={14} strokeWidth={1.8} />{directory ? '更换目录' : '选择目录'}
     </Button>
     {#if directory}
@@ -387,13 +387,13 @@
 
       {#if standalone}
         <div class="commit">
+          <!-- 进度长在按钮上：数字会让按钮每添一个就变一次宽。 -->
           <Button
             variant="primary"
+            progress={busy === 'add' ? done / Math.max(chosen.length, 1) : undefined}
             disabled={chosen.length === 0 || busy !== ''}
             onclick={() => void add()}>
-            {busy === 'add'
-              ? `正在添加 ${done}/${chosen.length}`
-              : `添加 ${chosen.length} 个${noun}`}
+            添加 {chosen.length} 个{noun}
           </Button>
         </div>
       {/if}

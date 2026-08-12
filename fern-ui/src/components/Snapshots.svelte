@@ -122,9 +122,9 @@
         </small>
       {/if}
     </span>
-    <Button variant="ghost" disabled={taking || running} onclick={() => void take()}>
+    <Button variant="ghost" loading={taking} disabled={running} onclick={() => void take()}>
       <Camera size={14} strokeWidth={1.9} />
-      {taking ? ui.snapshots.taking : ui.snapshots.take}
+      {ui.snapshots.take}
     </Button>
   </div>
 

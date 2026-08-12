@@ -1139,8 +1139,8 @@
                       <Button variant="ghost" disabled={migrating} onclick={() => (migrateTo = '')}>
                         取消
                       </Button>
-                      <Button variant="primary" disabled={migrating} onclick={() => void migrateData()}>
-                        {migrating ? '正在迁移……' : '迁移'}
+                      <Button variant="primary" loading={migrating} onclick={() => void migrateData()}>
+                        迁移
                       </Button>
                     </div>
                   </div>
@@ -1263,10 +1263,11 @@
                           <Button variant="ghost" onclick={() => (expanded = '')}>取消</Button>
                           <Button
                             variant="primary"
+                            loading={storageBusy === 'shared'}
                             disabled={sharedPicked === 0 || storageBusy !== ''}
                             onclick={() => void applySlim('shared')}
                           >
-                            {storageBusy === 'shared' ? '正在清除……' : '清除'}
+                            清除
                           </Button>
                         </div>
                       </div>
@@ -1299,10 +1300,11 @@
                           <Button variant="ghost" onclick={() => (expanded = '')}>取消</Button>
                           <Button
                             variant="primary"
+                            loading={storageBusy === 'java'}
                             disabled={storageBusy !== ''}
                             onclick={() => void applySlim('java')}
                           >
-                            {storageBusy === 'java' ? '正在清除……' : '清除'}
+                            清除
                           </Button>
                         </div>
                       </div>
@@ -1319,10 +1321,11 @@
                     {#if storage.cache > 0}
                       <Button
                         variant="link"
+                        loading={storageBusy === 'cache'}
                         disabled={storageBusy !== ''}
                         onclick={() => void clean('cache')}
                       >
-                        {storageBusy === 'cache' ? '正在清除……' : '清除'}
+                        清除
                       </Button>
                     {:else if freed.cache}
                       <span class="t-quiet freed-note">{freed.cache}</span>
@@ -1338,10 +1341,11 @@
                     {#if storage.logs > 0}
                       <Button
                         variant="link"
+                        loading={storageBusy === 'logs'}
                         disabled={storageBusy !== ''}
                         onclick={() => void clean('logs')}
                       >
-                        {storageBusy === 'logs' ? '正在清除……' : '清除'}
+                        清除
                       </Button>
                     {:else if freed.logs}
                       <span class="t-quiet freed-note">{freed.logs}</span>
@@ -1445,7 +1449,8 @@
               {:else}
                 <Button
                   variant="ghost"
-                  disabled={updates.checking || updates.applying}
+                  loading={updates.checking}
+                  disabled={updates.applying}
                   onclick={() => void updates.check()}>
                   {ui.about.update.check}
                 </Button>
@@ -1454,7 +1459,7 @@
                   {#if updates.selfUpdate}
                     <Button
                       variant="link"
-                      disabled={updates.applying}
+                      loading={updates.applying}
                       onclick={() => void updates.apply()}>
                       {ui.about.update.apply}
                     </Button>

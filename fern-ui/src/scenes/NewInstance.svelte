@@ -584,12 +584,12 @@
     </div>
     <Button onclick={() => nav.up()}>取消</Button>
     {#if pack}
-      <Button variant="primary" disabled={busy} onclick={() => void importPack()}>
-        <Plus size={15} />{busy ? '导入中' : '导入整合包'}
+      <Button variant="primary" loading={busy} onclick={() => void importPack()}>
+        <Plus size={15} />导入整合包
       </Button>
     {:else}
-      <Button variant="primary" disabled={busy} onclick={() => void submit()}>
-        <Plus size={15} />{busy ? '创建中' : '创建'}
+      <Button variant="primary" loading={busy} onclick={() => void submit()}>
+        <Plus size={15} />创建
       </Button>
     {/if}
   </footer>
