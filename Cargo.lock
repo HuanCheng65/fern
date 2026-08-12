@@ -461,6 +461,7 @@ dependencies = [
  "fern-meta",
  "reqwest",
  "serde",
+ "serde_json",
  "sha1",
  "tokio",
 ]

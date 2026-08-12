@@ -20,7 +20,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{DownloadClient, DownloadTask, safe_join};
+use fern_download::{DownloadTask, safe_join};
 use serde::{Deserialize, Serialize};
 
 use crate::{DataPaths, InstanceProfile, LoaderKind};
@@ -265,7 +265,7 @@ async fn lay_out(game: &Path, archive_path: &Path, index: Index, job: &crate::Jo
 
     job.step(format!("下载整合包的 {} 个文件", tasks.len()));
     if !tasks.is_empty() {
-        DownloadClient::new(crate::data::settings::source_order(), 8)
+        crate::data::downloader::client(8)
             .download_all(tasks, events)
             .await?;
     }

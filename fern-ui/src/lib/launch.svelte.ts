@@ -326,8 +326,16 @@ class LaunchStore {
    *
    * `title` 决定岛上怎么称呼这件事：刚建完叫「准备」，事后手动跑叫「校验」，
    * 做的是同一件事，但对用户来说不是同一个时刻。
+   *
+   * `recheck` 决定要不要把每个文件都真读一遍重算哈希。默认读——这个方法的默认
+   * 调用方式就是用户点「校验」，而他点它正是因为不信任磁盘上那份。建完实例后的
+   * 「准备」传 `false`：那些文件刚落盘，没有理由再读一遍。
    */
-  async repair(instanceId: string, title = `校验 ${nameOf(instanceId)}`) {
+  async repair(
+    instanceId: string,
+    title = `校验 ${nameOf(instanceId)}`,
+    recheck = true,
+  ) {
     if (this.occupied(instanceId)) return
     this.#begin(instanceId)
     try {
@@ -337,6 +345,7 @@ class LaunchStore {
       }
       await invoke('prepare_instance', {
         instanceId,
+        recheck,
         title,
         subjects: [instanceId],
       })

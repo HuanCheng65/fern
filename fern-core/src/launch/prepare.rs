@@ -13,10 +13,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths, Job, JobText,
-    data::{
-        metacache::{self, Freshness},
-        settings::source_order,
-    },
+    data::metacache::{self, Freshness},
     java::{self, runtime},
     launch::{loader, rules, version},
 };
@@ -60,9 +57,14 @@ struct AssetObject {
 ///
 /// 加载器那一步没有百分比可言，所以进度分两轴——纵轴是第几步，横轴才是这一步
 /// 内部的字节数。硬把它们压成一个百分比就只能靠编。
+///
+/// `recheck` 决定要不要把每个文件都真读一遍。平常那一遍认「大小和修改时间都
+/// 没变就是没变」，几百兆的资源目录才不至于每次启动都过一次磁盘；用户在实例
+/// 详情里点「校验」，说的正是「我不信磁盘上那份」，那一遍就得实打实地读。
 pub async fn prepare_instance(
     paths: &DataPaths,
     instance_id: &str,
+    recheck: bool,
     job: &Job,
 ) -> Result<PrepareResult> {
     paths.ensure_exists()?;
@@ -101,7 +103,11 @@ pub async fn prepare_instance(
     if !version::is_safe_id(version_id) {
         return Err(anyhow!("版本 id 无法作为目录名：{version_id}"));
     }
-    let downloader = DownloadClient::new(source_order(), 64);
+    let downloader = if recheck {
+        crate::data::downloader::rechecking_client(64)
+    } else {
+        crate::data::downloader::client(64)
+    };
 
     job.step(JobText::id("job.stage.resolve-version"));
     // 客户端 jar 该落在哪、原版那份描述是哪一份，都由继承链说了算——外部实例

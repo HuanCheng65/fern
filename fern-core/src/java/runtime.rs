@@ -13,13 +13,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
+use fern_download::{DownloadEvent, DownloadTask};
 use serde::Deserialize;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths,
-    data::settings::source_order,
     java::{self, JavaRequirement, JavaRuntime},
 };
 
@@ -121,7 +120,7 @@ pub async fn ensure_java(
         params: vec![("component".to_owned(), component.clone())],
     });
 
-    let downloader = DownloadClient::new(source_order(), 64);
+    let downloader = crate::data::downloader::client(64);
     // 这份索引一年动不了几次，而且 URL 本身就带着内容哈希——一天一次足够。
     let index_bytes = crate::data::metacache::mutable(
         &downloader,
@@ -520,12 +519,12 @@ mod adoptium {
     use std::path::{Path, PathBuf};
 
     use anyhow::{Context, Result, anyhow};
-    use fern_download::{DownloadClient, DownloadEvent};
+    use fern_download::DownloadEvent;
     use serde::Deserialize;
     use sha2::{Digest, Sha256};
     use tokio::sync::mpsc::UnboundedSender;
 
-    use crate::{DataPaths, data::settings::source_order};
+    use crate::DataPaths;
 
     #[derive(Debug, Deserialize)]
     struct Asset {
@@ -589,7 +588,7 @@ mod adoptium {
         });
         // 不走 DownloadClient 的镜像重写：Adoptium 不在任何镜像上，rewrite
         // 对它是恒等的，但重试和源健康度仍然用得上。
-        let downloader = DownloadClient::new(source_order(), 4);
+        let downloader = crate::data::downloader::client(4);
         let listing = downloader
             .fetch(&url)
             .await

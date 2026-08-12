@@ -19,6 +19,10 @@ use sha1::{Digest, Sha1};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 
+mod verified;
+
+pub use verified::Verified;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -98,7 +102,9 @@ impl DownloadTask {
         })
     }
 
-    /// 这一份已经落盘的能不能算数。
+    /// 这一份已经落盘的能不能算数，每次都实打实地读一遍。
+    ///
+    /// 下载路径上走的不是这一条，是 [`DownloadClient::satisfied`]——它会先问账本。
     pub async fn is_satisfied(&self) -> Result<bool> {
         match (&self.sha1, self.size) {
             (Some(sha1), Some(size)) => verify_file(&self.path, sha1, size).await,
@@ -419,6 +425,10 @@ pub struct DownloadClient {
     sources: Vec<Arc<dyn DownloadSource>>,
     semaphore: Arc<Semaphore>,
     health: Arc<SourceHealth>,
+    /// 验过的文件。默认是关着的一本空账，[`Self::with_verified`] 才给它落盘位置。
+    verified: Arc<Verified>,
+    /// 不信账本，每个文件都实打实读一遍。见 [`Self::rechecking`]。
+    recheck: bool,
 }
 
 impl DownloadClient {
@@ -441,7 +451,28 @@ impl DownloadClient {
             },
             semaphore: Arc::new(Semaphore::new(concurrency.max(1))),
             health: Arc::new(SourceHealth::default()),
+            verified: Arc::new(Verified::default()),
+            recheck: false,
         }
+    }
+
+    /// 记住验过的文件，别每一轮都把整个 assets 目录重算一遍哈希。
+    ///
+    /// 账本由调用方持有并在整个进程里共用一本——补全游戏文件和准备 Java 是并排
+    /// 跑的两条线，各记各的会互相覆盖。
+    pub fn with_verified(mut self, verified: Arc<Verified>) -> Self {
+        self.verified = verified;
+        self
+    }
+
+    /// 不认账本的那一份。
+    ///
+    /// 平常那一遍靠「大小和修改时间都没变」跳过重算，代价是内容被原地改坏、
+    /// 大小和时间戳却没动的文件它看不出来。用户点「校验」正是在说「我不信磁盘上
+    /// 那份」，所以那条路必须真的把每个文件读一遍。
+    pub fn rechecking(mut self) -> Self {
+        self.recheck = true;
+        self
     }
 
     /// 配置的顺序打底，最近老失败的往后挪。稳定排序，所以健康度相同的源
@@ -579,6 +610,10 @@ impl DownloadClient {
                 .collect();
         }
 
+        // 这一批学到的东西落盘。失败的批次也要存——已经验过的那些文件不会因为
+        // 别的文件没下下来就变得不算数了。
+        self.verified.save().await;
+
         let _ = events.send(DownloadEvent::TaskFinished {
             failed: failures
                 .iter()
@@ -640,6 +675,42 @@ impl DownloadClient {
         failures
     }
 
+    /// 磁盘上那份算不算数。
+    ///
+    /// 和 [`DownloadTask::is_satisfied`] 回答的是同一个问题，区别只在于要不要把
+    /// 文件整个读一遍：大小对不上就直接否掉，大小对得上且账本认得这个
+    /// `路径|大小|修改时间`，就用上次算出来的哈希。真读了的那些顺手记进账本。
+    async fn satisfied(&self, task: &DownloadTask) -> Result<bool> {
+        let (Some(expected), Some(size)) = (task.sha1.as_deref(), task.size) else {
+            // 没有校验和的任务只能问「在不在」，账本对它没有意义。
+            return Ok(tokio::fs::try_exists(&task.path).await?);
+        };
+        if self.recheck {
+            let ok = verify_file(&task.path, expected, size).await?;
+            if ok {
+                // 这一遍算出来的正是期望值，记下来，下一遍就不必再读。
+                self.verified.note(&task.path, expected).await;
+            }
+            return Ok(ok);
+        }
+
+        let metadata = match tokio::fs::metadata(&task.path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        // 大小不对就不用往下看了，连读都不必读。
+        if metadata.len() != size {
+            return Ok(false);
+        }
+        if let Some(known) = self.verified.recall(&task.path, &metadata) {
+            return Ok(known.eq_ignore_ascii_case(expected));
+        }
+        let actual = sha1_hex(&tokio::fs::read(&task.path).await?);
+        self.verified.remember(&task.path, &metadata, &actual);
+        Ok(actual.eq_ignore_ascii_case(expected))
+    }
+
     async fn download_one(
         &self,
         task: &DownloadTask,
@@ -654,7 +725,7 @@ impl DownloadClient {
 
         // 校验通过即跳过，所以补全天然幂等：「修复文件」就是同一个入口再跑
         // 一遍，不需要单独的一套代码。
-        match task.is_satisfied().await {
+        match self.satisfied(task).await {
             Ok(true) => {
                 // 大小未知的文件对分母的贡献是 0（它没被计入过），对分子也
                 // 只能是 0——两边都不动，账才是平的。
@@ -840,6 +911,12 @@ impl DownloadClient {
                 tokio::fs::remove_file(&task.path).await?;
             }
             tokio::fs::rename(temporary, &task.path).await?;
+            // 哈希是就着下载流现算的，刚落成的这一份就是它。记下来，紧接着的
+            // 下一次启动才不用把刚下的四千个文件再读一遍。没有声明校验和的
+            // 任务不记：账本只在有期望值可比的时候派得上用场。
+            if task.sha1.is_some() {
+                self.verified.note(&task.path, &actual).await;
+            }
             progress.emit(events, true);
             return Ok(true);
         }
@@ -906,6 +983,56 @@ mod tests {
         assert!(!verified.is_satisfied().await.expect("check content"));
 
         tokio::fs::remove_dir_all(root).await.expect("remove root");
+    }
+
+    /// 账本省掉的那一遍读，以及它省不掉的那一遍。
+    ///
+    /// 这个测试把交易本身写下来：认「大小和修改时间都没变」，就一定认不出原地
+    /// 改坏、大小和时间戳却没动的文件。所以「校验」那条路不认账本。
+    #[tokio::test]
+    async fn the_ledger_is_trusted_until_someone_asks_for_a_recheck() {
+        let root = std::env::temp_dir().join(format!("fern-ledger-{}", std::process::id()));
+        let _ = tokio::fs::remove_dir_all(&root).await;
+        tokio::fs::create_dir_all(&root).await.expect("create root");
+        let path = root.join("client.jar");
+        tokio::fs::write(&path, b"fern").await.expect("write");
+
+        let task = DownloadTask::new(
+            &path,
+            "https://example.invalid/client.jar",
+            "654edb122a04602f918500d59b1d6fc37b9d0c01",
+            4,
+        )
+        .expect("build task");
+        let client = DownloadClient::new(vec![Arc::new(OfficialSource)], 4)
+            .with_verified(Verified::at(root.join("verified.json")));
+        assert!(client.satisfied(&task).await.expect("first pass"));
+
+        // 内容原地换成同样长的另一份，再把修改时间按回原样。
+        let stamp = std::fs::metadata(&path).expect("stat").modified().expect("mtime");
+        tokio::fs::write(&path, b"leaf").await.expect("overwrite");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("open")
+            .set_modified(stamp)
+            .expect("restore mtime");
+
+        assert!(
+            client.satisfied(&task).await.expect("cached pass"),
+            "大小和修改时间都没变，账本就认上次那个哈希"
+        );
+        assert!(
+            !client
+                .clone()
+                .rechecking()
+                .satisfied(&task)
+                .await
+                .expect("recheck pass"),
+            "点了校验就得真读一遍，账本说什么都不算"
+        );
+
+        tokio::fs::remove_dir_all(root).await.expect("clean up");
     }
 
     /// 只差扩展名的两个文件不能共用一个临时文件。共用了，同一批里它们会互相

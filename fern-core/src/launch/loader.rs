@@ -15,10 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths, LoaderKind,
-    data::{
-        metacache::{self, Freshness},
-        settings::source_order,
-    },
+    data::metacache::{self, Freshness},
     launch::version,
 };
 
@@ -100,7 +97,7 @@ async fn list_maven_versions(
     kind: LoaderKind,
     game_version: &str,
 ) -> Result<Vec<LoaderVersion>> {
-    let client = DownloadClient::new(source_order(), 4);
+    let client = crate::data::downloader::client(4);
     match kind {
         LoaderKind::NeoForge => {
             #[derive(Deserialize)]
@@ -231,7 +228,7 @@ pub async fn list_versions(
         return super::liteloader::list_versions(paths, game_version).await;
     }
     let url = format!("{}/versions/loader/{game_version}", meta_root(kind)?);
-    let client = DownloadClient::new(source_order(), 4);
+    let client = crate::data::downloader::client(4);
     let bytes = listing(paths, &client, kind, game_version, &url).await?;
     let entries: Vec<LoaderEntry> =
         serde_json::from_slice(&bytes).with_context(|| format!("解析 {kind:?} 的版本列表"))?;
@@ -329,7 +326,7 @@ pub async fn install(
         "{}/versions/loader/{game_version}/{loader_version}/profile/json",
         meta_root(kind)?
     );
-    let client = DownloadClient::new(source_order(), 4);
+    let client = crate::data::downloader::client(4);
     let bytes = client
         .fetch(&url)
         .await

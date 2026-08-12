@@ -200,7 +200,7 @@
        *
        * 不 await：这一页的活已经干完了，进度归实例页和岛。
        */
-      void launch.repair(created.id, `准备 ${created.name}`)
+      void launch.repair(created.id, `准备 ${created.name}`, false)
     } catch (cause) {
       error = String(cause)
     } finally {

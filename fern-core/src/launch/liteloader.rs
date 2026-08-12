@@ -27,17 +27,14 @@
 //! 最多列出「正式」和「开发」两条。
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{DownloadClient, DownloadEvent};
+use fern_download::DownloadEvent;
 use serde::Deserialize;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths, LoaderKind,
-    data::{
-        metacache::{self, Freshness},
-        settings::source_order,
-    },
+    data::metacache::{self, Freshness},
     launch::{loader::LoaderVersion, version},
 };
 
@@ -177,7 +174,7 @@ pub async fn install(
 }
 
 async fn catalogue(paths: &DataPaths) -> Result<Catalogue> {
-    let client = DownloadClient::new(source_order(), 4);
+    let client = crate::data::downloader::client(4);
     let bytes = metacache::mutable(
         &client,
         paths,

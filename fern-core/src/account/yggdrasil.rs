@@ -14,12 +14,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use fern_download::{DownloadClient, DownloadEvent};
+use fern_download::DownloadEvent;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{DataPaths, data::settings::source_order};
+use crate::DataPaths;
 
 /// authlib-injector 的发布清单。BMCLAPI 上有镜像，国内用户占比高，直接用它。
 const INJECTOR_LATEST: &str =
@@ -232,7 +232,7 @@ pub async fn ensure_injector(
     paths: &DataPaths,
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<PathBuf> {
-    let downloader = DownloadClient::new(source_order(), 4);
+    let downloader = crate::data::downloader::client(4);
     let manifest_bytes = downloader
         .fetch(INJECTOR_LATEST)
         .await

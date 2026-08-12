@@ -4,16 +4,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::DownloadClient;
 use fern_meta::{VersionManifest, VersionManifestEntry};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     DataPaths, InstanceId, InstanceProfile,
-    data::{
-        metacache::{self, Freshness},
-        settings::source_order,
-    },
+    data::metacache::{self, Freshness},
     launch::prepare::MANIFEST_SLUG,
 };
 
@@ -491,7 +487,7 @@ pub fn declared_java_major(paths: &DataPaths, profile: &InstanceProfile) -> Opti
 /// `refresh` 是用户按下刷新的那一下。平时走缓存：这个列表有两千多条，六小时
 /// 之内它的内容不会变，而每次打开「新建实例」都重拉一遍只是在让那一屏白等。
 pub async fn list_versions(paths: &DataPaths, refresh: bool) -> Result<Vec<VersionOption>> {
-    let client = DownloadClient::new(source_order(), 4);
+    let client = crate::data::downloader::client(4);
     let cached = metacache::mutable(
         &client,
         paths,

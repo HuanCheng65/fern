@@ -606,17 +606,21 @@ fn launcher_events(
 /// 上、对着哪个东西点的这一下，只有界面知道。`subjects` 是这件事干在谁身上
 /// （实例 id、项目 id，可以都有），界面据此把作业挂回对应的页面，而不必去认识
 /// 作业的种类。
+///
+/// `recheck` 也由界面给，而且**不能从标题猜**：同一个命令既是建完实例之后的
+/// 「准备」，也是用户主动点的「校验」，后者的全部意义就在于不信任缓存。
 #[tauri::command]
 async fn prepare_instance(
     app: tauri::AppHandle,
     instance_id: String,
+    recheck: bool,
     title: String,
     subjects: Vec<String>,
 ) -> Result<fern_core::PrepareResult, String> {
     let paths = paths()?;
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
-    let result = fern_core::prepare_instance(&paths, &instance_id, &job)
+    let result = fern_core::prepare_instance(&paths, &instance_id, recheck, &job)
         .await
         .map_err(|error| format!("{error:#}"));
     job.finish(&result);
@@ -1012,7 +1016,10 @@ async fn launch_instance(
     // 一次点击一个作业：补全和启动是同一件事的两段，各自往总步数里添自己那份。
     let job = fern_core::Job::begin(&events, title, subjects);
     job.expect(1);
-    let prepared = fern_core::prepare_instance(&paths, &instance_id, &job)
+    // 启动这条路不重读磁盘：几百兆的资源目录每次点启动都完整过一遍，换成
+    // 机械硬盘或者带实时扫描的 Windows 就是用户等的那几十秒。想真读一遍的
+    // 入口是实例详情里的「校验」。
+    let prepared = fern_core::prepare_instance(&paths, &instance_id, false, &job)
         .await
         .map_err(|error| format!("{error:#}"));
     let result = match prepared {

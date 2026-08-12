@@ -18,7 +18,7 @@ pub(crate) mod plan;
 pub(crate) mod survey;
 
 use anyhow::{Context, Result, anyhow};
-use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
+use fern_download::{DownloadEvent, DownloadTask};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -744,7 +744,7 @@ pub async fn fetch_primary_file(
     tokio::fs::create_dir_all(directory).await?;
     let destination = fern_download::safe_join(directory, std::path::Path::new(&file.filename))?;
     let task = DownloadTask::new(destination.clone(), &file.url, &file.hashes.sha1, file.size)?;
-    DownloadClient::new(crate::data::settings::source_order(), 4)
+    crate::data::downloader::client(4)
         .download_all(vec![task], events)
         .await?;
     Ok(destination)
@@ -824,7 +824,7 @@ pub async fn install(
     } else {
         "下载文件".to_owned()
     });
-    let downloader = DownloadClient::new(crate::data::settings::source_order(), 8);
+    let downloader = crate::data::downloader::client(8);
     downloader.download_all(tasks, events).await?;
 
     // 记一笔谁放进来的。sha1 用 Modrinth 给的那个——下载刚刚照着它校验过，

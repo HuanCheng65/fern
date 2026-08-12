@@ -29,7 +29,6 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     DataPaths, LoaderKind,
-    data::settings::source_order,
     java::{self, runtime},
     launch::version,
 };
@@ -119,7 +118,7 @@ pub async fn install(
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<String> {
     let installer_url = installer_url(kind, game_version, loader_version)?;
-    let downloader = DownloadClient::new(source_order(), 16);
+    let downloader = crate::data::downloader::client(16);
 
     let _ = events.send(DownloadEvent::StatusId {
         id: "job.note.loader-inspect".to_owned(),
