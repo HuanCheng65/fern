@@ -128,6 +128,25 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   { id: 'java/rescan', label: '重新扫描', keywords: 'rescan refresh 刷新' },
 
   { id: 'download/source', label: '下载源', keywords: 'download source mirror bmclapi 镜像 官方源' },
+  {
+    id: 'download/concurrency',
+    label: '同时下载数',
+    note: '同时下载的文件数量上限。留空使用默认值 64。网络设备承受不住大量连接时可调低。',
+    keywords: 'concurrency parallel connections 并发 线程 连接数 同时',
+  },
+  {
+    id: 'download/rate-limit',
+    label: '下载限速',
+    note: '每秒下载量的上限。留空表示不限速。',
+    keywords: 'rate limit bandwidth speed 限速 带宽 网速',
+  },
+  {
+    id: 'download/proxy',
+    label: '代理',
+    note: '跟随系统时使用系统代理与 HTTP_PROXY 等环境变量。',
+    keywords: 'proxy http socks 代理 翻墙',
+    stack: true,
+  },
 
   {
     id: 'data/root',

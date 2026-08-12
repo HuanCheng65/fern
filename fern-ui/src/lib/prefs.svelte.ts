@@ -12,7 +12,14 @@
  * 第一次替用户按下的那一下，不是一个每次启动都要重新解析的状态。
  */
 
-import { emptyGameDefaults, patch, snapshot, type GameDefaults } from './persist'
+import {
+  emptyDownload,
+  emptyGameDefaults,
+  patch,
+  snapshot,
+  type DownloadDoc,
+  type GameDefaults,
+} from './persist'
 import { looksLikeChina } from './region'
 
 export type DownloadSource = 'official' | 'bmclapi'
@@ -29,7 +36,13 @@ export function suggestedSource(): DownloadSource {
 }
 
 class PrefsStore {
-  downloadSource = $state<DownloadSource>('official')
+  /**
+   * 下载的那一段整个存下来。
+   *
+   * 之前这里只留了一个 `downloadSource`，写回时是 `doc.download = { source }`——
+   * 那一段里此后多出来的每一项都会被这一句抹掉。
+   */
+  download = $state<DownloadDoc>(emptyDownload())
   /**
    * 所有实例的起点。
    *
@@ -40,10 +53,15 @@ class PrefsStore {
   setupDone = $state(false)
   minimizeOnLaunch = $state(false)
 
+  /** 当前下载源。写起来到处都要，单独给一个。 */
+  get downloadSource(): DownloadSource {
+    return this.download.source === 'bmclapi' ? 'bmclapi' : 'official'
+  }
+
   /** 从磁盘读到的设置装进来。App 启动时调一次。 */
   hydrate() {
     const doc = snapshot()
-    this.downloadSource = doc.download.source === 'bmclapi' ? 'bmclapi' : 'official'
+    this.download = { ...emptyDownload(), ...(doc.download ?? {}) }
     this.game = { ...emptyGameDefaults(), ...(doc.game ?? {}) }
     this.setupDone = doc.setupDone === true
     this.minimizeOnLaunch = doc.minimizeOnLaunch === true
@@ -57,9 +75,15 @@ class PrefsStore {
     patch((doc) => (doc.game = game))
   }
 
+  /** 改一项下载设置。整段写回去，Rust 那边的 serde 只认完整的一段。 */
+  setDownload(change: Partial<DownloadDoc>) {
+    this.download = { ...this.download, ...change }
+    const download = this.download
+    patch((doc) => (doc.download = download))
+  }
+
   setDownloadSource(source: DownloadSource) {
-    this.downloadSource = source
-    patch((doc) => (doc.download = { source }))
+    this.setDownload({ source })
   }
 
   setMinimizeOnLaunch(minimize: boolean) {

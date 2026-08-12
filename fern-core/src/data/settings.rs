@@ -45,11 +45,40 @@ pub struct AccountSettings {
     pub player_name: String,
 }
 
+/// 走不走代理。三档在设置里分别是「跟随系统」「不使用」「自定义」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyMode {
+    #[default]
+    System,
+    Direct,
+    Custom,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DownloadSettings {
     pub source: SourcePreference,
+    /// 同时下载几个文件。`None` 用内置默认值。
+    ///
+    /// 给数字而不是「保守 / 标准 / 激进」三档：会来动这一项的人有具体的理由——
+    /// 路由器扛不住、网关限流、被镜像挡回 429——而这些只有他自己知道，「激进」
+    /// 这个词回答不了他要的那个数。
+    pub concurrency: Option<u32>,
+    /// 每秒最多下载多少 KB。`None` 是不限。
+    ///
+    /// 这台机器上要给别的事留多少带宽，同样只有用户知道。
+    pub rate_limit_kbps: Option<u32>,
+    pub proxy: ProxyMode,
+    /// `proxy` 是 `Custom` 时用的地址，例如 `http://127.0.0.1:7890`。
+    pub proxy_url: String,
 }
+
+/// 同时下载数的取值范围。
+///
+/// 下限 1 是「一个一个来」，本来就是个合理的选择。上限不是性能判断而是防手滑：
+/// 再往上加只是让几百个连接互相抢同一条带宽，还容易被镜像当成攻击。
+pub const CONCURRENCY_RANGE: std::ops::RangeInclusive<u32> = 1..=128;
 
 /// 所有实例的起点。
 ///
@@ -258,10 +287,95 @@ pub fn source_order() -> Vec<Arc<dyn DownloadSource>> {
     }
 }
 
+/// 设置里那几项调网络的，翻成下载器认的形状。
+///
+/// 数值在这里夹住，而不是指望界面：设置文件是用户能直接编辑的一个 JSON，
+/// 手写一个 `"concurrency": 5000` 进去不该让启动器开五千条连接。
+pub(crate) fn network() -> fern_download::Network {
+    network_of(&current().download)
+}
+
+fn network_of(download: &DownloadSettings) -> fern_download::Network {
+    fern_download::Network {
+        concurrency: download
+            .concurrency
+            .map(|value| value.clamp(*CONCURRENCY_RANGE.start(), *CONCURRENCY_RANGE.end()) as usize)
+            .unwrap_or(fern_download::DEFAULT_CONCURRENCY),
+        rate: download
+            .rate_limit_kbps
+            .filter(|limit| *limit > 0)
+            .map(|limit| u64::from(limit) * 1024),
+        proxy: match download.proxy {
+            ProxyMode::System => fern_download::Proxy::System,
+            ProxyMode::Direct => fern_download::Proxy::Direct,
+            // 选了自定义却没填地址，等于什么也没说，那就跟随系统。
+            ProxyMode::Custom if download.proxy_url.trim().is_empty() => {
+                fern_download::Proxy::System
+            }
+            ProxyMode::Custom => fern_download::Proxy::Url(download.proxy_url.trim().to_owned()),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+
+    /// 设置文件是用户能直接编辑的一个 JSON，所以夹取值范围的地方在这里，
+    /// 不在界面上。
+    #[test]
+    fn the_numbers_a_user_can_type_are_clamped_before_they_reach_the_downloader() {
+        let outrageous = DownloadSettings {
+            concurrency: Some(5000),
+            rate_limit_kbps: Some(512),
+            ..DownloadSettings::default()
+        };
+        let network = network_of(&outrageous);
+        assert_eq!(network.concurrency, 128);
+        assert_eq!(network.rate, Some(512 * 1024));
+
+        let none = DownloadSettings::default();
+        assert_eq!(
+            network_of(&none).concurrency,
+            fern_download::DEFAULT_CONCURRENCY
+        );
+        assert_eq!(network_of(&none).rate, None, "不填就是不限速");
+
+        // 0 KB/s 不是「一点点」，是「下不动」。当成没填。
+        let zero = DownloadSettings {
+            rate_limit_kbps: Some(0),
+            ..DownloadSettings::default()
+        };
+        assert_eq!(network_of(&zero).rate, None);
+    }
+
+    /// 选了「自定义」却没填地址，等于什么也没说。
+    #[test]
+    fn an_empty_custom_proxy_falls_back_to_following_the_system() {
+        let blank = DownloadSettings {
+            proxy: ProxyMode::Custom,
+            proxy_url: "   ".to_owned(),
+            ..DownloadSettings::default()
+        };
+        assert_eq!(network_of(&blank).proxy, fern_download::Proxy::System);
+
+        let filled = DownloadSettings {
+            proxy: ProxyMode::Custom,
+            proxy_url: " http://127.0.0.1:7890 ".to_owned(),
+            ..DownloadSettings::default()
+        };
+        assert_eq!(
+            network_of(&filled).proxy,
+            fern_download::Proxy::Url("http://127.0.0.1:7890".to_owned())
+        );
+
+        let direct = DownloadSettings {
+            proxy: ProxyMode::Direct,
+            ..DownloadSettings::default()
+        };
+        assert_eq!(network_of(&direct).proxy, fern_download::Proxy::Direct);
+    }
 
     #[test]
     fn round_trips_through_disk() {

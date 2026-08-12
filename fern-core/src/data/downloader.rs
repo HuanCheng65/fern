@@ -17,7 +17,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use fern_download::{DownloadClient, Verified};
 
-use super::settings::{self, source_order};
+use super::settings::{self, network, source_order};
 use crate::DataPaths;
 
 /// 验过的文件，全进程一本。
@@ -47,7 +47,7 @@ fn shared() -> DownloadClient {
     {
         return client.clone();
     }
-    let client = DownloadClient::shared(source_order()).with_verified(ledger());
+    let client = DownloadClient::configured(source_order(), &network()).with_verified(ledger());
     *SHARED.write().expect("downloader poisoned") = Some((generation, client.clone()));
     client
 }

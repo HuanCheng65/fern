@@ -18,7 +18,7 @@ export interface SettingsDoc {
   /** 外观。Rust 不解释里面有什么，界面自己说了算。 */
   appearance: Record<string, unknown>
   account: { kind: string; playerName: string }
-  download: { source: string }
+  download: DownloadDoc
   /** 所有实例的起点。实例设置只写它要偏离的那几项。 */
   game: GameDefaults
   update: UpdateDoc
@@ -26,6 +26,25 @@ export interface SettingsDoc {
   /** 游戏窗口开出来之后把启动器收起来。 */
   minimizeOnLaunch: boolean
 }
+
+export interface DownloadDoc {
+  source: string
+  /** 同时下载几个文件。null 用内置默认值。 */
+  concurrency: number | null
+  /** 每秒最多下载多少 KB。null 表示不限速。 */
+  rateLimitKbps: number | null
+  proxy: 'system' | 'direct' | 'custom'
+  /** proxy 为 custom 时使用的地址。 */
+  proxyUrl: string
+}
+
+export const emptyDownload = (): DownloadDoc => ({
+  source: 'official',
+  concurrency: null,
+  rateLimitKbps: null,
+  proxy: 'system',
+  proxyUrl: '',
+})
 
 export interface UpdateDoc {
   channel: 'stable' | 'beta'
@@ -63,7 +82,7 @@ const SAVE_DELAY = 300
 export const emptyDoc = (): SettingsDoc => ({
   appearance: {},
   account: { kind: 'offline', playerName: '' },
-  download: { source: 'official' },
+  download: emptyDownload(),
   game: emptyGameDefaults(),
   update: { channel: 'stable', automatic: true, bucket: null },
   setupDone: false,

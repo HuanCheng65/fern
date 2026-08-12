@@ -424,7 +424,83 @@ fn describe_failures(failures: &[Failure]) -> String {
 /// 一条线上的每个调用点都从同一个客户端分出去，所以这个数是**整台机器上真正
 /// 同时开着的连接数**，不是某一处的上限。以前它是十几个各写各的常量：补全游戏
 /// 文件 64、准备 Java 64，两条并排跑，加起来 128，谁也没打算要这个数。
-const GLOBAL_CONCURRENCY: usize = 64;
+pub const DEFAULT_CONCURRENCY: usize = 64;
+
+/// 走不走代理。
+///
+/// 默认跟随系统，也就是 `HTTP_PROXY` 那几个环境变量——这是加这一项之前唯一
+/// 存在的行为。另外两档是为了那些环境变量说了不算的场合：机器上装着一个全局
+/// 代理但下载源恰好被它绕远，或者反过来，只有启动器需要走代理。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Proxy {
+    #[default]
+    System,
+    Direct,
+    Url(String),
+}
+
+/// 用户能调的那几项。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Network {
+    pub concurrency: usize,
+    /// 全局每秒最多多少字节。`None` 是不限。
+    ///
+    /// 记在共用的那个客户端上，所以它管的是整个启动器，而不是某一支——
+    /// 「后台装整合包的时候别把会议卡掉」这句话只有在全局成立才是真的。
+    pub rate: Option<u64>,
+    pub proxy: Proxy,
+}
+
+impl Default for Network {
+    fn default() -> Self {
+        Self {
+            concurrency: DEFAULT_CONCURRENCY,
+            rate: None,
+            proxy: Proxy::default(),
+        }
+    }
+}
+
+/// 令牌桶。
+///
+/// 桶的容量取「一秒的量」和「这一块的大小」里较大的那个。后半句不是可有可无：
+/// 限速 8 KB/s 而 reqwest 递过来一块 16 KB 时，容量若只有一秒的量，令牌永远
+/// 攒不到这一块要的数，`take` 会原地转圈。
+struct RateLimiter {
+    rate: u64,
+    bucket: Mutex<(f64, Instant)>,
+}
+
+impl RateLimiter {
+    fn new(rate: u64) -> Self {
+        Self {
+            rate: rate.max(1),
+            bucket: Mutex::new((0.0, Instant::now())),
+        }
+    }
+
+    async fn take(&self, bytes: u64) {
+        loop {
+            let wait = {
+                let Ok(mut bucket) = self.bucket.lock() else {
+                    return;
+                };
+                let (tokens, last) = &mut *bucket;
+                let now = Instant::now();
+                let capacity = self.rate.max(bytes) as f64;
+                *tokens = (*tokens + now.duration_since(*last).as_secs_f64() * self.rate as f64)
+                    .min(capacity);
+                *last = now;
+                if *tokens >= bytes as f64 {
+                    *tokens -= bytes as f64;
+                    return;
+                }
+                Duration::from_secs_f64((bytes as f64 - *tokens) / self.rate as f64)
+            };
+            tokio::time::sleep(wait).await;
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct DownloadClient {
@@ -434,6 +510,8 @@ pub struct DownloadClient {
     semaphore: Arc<Semaphore>,
     /// 这一支自己的上限，比全局更紧。见 [`Self::lane`]。
     lane: Option<Arc<Semaphore>>,
+    /// 全局限速。和闸门一样挂在共用的那个客户端上，各支共用一个桶。
+    limiter: Option<Arc<RateLimiter>>,
     health: Arc<SourceHealth>,
     /// 验过的文件。默认是关着的一本空账，[`Self::with_verified`] 才给它落盘位置。
     verified: Arc<Verified>,
@@ -443,37 +521,59 @@ pub struct DownloadClient {
 
 impl DownloadClient {
     pub fn new(sources: Vec<Arc<dyn DownloadSource>>, concurrency: usize) -> Self {
+        Self::configured(
+            sources,
+            &Network {
+                concurrency,
+                ..Network::default()
+            },
+        )
+    }
+
+    /// 全进程共用的那一个，按用户在设置里定的那几项配好。
+    ///
+    /// 连接池、源健康度、全局闸门和限速桶都在这里，所以每一处调用都从它分支
+    /// 出去（[`Self::lane`]），而不是各建各的：各建各的意味着每个阶段重新握一遍
+    /// TLS，也意味着没有任何地方回答得了「现在一共开着多少条」。
+    pub fn configured(sources: Vec<Arc<dyn DownloadSource>>, network: &Network) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(10))
-                // 读超时，不是总超时。总超时是按「一次请求最多花多久」设的，
-                // 而这里最大的两个文件是 client jar 和 Java 运行时——两百多兆
-                // 在一条普通的家用带宽上本来就要跑几分钟。之前设的 45 秒总
-                // 超时会把它们**每一次**都掐死在半路，表现出来正是「有几个
-                // 文件总是失败」。真正该管的是「卡住不动」，那是读超时。
-                .read_timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("valid download client configuration"),
+            client: Self::http(&network.proxy),
             sources: if sources.is_empty() {
                 vec![Arc::new(OfficialSource)]
             } else {
                 sources
             },
-            semaphore: Arc::new(Semaphore::new(concurrency.max(1))),
+            semaphore: Arc::new(Semaphore::new(network.concurrency.max(1))),
             lane: None,
+            limiter: network.rate.map(|rate| Arc::new(RateLimiter::new(rate))),
             health: Arc::new(SourceHealth::default()),
             verified: Arc::new(Verified::default()),
             recheck: false,
         }
     }
 
-    /// 全进程共用的那一个。
-    ///
-    /// 连接池、源健康度、全局闸门都在这里，所以每一处调用都从它分支出去，
-    /// 而不是各建各的：各建各的意味着每个阶段重新握一遍 TLS，也意味着没有
-    /// 任何地方回答得了「现在一共开着多少条」。
-    pub fn shared(sources: Vec<Arc<dyn DownloadSource>>) -> Self {
-        Self::new(sources, GLOBAL_CONCURRENCY)
+    fn http(proxy: &Proxy) -> reqwest::Client {
+        let builder = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            // 读超时，不是总超时。总超时是按「一次请求最多花多久」设的，
+            // 而这里最大的两个文件是 client jar 和 Java 运行时——两百多兆
+            // 在一条普通的家用带宽上本来就要跑几分钟。之前设的 45 秒总
+            // 超时会把它们**每一次**都掐死在半路，表现出来正是「有几个
+            // 文件总是失败」。真正该管的是「卡住不动」，那是读超时。
+            .read_timeout(std::time::Duration::from_secs(30));
+        let builder = match proxy {
+            Proxy::System => builder,
+            Proxy::Direct => builder.no_proxy(),
+            // 地址填错了不该让启动器连不上网：退回跟随系统，设置界面负责说清楚
+            // 这个地址不合法。
+            Proxy::Url(url) => match reqwest::Proxy::all(url) {
+                Ok(proxy) => builder.proxy(proxy),
+                Err(_) => builder,
+            },
+        };
+        builder
+            .build()
+            .expect("valid download client configuration")
     }
 
     /// 分出一支，最多同时开 `concurrency` 个文件。
@@ -918,6 +1018,11 @@ impl DownloadClient {
         loop {
             match response.chunk().await {
                 Ok(Some(chunk)) => {
+                    // 收下了才拦，但拦得住：不去取下一块，reqwest 就不再从
+                    // 套接字上读，背压一路传到对端。
+                    if let Some(limiter) = &self.limiter {
+                        limiter.take(chunk.len() as u64).await;
+                    }
                     file.write_all(&chunk).await?;
                     hasher.update(&chunk);
                     received = received.saturating_add(chunk.len() as u64);
@@ -1242,6 +1347,31 @@ mod tests {
             }
         });
         Url::parse(&format!("http://{address}/client.jar")).expect("server url")
+    }
+
+    /// 桶要拦得住，也要拦得过去。
+    ///
+    /// 后半句是这个测试真正在守的东西：一块比一秒的额度还大的数据，如果桶的
+    /// 容量只按「一秒的量」算，令牌永远攒不够，`take` 会一直转下去。
+    #[tokio::test]
+    async fn the_bucket_slows_things_down_without_ever_wedging() {
+        let limiter = RateLimiter::new(1_000_000);
+        let started = Instant::now();
+        limiter.take(300_000).await;
+        assert!(
+            started.elapsed() >= Duration::from_millis(250),
+            "限速没有生效，只花了 {:?}",
+            started.elapsed()
+        );
+
+        let limiter = RateLimiter::new(100_000);
+        let started = Instant::now();
+        limiter.take(110_000).await;
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(5),
+            "一块超过一秒额度的数据该等一秒多一点就过去，实际 {elapsed:?}"
+        );
     }
 
     /// 一个会记下「同时有几个请求压在身上」的服务器。

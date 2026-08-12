@@ -255,6 +255,28 @@
     }
   }
 
+  /**
+   * 数字框里那个数，或者「没填」。
+   *
+   * 空框和 0 都是「没填」：这两个框（同时下载数、限速）的 0 都不是一个能用的
+   * 值，写成 0 只会让下载停住。真正的范围在 Rust 侧夹住——设置文件用户能直接
+   * 编辑，界面上的 min/max 只是提示。
+   */
+  function countOrNull(raw: string): number | null {
+    const value = Math.round(Number(raw))
+    return raw.trim() && Number.isFinite(value) && value > 0 ? value : null
+  }
+
+  /** 这个代理地址能不能用。填错了不该悄悄地什么都不发生。 */
+  function validProxy(raw: string): boolean {
+    try {
+      const url = new URL(raw.trim())
+      return ['http:', 'https:', 'socks5:', 'socks5h:'].includes(url.protocol)
+    } catch {
+      return false
+    }
+  }
+
   function setResolution(width: number, height: number) {
     if (!Number.isFinite(width) || !Number.isFinite(height)) return
     prefs.setGame({
@@ -969,6 +991,68 @@
                 { value: 'bmclapi', label: 'BMCLAPI' },
               ]}
             />
+          </SettingRow>
+
+          <SettingRow id="download/concurrency" found={focused === 'download/concurrency'}>
+            <div class="figure-row">
+              <Input
+                class="figure"
+                type="number"
+                min="1"
+                max="128"
+                aria-label="同时下载数"
+                placeholder="64"
+                value={prefs.download.concurrency ?? ''}
+                oninput={(event) =>
+                  prefs.setDownload({ concurrency: countOrNull(event.currentTarget.value) })}
+              />
+              <span class="t-quiet">个文件</span>
+            </div>
+          </SettingRow>
+
+          <SettingRow id="download/rate-limit" found={focused === 'download/rate-limit'}>
+            <div class="figure-row">
+              <Input
+                class="figure"
+                type="number"
+                min="1"
+                aria-label="下载限速"
+                placeholder="不限"
+                value={prefs.download.rateLimitKbps ?? ''}
+                oninput={(event) =>
+                  prefs.setDownload({ rateLimitKbps: countOrNull(event.currentTarget.value) })}
+              />
+              <span class="t-quiet">KB/s</span>
+            </div>
+          </SettingRow>
+
+          <SettingRow id="download/proxy" found={focused === 'download/proxy'}>
+            <div class="proxy">
+              <SegmentedControl
+                aria-label="代理"
+                value={prefs.download.proxy}
+                onchange={(value) =>
+                  prefs.setDownload({ proxy: value as 'system' | 'direct' | 'custom' })}
+                options={[
+                  { value: 'system', label: '跟随系统' },
+                  { value: 'direct', label: '不使用' },
+                  { value: 'custom', label: '自定义' },
+                ]}
+              />
+              {#if prefs.download.proxy === 'custom'}
+                <Input
+                  mono
+                  aria-label="代理地址"
+                  spellcheck="false"
+                  placeholder="http://127.0.0.1:7890"
+                  value={prefs.download.proxyUrl}
+                  oninput={(event) => prefs.setDownload({ proxyUrl: event.currentTarget.value })}
+                />
+                {#if prefs.download.proxyUrl.trim() && !validProxy(prefs.download.proxyUrl)}
+                  <p class="t-quiet hint">地址无法识别，当前仍跟随系统代理。</p>
+                {/if}
+              {/if}
+            </div>
           </SettingRow>
         {:else if section === 'data'}
           <SettingRow id="data/root" found={focused === 'data/root'}>
@@ -1850,6 +1934,24 @@
   .size-row {
     display: flex;
     align-items: center;
+    gap: var(--s2);
+  }
+
+  /* 一个数字，后面跟着它的单位。 */
+  .figure-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  /* 布局归调用方，作用域样式进不了组件，罩一层自己的祖先。 */
+  .figure-row :global(.figure) {
+    width: 88px;
+  }
+
+  /* 先选一档，选了自定义才出现地址框。 */
+  .proxy {
+    display: grid;
     gap: var(--s2);
   }
 
