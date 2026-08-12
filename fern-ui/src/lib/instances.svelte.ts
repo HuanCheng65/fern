@@ -1,9 +1,8 @@
 /**
  * 实例数据。
  *
- * 只放后端真的给得出来的字段。游玩时长、模组数量这些暂时没有数据源，
- * 界面上就不该出现它们的位置——留着一个永远显示 0 的格子，比没有这个
- * 格子更糟。
+ * 只放后端真的给得出来的字段。模组数量这类暂时没有数据源，界面上就不该出现
+ * 它们的位置——留着一个永远显示 0 的格子，比没有这个格子更糟。
  *
  * 「当前实例」和「正在看的实例」是两件事。曲库里点开一张卡片只是看，把它
  * 送上启动场景是另一个明确的动作——混淆这两者是很多启动器难用的根源：
@@ -47,6 +46,8 @@ export interface Instance {
   cover: string
   /** 上次玩过的 Unix 秒。从没玩过是 undefined。 */
   lastPlayed?: number
+  /** 这个实例是什么时候加进来的，Unix 秒。文件系统答不出来时是 undefined。 */
+  createdAt?: number
   /** 累计游玩秒数。没有记录过是 0。 */
   playSeconds: number
   /** 这个实例用哪个账户。没记过就是 undefined，跟着当前账户走。 */
@@ -77,6 +78,7 @@ interface CoreInstance {
   components?: { kind: string; version: string }[]
   cover?: { identity: string }
   lastPlayed?: number
+  createdAt?: number
   playSeconds?: number
   accountId?: string
   external?: { root: string }
@@ -123,12 +125,46 @@ const toInstance = (profile: CoreInstance): Instance => ({
   layers: toLayers(profile),
   cover: profile.cover?.identity || profile.id,
   lastPlayed: profile.lastPlayed,
+  createdAt: profile.createdAt,
   playSeconds: profile.playSeconds ?? 0,
   accountId: profile.accountId,
   externalRoot: profile.external?.root,
 })
 
+/**
+ * 曲库按什么排。
+ *
+ * 三档各回答一个不同的问题：`played` 是「接着玩哪个」，`name` 是「我有什么」，
+ * `created` 是「上周建的那个在哪」。不加「占用」——那要为每个实例走一遍目录树，
+ * 而「占用都在哪」在设置的存储那一屏已经答过了。
+ */
+export type Order = 'played' | 'name' | 'created'
+
+export const ORDERS: { value: Order; label: string }[] = [
+  { value: 'played', label: '最近游玩' },
+  { value: 'name', label: '名称' },
+  { value: 'created', label: '创建时间' },
+]
+
+const byName = (left: Instance, right: Instance) =>
+  left.name.localeCompare(right.name, 'zh-Hans-CN')
+
+/** 排序都以名称收尾：并列的两个必须有一个确定的先后，否则它们的位置会跳。 */
+const SORTS: Record<Order, (left: Instance, right: Instance) => number> = {
+  played: (left, right) => (right.lastPlayed ?? 0) - (left.lastPlayed ?? 0) || byName(left, right),
+  name: byName,
+  // 新加进来的在前。答不出创建时刻的沉底，而不是被当成 1970 年建的。
+  created: (left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0) || byName(left, right),
+}
+
 const SELECTED_KEY = 'fern.instance.selected'
+const ORDER_KEY = 'fern.instances.order'
+
+const savedOrder = (): Order => {
+  const saved = localStorage.getItem(ORDER_KEY)
+  return ORDERS.some((item) => item.value === saved) ? (saved as Order) : 'played'
+}
+
 /** 浏览器里跑 `pnpm dev` 时的兜底存储，让界面在没有 Tauri 的情况下也能走通。 */
 const PREVIEW_KEY = 'fern.instances.preview'
 
@@ -145,18 +181,26 @@ class InstanceStore {
   current = $derived(this.list.find((item) => item.id === this.selectedId) ?? this.list[0])
 
   /**
-   * 曲库的排列顺序：最近玩过的在前，没玩过的按名字排在后面。
+   * 最近玩过的在前，没玩过的按名字排在后面。
    *
    * 「上次玩的那个」几乎总是「这次要玩的那个」，所以这个顺序本身就是一次
-   * 免费的推荐；从没玩过的实例反而需要一个稳定的位置才找得到。
+   * 免费的推荐。要给一个实例选东西的那些地方（补给站的目标实例）用它，而且
+   * 不跟着曲库的排序走——那是曲库的视图偏好，不是所有列表的顺序。
    */
-  recent = $derived(
-    [...this.list].sort((left, right) => {
-      const a = left.lastPlayed ?? 0
-      const b = right.lastPlayed ?? 0
-      return b - a || left.name.localeCompare(right.name, 'zh-Hans-CN')
-    }),
-  )
+  recent = $derived([...this.list].sort(SORTS.played))
+
+  /** 曲库当前按什么排。记在本地，下次打开还是这个。 */
+  order = $state<Order>(savedOrder())
+  ordered = $derived([...this.list].sort(SORTS[this.order]))
+
+  setOrder(order: Order) {
+    this.order = order
+    try {
+      localStorage.setItem(ORDER_KEY, order)
+    } catch {
+      // 记不住只是下次回到默认顺序，不值得打断使用。
+    }
+  }
 
   select(id: string) {
     this.selectedId = id

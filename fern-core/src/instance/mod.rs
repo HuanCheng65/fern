@@ -285,6 +285,17 @@ pub struct InstanceProfile {
     /// 时刻而不是次数：次数会让一个玩过一次就弃掉的实例永远排在前面。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_played: Option<u64>,
+    /// 这个实例是什么时候出现在这里的，Unix 秒。
+    ///
+    /// **是「加进 Fern 的时刻」，不是「这个游戏目录多老」**——接手一个用了
+    /// 三年的 `.minecraft`，它在这份名单上的年龄从今天算起。这是曲库排序要
+    /// 的那个答案：用户记得的是「我上周建的那个」。
+    ///
+    /// 老实例的描述里没有这一项。读的时候拿实例目录的创建时刻补上（见
+    /// [`catalog::list_instances`]），补不出来就是 `None`——有的文件系统答不
+    /// 出这个问题，那时排在最后，而不是假装它建于 1970 年。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
     /// 这个实例累计跑了多少秒。
     ///
     /// 只累计**窗口真的开出来过**的那些次：起不来的那几次每次也占十几秒，
@@ -425,10 +436,21 @@ impl InstanceProfile {
             },
             settings: InstanceSettings::default(),
             external: None,
+            // 这个构造函数是所有实例的必经之路——自己建的、从 Prism 导的、
+            // 接手别人目录的，都从这里出发，所以时刻只要在这里盖一次。
+            created_at: now_seconds(),
             last_played: None,
             play_seconds: 0,
         }
     }
+}
+
+/// 此刻，Unix 秒。系统时钟在 1970 之前的话就当不知道。
+fn now_seconds() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|since| since.as_secs())
 }
 
 #[cfg(test)]

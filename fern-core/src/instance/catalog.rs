@@ -57,9 +57,20 @@ pub fn list_instances(paths: &DataPaths) -> Result<Vec<InstanceProfile>> {
         let mut raw: serde_json::Value = serde_json::from_slice(&bytes)
             .with_context(|| format!("parse {}", config.display()))?;
         InstanceProfile::migrate(&mut raw);
-        profiles.push(
-            serde_json::from_value(raw).with_context(|| format!("parse {}", config.display()))?,
-        );
+        let mut profile: InstanceProfile =
+            serde_json::from_value(raw).with_context(|| format!("parse {}", config.display()))?;
+        // 这一项是后来才有的，老实例的描述里没有。目录建出来的时刻就是这个
+        // 实例出现的时刻，是手上唯一一个真实的答案——不写回磁盘，下一次写描
+        // 述时它会自己跟着落盘。有的文件系统答不出创建时刻，那就让它空着。
+        if profile.created_at.is_none() {
+            profile.created_at = entry
+                .metadata()
+                .and_then(|meta| meta.created())
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|since| since.as_secs());
+        }
+        profiles.push(profile);
     }
     profiles.sort_by(|left: &InstanceProfile, right: &InstanceProfile| left.name.cmp(&right.name));
     Ok(profiles)
@@ -630,6 +641,33 @@ mod tests {
             ok.loader_component().map(|p| p.version_id.as_str()),
             Some("")
         );
+
+        fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn instances_know_when_they_appeared() {
+        let root = std::env::temp_dir().join(format!("fern-created-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+        let profile = create_instance(&paths, "Moss", "1.21.1").expect("create instance");
+        let id = profile.id.as_str().to_owned();
+        let stamped = profile.created_at.expect("建出来就该知道是什么时候建的");
+
+        // 老实例的描述里没有这一项。读的时候补，而且补出来的要是个说得通的
+        // 时刻——目录就是刚刚建的。文件系统答不出创建时刻时补不上，那也对。
+        let config = paths.instance_config(&id);
+        let mut raw: serde_json::Value =
+            serde_json::from_slice(&fs::read(&config).expect("read profile")).expect("parse");
+        raw.as_object_mut().expect("object").remove("createdAt");
+        fs::write(&config, serde_json::to_vec(&raw).expect("serialize")).expect("write profile");
+
+        let reread = read_instance(&paths, &id).expect("read back");
+        if let Some(filled) = reread.created_at {
+            assert!(
+                filled.abs_diff(stamped) < 60 * 60 * 24,
+                "补出来的时刻离建实例的时刻太远：{filled} vs {stamped}"
+            );
+        }
 
         fs::remove_dir_all(root).expect("remove test data");
     }

@@ -12,19 +12,23 @@
    * 事，而三十张卡片铺开时，找一个实例是这一屏最常发生的动作。所以那一格长
    * 得像搜索框，按下去却是打开面板——它不是第二个搜索框，是同一个搜索的入口。
    *
+   * 排序默认仍是「最近游玩」。另外两档在的理由是位置：那个顺序每玩一次就重排
+   * 一遍，而认一张卡片靠的正是它在哪，扫一遍自己有什么的时候位置得是稳的。
+   *
    * 两个动作要分清：点卡片是「看」（推入详情），悬停时那颗按钮是「玩」。
    * 「设为当前」在详情里——它会改变启动场景上摆着的是谁，不该是随手一点
    * 就发生的事。
    */
-  import { FolderOpen, Plus, Search } from 'lucide-svelte'
+  import { ChevronDown, FolderOpen, Plus, Search } from 'lucide-svelte'
   import { palette } from 'fern-kit/parts/palette'
+  import Menu from 'fern-kit/ui/Menu.svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import InstanceCard from 'fern-kit/parts/InstanceCard.svelte'
   import Loading from '../components/Loading.svelte'
   import Collection from '../layouts/Collection.svelte'
   import InstanceDetail from './InstanceDetail.svelte'
   import NewInstance from './NewInstance.svelte'
-  import { CREATE, EXISTING, instances } from '../lib/instances.svelte'
+  import { CREATE, EXISTING, ORDERS, instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { platform } from '../lib/frame.svelte'
@@ -52,6 +56,9 @@
     nav.show('palette')
   }
   const findKeys = platform === 'macos' ? '⌘K' : 'Ctrl K'
+  const orderLabel = $derived(
+    ORDERS.find((item) => item.value === instances.order)?.label ?? ORDERS[0]!.label,
+  )
 
   /**
    * 这一屏叫什么，由它自己说。
@@ -104,7 +111,12 @@
 {:else}
   <Collection>
     {#snippet controls()}
-      <span class="t-quiet">{instances.list.length} 个实例</span>
+      <div class="status">
+        <span class="t-quiet">{instances.list.length} 个实例</span>
+        <Menu aria-label="排列顺序" items={ORDERS} onpick={(value) => instances.setOrder(value)}>
+          {orderLabel}<ChevronDown size={13} strokeWidth={2} />
+        </Menu>
+      </div>
       <div class="acts">
         <button class="find" onclick={onfind}>
           <Search size={13} strokeWidth={1.9} />
@@ -119,7 +131,7 @@
     {/snippet}
 
     <div class="grid">
-      {#each instances.recent as item, index (item.id)}
+      {#each instances.ordered as item, index (item.id)}
         <div in:riseIn={{ index }}>
           <InstanceCard
             name={item.name}
@@ -155,6 +167,12 @@
     display: flex;
     align-items: center;
     gap: var(--s4);
+  }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
   }
 
   .acts {
