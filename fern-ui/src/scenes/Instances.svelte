@@ -19,9 +19,9 @@
    * 「设为当前」在详情里——它会改变启动场景上摆着的是谁，不该是随手一点
    * 就发生的事。
    */
-  import { ChevronDown, FolderOpen, Plus, Search } from 'lucide-svelte'
+  import { FolderOpen, Plus, Search } from 'lucide-svelte'
   import { palette } from 'fern-kit/parts/palette'
-  import Menu from 'fern-kit/ui/Menu.svelte'
+  import Select from 'fern-kit/ui/Select.svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import InstanceCard from 'fern-kit/parts/InstanceCard.svelte'
   import Loading from '../components/Loading.svelte'
@@ -56,9 +56,6 @@
     nav.show('palette')
   }
   const findKeys = platform === 'macos' ? '⌘K' : 'Ctrl K'
-  const orderLabel = $derived(
-    ORDERS.find((item) => item.value === instances.order)?.label ?? ORDERS[0]!.label,
-  )
 
   /**
    * 这一屏叫什么，由它自己说。
@@ -113,9 +110,17 @@
     {#snippet controls()}
       <div class="status">
         <span class="t-quiet">{instances.list.length} 个实例</span>
-        <Menu aria-label="排列顺序" items={ORDERS} onpick={(value) => instances.setOrder(value)}>
-          {orderLabel}<ChevronDown size={13} strokeWidth={2} />
-        </Menu>
+        <!-- 和补给站那一处是同一件事，所以是同一个控件（设计文档 §相同的事情）。 -->
+        <label class="sort">
+          <span class="t-quiet">排序</span>
+          <Select
+            variant="bare"
+            aria-label="排序"
+            options={ORDERS}
+            value={instances.order}
+            onchange={(value) => instances.setOrder(value)}
+          />
+        </label>
       </div>
       <div class="acts">
         <button class="find" onclick={onfind}>
@@ -172,7 +177,13 @@
   .status {
     display: flex;
     align-items: center;
-    gap: var(--s3);
+    gap: var(--s4);
+  }
+
+  .sort {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
   }
 
   .acts {
