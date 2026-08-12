@@ -6,14 +6,18 @@
    * 封面就是它们的脸。上一版是左列表右详情，那正是设计文档点名要避开的
    * SaaS 形状；网格让封面成为主视觉，也让这一屏有自己的主视觉。
    *
-   * 卡片上只有封面、名称、版本与加载器，克制到此为止。以这个启动器面向的
-   * 实例数量，搜索交给 ⌘K 就够，场景内不放搜索框。
+   * 卡片上只有封面、名称、版本与加载器，克制到此为止。
+   *
+   * 搜索交给命令面板，但这一屏要有一个**看得见的入口**：⌘K 是老用户才知道的
+   * 事，而三十张卡片铺开时，找一个实例是这一屏最常发生的动作。所以那一格长
+   * 得像搜索框，按下去却是打开面板——它不是第二个搜索框，是同一个搜索的入口。
    *
    * 两个动作要分清：点卡片是「看」（推入详情），悬停时那颗按钮是「玩」。
    * 「设为当前」在详情里——它会改变启动场景上摆着的是谁，不该是随手一点
    * 就发生的事。
    */
-  import { FolderOpen, Plus } from 'lucide-svelte'
+  import { FolderOpen, Plus, Search } from 'lucide-svelte'
+  import { palette } from 'fern-kit/parts/palette'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import InstanceCard from 'fern-kit/parts/InstanceCard.svelte'
   import Loading from '../components/Loading.svelte'
@@ -23,6 +27,7 @@
   import { CREATE, EXISTING, instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
+  import { platform } from '../lib/frame.svelte'
   import { expand, riseIn } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -40,6 +45,13 @@
    * 用户先回答「我用的是哪个启动器」。
    */
   const onadopt = () => nav.open(EXISTING)
+
+  /** 面板带着「只找实例」这个范围打开，和点实例名呼出的切换器是同一个东西。 */
+  const onfind = () => {
+    palette.open({ kind: 'subjects', type: 'instance', label: '实例' })
+    nav.show('palette')
+  }
+  const findKeys = platform === 'macos' ? '⌘K' : 'Ctrl K'
 
   /**
    * 这一屏叫什么，由它自己说。
@@ -93,10 +105,17 @@
   <Collection>
     {#snippet controls()}
       <span class="t-quiet">{instances.list.length} 个实例</span>
-      <Button variant="link" onclick={oncreate}><Plus size={14} />新建实例</Button>
-      <Button variant="link" onclick={onadopt}>
-        <FolderOpen size={14} strokeWidth={1.8} />添加现有游戏
-      </Button>
+      <div class="acts">
+        <button class="find" onclick={onfind}>
+          <Search size={13} strokeWidth={1.9} />
+          <span>搜索实例</span>
+          <kbd>{findKeys}</kbd>
+        </button>
+        <Button variant="link" onclick={oncreate}><Plus size={14} />新建实例</Button>
+        <Button variant="link" onclick={onadopt}>
+          <FolderOpen size={14} strokeWidth={1.8} />添加现有游戏
+        </Button>
+      </div>
     {/snippet}
 
     <div class="grid">
@@ -136,6 +155,49 @@
     display: flex;
     align-items: center;
     gap: var(--s4);
+  }
+
+  .acts {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+  }
+
+  /* 长得像一格搜索框，做的是「打开面板」——所以它不收键盘输入，也不留光标。 */
+  .find {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 28px;
+    padding: 0 var(--s2) 0 var(--s3);
+    border-radius: var(--r1);
+    background: var(--tint-1);
+    box-shadow: inset 0 0 0 1px var(--hairline-2);
+    color: var(--ink-4);
+    font-size: var(--t-micro);
+    transition: color var(--t-fast) var(--ease);
+  }
+
+  .find:hover {
+    color: var(--ink-2);
+  }
+
+  .find span {
+    padding-right: var(--s3);
+  }
+
+  .find kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 5px;
+    background: var(--tint-1);
+    box-shadow: inset 0 0 0 1px var(--hairline-2);
+    color: var(--ink-4);
+    font-family: var(--mono);
+    font-size: 10px;
   }
 
   .blank {
