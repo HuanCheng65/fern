@@ -455,6 +455,19 @@ pub fn touch_played(paths: &DataPaths, instance_id: &str) -> Result<()> {
     write_instance_profile(paths, &profile)
 }
 
+/// 把这一次玩的时长累加进去。
+///
+/// 在进程退出之后调用，而且只在窗口真的开出来过的那些次——判断在调用方
+/// （`launch`），因为「算不算跑起来了」是那一侧观察到的事实。
+pub fn add_play_time(paths: &DataPaths, instance_id: &str, seconds: u64) -> Result<()> {
+    if seconds == 0 {
+        return Ok(());
+    }
+    let mut profile = read_instance(paths, instance_id)?;
+    profile.play_seconds = profile.play_seconds.saturating_add(seconds);
+    write_instance_profile(paths, &profile)
+}
+
 /// 读一个实例的配置。
 ///
 /// 好几处都要先拿到实例才知道下一步做什么（补全要看加载器、作业要拿名字当
@@ -616,6 +629,33 @@ mod tests {
         assert_eq!(
             ok.loader_component().map(|p| p.version_id.as_str()),
             Some("")
+        );
+
+        fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn play_time_accumulates_across_sessions() {
+        let root = std::env::temp_dir().join(format!("fern-playtime-{}", std::process::id()));
+        let paths = DataPaths::new(&root);
+        let profile = create_instance(&paths, "Moss", "1.21.1").expect("create instance");
+        let id = profile.id.as_str();
+        assert_eq!(profile.play_seconds, 0);
+
+        // 一次会话加一次，不是「记住最近这一次」——上一版的时长会被下一场
+        // 覆盖掉，玩了一百小时也永远显示最后那一场。
+        add_play_time(&paths, id, 90).expect("first session");
+        add_play_time(&paths, id, 30).expect("second session");
+        assert_eq!(
+            read_instance(&paths, id).expect("read back").play_seconds,
+            120
+        );
+
+        // 没跑起来的那一次给的是 0 秒，写盘都不必发生。
+        add_play_time(&paths, id, 0).expect("empty session");
+        assert_eq!(
+            read_instance(&paths, id).expect("read back").play_seconds,
+            120
         );
 
         fs::remove_dir_all(root).expect("remove test data");

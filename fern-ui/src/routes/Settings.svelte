@@ -1333,7 +1333,7 @@
                           <li>
                             <span class="detail-name">
                               {item.name}
-                              {#if item.external}
+                              {#if item.externalRoot}
                                 <small class="t-quiet">外部目录，游戏文件不计入</small>
                               {/if}
                             </span>

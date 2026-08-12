@@ -23,19 +23,36 @@ import { nav } from './nav.svelte'
 export const CREATE = 'new'
 export const EXISTING = 'existing'
 
+/**
+ * 实例的一层。
+ *
+ * 一个实例是一摞有序的层，不是「一个版本加一个加载器」——第 0 层是游戏本体，
+ * 加载器叠在它上面。界面上此前只说得出「Fabric」，说不出是哪一版，而装模组前
+ * 要知道的恰恰是后者。
+ */
+export interface Layer {
+  /** 显示名：游戏本体那一层是 Minecraft，其余是加载器名。 */
+  name: string
+  version: string
+}
+
 export interface Instance {
   id: string
   name: string
   gameVersion: string
   loader: string
+  /** 从游戏本体开始，按叠放顺序。 */
+  layers: Layer[]
   /** 封面的恒定种子。用它而不是名字——改个名字不该换一张脸。 */
   cover: string
   /** 上次玩过的 Unix 秒。从没玩过是 undefined。 */
   lastPlayed?: number
+  /** 累计游玩秒数。没有记录过是 0。 */
+  playSeconds: number
   /** 这个实例用哪个账户。没记过就是 undefined，跟着当前账户走。 */
   accountId?: string
-  /** 游戏文件在 Fern 数据目录之外（导入的现有 .minecraft）。 */
-  external?: boolean
+  /** 游戏文件所在的目录。只有外部实例有——它的文件不在 Fern 的数据目录里。 */
+  externalRoot?: string
 }
 
 export interface VersionOption {
@@ -57,10 +74,12 @@ interface CoreInstance {
   name: string
   gameVersion: string
   loader: string
+  components?: { kind: string; version: string }[]
   cover?: { identity: string }
   lastPlayed?: number
+  playSeconds?: number
   accountId?: string
-  external?: unknown
+  external?: { root: string }
 }
 
 export const inTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -78,15 +97,35 @@ const LOADER_NAMES: Record<string, string> = {
 
 export const loaderName = (loader: string) => LOADER_NAMES[loader] ?? loader
 
+/**
+ * 层表。
+ *
+ * 游戏本体那一层的 kind 也是 vanilla，但它不是一个加载器——在界面上它叫
+ * Minecraft。层表为空的实例（还没迁移过的旧描述）退回版本号那一层，列表里
+ * 至少要说得出这是哪个版本。
+ */
+const toLayers = (profile: CoreInstance): Layer[] => {
+  const components = profile.components ?? []
+  if (components.length === 0) {
+    return [{ name: 'Minecraft', version: profile.gameVersion }]
+  }
+  return components.map((component) => ({
+    name: component.kind === 'vanilla' ? 'Minecraft' : loaderName(component.kind),
+    version: component.version,
+  }))
+}
+
 const toInstance = (profile: CoreInstance): Instance => ({
   id: profile.id,
   name: profile.name,
   gameVersion: profile.gameVersion,
   loader: loaderName(profile.loader),
+  layers: toLayers(profile),
   cover: profile.cover?.identity || profile.id,
   lastPlayed: profile.lastPlayed,
+  playSeconds: profile.playSeconds ?? 0,
   accountId: profile.accountId,
-  external: profile.external != null,
+  externalRoot: profile.external?.root,
 })
 
 const SELECTED_KEY = 'fern.instance.selected'

@@ -23,7 +23,8 @@
   import SaveList from '../components/SaveList.svelte'
   import Snapshots from '../components/Snapshots.svelte'
   import { instances, type Instance } from '../lib/instances.svelte'
-  import { jobs } from '../lib/jobs.svelte'
+  import { formatBytes, jobs } from '../lib/jobs.svelte'
+  import { instanceStorage } from '../lib/storage'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { prefs } from '../lib/prefs.svelte'
@@ -92,6 +93,40 @@
       ? '尚未玩过'
       : `上次游玩 ${new Date(instance.lastPlayed * 1000).toLocaleDateString('zh-CN')}`,
   )
+
+  /**
+   * 这个实例占多大。
+   *
+   * 进来才量，而且是异步的——一个几百个模组的实例要把整棵目录树 stat 一遍。
+   * 量出来之前这一格写「正在计算」，不写 0：0 是一个具体的数字，而我们此刻
+   * 还不知道答案。
+   *
+   * 外部实例不量：那个数字只包含 Fern 这边的快照和日志，游戏文件一个字节都
+   * 不在里面，写出来会被读成「这个实例只有 12 MB」。它那一格改说文件在哪。
+   */
+  let bytes = $state<number | undefined>(undefined)
+  $effect(() => {
+    const id = instance.id
+    bytes = undefined
+    if (instance.externalRoot) return
+    void instanceStorage(id).then((value) => {
+      if (id === instance.id) bytes = value
+    })
+  })
+
+  /**
+   * 累计玩了多久。
+   *
+   * 只有一个单位：小时以上不再说分钟——「玩了 37 小时」是这句话要传达的全部，
+   * 后面跟一个分钟数并不会让它更准确。不足一小时才说分钟，否则一场刚玩完的
+   * 会话会显示成 0。
+   */
+  const playedFor = $derived.by(() => {
+    const seconds = instance.playSeconds
+    if (seconds < 60) return '不足 1 分钟'
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`
+    return `${Math.floor(seconds / 3600)} 小时`
+  })
 </script>
 
 <Detail {tabs} {tab} ontab={(id) => nav.setTab(id)}>
@@ -181,10 +216,35 @@
         {/each}
       </section>
     {/if}
+    <!--
+      一个实例是一摞层，摆出来的就是那一摞：游戏本体在最上面，加载器叠在它
+      上面，顺序即合并顺序。此前这里只写着「Fabric」，而装模组之前要知道的
+      是哪一版。
+    -->
+    <dl class="layers">
+      {#each instance.layers as layer, index (index)}
+        <div>
+          <dt>{layer.name}</dt>
+          <dd class="t-mono">{layer.version}</dd>
+        </div>
+      {/each}
+    </dl>
     <dl class="grid">
-      <div><dt>Minecraft</dt><dd class="t-mono">{instance.gameVersion}</dd></div>
-      <div><dt>加载器</dt><dd class="t-mono">{instance.loader}</dd></div>
       <div><dt>实例 ID</dt><dd class="t-mono selectable">{instance.id}</dd></div>
+      {#if instance.externalRoot}
+        <div class="wide">
+          <dt>游戏文件</dt>
+          <dd class="t-mono selectable">{instance.externalRoot}</dd>
+        </div>
+      {:else}
+        <div>
+          <dt>占用</dt>
+          <dd class="t-mono">{bytes === undefined ? '正在计算' : formatBytes(bytes)}</dd>
+        </div>
+      {/if}
+      {#if instance.playSeconds > 0}
+        <div><dt>游玩时长</dt><dd class="t-mono">{playedFor}</dd></div>
+      {/if}
     </dl>
     <div class="links">
       <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId: instance.id })}>
@@ -293,11 +353,46 @@
     margin-bottom: var(--s5);
   }
 
+  /* 一层一行，版本号右对齐成一列——一摞层要看起来是一摞。 */
+  .layers {
+    display: grid;
+    margin: 0 0 var(--s5);
+    max-width: 420px;
+  }
+
+  .layers div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s4);
+    padding: var(--s2) 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .layers div:last-child {
+    border-bottom: none;
+  }
+
+  .layers dt {
+    color: var(--ink-2);
+    font-size: var(--t-body);
+  }
+
+  .layers dd {
+    margin: 0;
+    color: var(--ink-4);
+    font-size: var(--t-micro);
+  }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: var(--s4);
     margin: 0;
+  }
+
+  .grid .wide {
+    grid-column: 1 / -1;
   }
 
   .grid dt {

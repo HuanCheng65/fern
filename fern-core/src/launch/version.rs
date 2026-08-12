@@ -295,6 +295,7 @@ mod tests {
             account_id: None,
             external: None,
             last_played: None,
+            play_seconds: 0,
         }
     }
 

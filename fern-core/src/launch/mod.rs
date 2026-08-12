@@ -652,6 +652,7 @@ pub async fn launch_instance(
     let crash_minecraft = profile.game_version.clone();
     let crash_mods_directory = plan.working_directory.join("mods");
     let snapshot_paths = launcher_paths.clone();
+    let played_paths = launcher_paths.clone();
     let session = SessionRecord {
         paths: paths.clone(),
         instance_id: instance_id.to_owned(),
@@ -699,6 +700,17 @@ pub async fn launch_instance(
         // 记不下来只是少学一次，绝不能影响别的任何事，所以错误只进日志。
         if let Err(error) = session.store(&log_tail) {
             let _ = append_launch_log(&wait_log, &format!("memory history not recorded: {error}"));
+        }
+
+        // 这一次玩了多久。只有窗口开出来过才算——起不来的那几次也各占十几秒，
+        // 累进去的话，一个从来没成功进过游戏的实例会显示玩了半小时。
+        if ever_running {
+            let seconds = started_at.elapsed().map_or(0, |elapsed| elapsed.as_secs());
+            if let Err(error) =
+                crate::instance::catalog::add_play_time(&played_paths, &wait_instance, seconds)
+            {
+                let _ = append_launch_log(&wait_log, &format!("play time not recorded: {error}"));
+            }
         }
 
         // 正常关掉游戏不该在界面上留下任何痕迹，崩了才需要说话。信号退出

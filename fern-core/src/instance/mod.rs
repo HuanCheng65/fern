@@ -285,6 +285,19 @@ pub struct InstanceProfile {
     /// 时刻而不是次数：次数会让一个玩过一次就弃掉的实例永远排在前面。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_played: Option<u64>,
+    /// 这个实例累计跑了多少秒。
+    ///
+    /// 只累计**窗口真的开出来过**的那些次：起不来的那几次每次也占十几秒，
+    /// 记进去就成了「玩了半小时」，而那半小时里一次游戏都没进过。
+    ///
+    /// 存秒不存分：一次会话不足一分钟的很常见（进去看一眼就退），按分钟累加
+    /// 每次都归零，一天下来还是零。
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub play_seconds: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl InstanceProfile {
@@ -413,6 +426,7 @@ impl InstanceProfile {
             settings: InstanceSettings::default(),
             external: None,
             last_played: None,
+            play_seconds: 0,
         }
     }
 }
