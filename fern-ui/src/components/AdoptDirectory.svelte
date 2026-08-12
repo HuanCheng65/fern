@@ -315,8 +315,14 @@
   {/if}
 
   <div class="picker">
-    <Button variant="ghost" loading={busy === 'scan'} disabled={busy !== ''} onclick={() => void choose()}>
-      <FolderOpen size={14} strokeWidth={1.8} />{directory ? '更换目录' : '选择目录'}
+    <Button
+      variant="ghost"
+      loading={busy === 'scan'}
+      disabled={busy !== ''}
+      onclick={() => void choose()}
+    >
+      {#snippet icon()}<FolderOpen size={14} strokeWidth={1.8} />{/snippet}
+      {directory ? '更换目录' : '选择目录'}
     </Button>
     {#if directory}
       <span class="chosen t-mono selectable">{directory}</span>

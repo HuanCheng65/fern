@@ -585,11 +585,13 @@
     <Button onclick={() => nav.up()}>取消</Button>
     {#if pack}
       <Button variant="primary" loading={busy} onclick={() => void importPack()}>
-        <Plus size={15} />导入整合包
+        {#snippet icon()}<Plus size={15} />{/snippet}
+        导入整合包
       </Button>
     {:else}
       <Button variant="primary" loading={busy} onclick={() => void submit()}>
-        <Plus size={15} />创建
+        {#snippet icon()}<Plus size={15} />{/snippet}
+        创建
       </Button>
     {/if}
   </footer>

@@ -44,6 +44,8 @@
      * 隐含 disabled，但**不改标签**：把「清除」换成「正在清除……」会让按钮当场
      * 变宽，一排按钮跟着动，而且各处的省略号还各写各的。动的是标志和掠过表面的
      * 那道光——它们比一句话更能说明「还活着」，也更安静。
+     *
+     * 给一颗有前导图标的按钮加上这个 prop 时，记得把那个图标挪进 `icon`。
      */
     loading?: boolean
     /**
@@ -52,6 +54,17 @@
      * 不必和 `loading` 一起给：知道进度本来就意味着在忙。
      */
     progress?: number
+    /**
+     * 前导图标。
+     *
+     * **会进加载态的按钮，图标必须放这里。** 忙起来时标志顶掉的正是这个位置：
+     * 写在 children 里，标志只能长在它前面，于是一颗按钮上并排两个图标。
+     * 放在这里，加载态就是「图标变成了标志」——位置不动，宽度也几乎不动。
+     *
+     * 从不加载的按钮把图标写在 children 里也对，`{#snippet}` 那三行的仪式感
+     * 换不来任何东西。
+     */
+    icon?: Snippet
     /** 布局用。见上面为什么调用方要配 `:global`。 */
     class?: string
     children?: Snippet
@@ -62,6 +75,7 @@
     tone = 'default',
     loading = false,
     progress,
+    icon,
     class: extra = '',
     // HTML 的默认值是 submit，但这套界面里绝大多数按钮不在表单里，
     // 一个漏写 type 的按钮会把最近的表单提交掉。真要提交的地方都显式写了。
@@ -133,14 +147,19 @@
     ></span>
   {/if}
   <!--
-    标志从零宽长出来，而不是「啪」地占一格。间距自己带着走，收起来时一并
-    收掉——`gap` 对零宽的孩子照样生效，不这样处理就会留下一道空隙。
+    图标位。有图标时它一直在，忙起来只是换个内容；没有图标时它从零宽长出来，
+    而不是「啪」地占一格——间距自己带着走，收起来时一并收掉（`gap` 对零宽的
+    孩子照样生效，不这样处理会留下一道空隙）。
 
-    只在忙的时候才挂上去：标志是 33 个 rect，而这个界面上同时存在几十颗按钮。
+    不忙又没图标就整个不挂：标志是 33 个 rect，而这个界面上同时有几十颗按钮。
   -->
-  {#if working}
-    <span class="spinner" aria-hidden="true">
-      <Mark size={markSize} spinning={shown} />
+  {#if icon || working}
+    <span class="lead" class:grow={!icon} aria-hidden="true">
+      {#if shown}
+        <Mark size={markSize} spinning />
+      {:else if icon}
+        {@render icon()}
+      {/if}
     </span>
   {/if}
   {@render children?.()}
@@ -251,13 +270,16 @@
     }
   }
 
-  /*
-   * 标志占的宽度从 0 长到一格。间距连同宽度一起收，所以不忙的时候它对布局
-   * 完全没有影响——包括那些从来不传 loading 的按钮。
-   */
-  .spinner {
+  .lead {
     display: inline-flex;
     align-items: center;
+  }
+
+  /*
+   * 没有图标可换的时候，这个位置是从 0 长出来的。间距连同宽度一起收，所以
+   * 不忙的时候它对布局完全没有影响——包括那些从来不传 loading 的按钮。
+   */
+  .lead.grow {
     overflow: hidden;
     width: 0;
     margin-right: calc(var(--btn-gap) * -1);
@@ -268,7 +290,7 @@
       opacity var(--t-fast) var(--ease);
   }
 
-  .btn.shown .spinner {
+  .btn.shown .lead.grow {
     width: var(--mark);
     margin-right: 0;
     opacity: 1;

@@ -123,7 +123,7 @@
       {/if}
     </span>
     <Button variant="ghost" loading={taking} disabled={running} onclick={() => void take()}>
-      <Camera size={14} strokeWidth={1.9} />
+      {#snippet icon()}<Camera size={14} strokeWidth={1.9} />{/snippet}
       {ui.snapshots.take}
     </Button>
   </div>
