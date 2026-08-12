@@ -17,9 +17,19 @@
     lines: GameLogLine[]
     /** 空的时候说什么。两个调用方的语境不同。 */
     emptyNote?: string
+    /**
+     * 这段日志自己滚，还是跟着页面滚。
+     *
+     * 浮层里自己滚：那儿高度是定死的，而且滚轮不该穿到背后的页面上去。详情页的
+     * tab 里跟着页面滚——那一屏在滚的是 `layouts/Detail.svelte` 的容器，日志块
+     * 本身没有高度上限，永远不会有自己的滚动条。`.scroll` 只能刷在本来就在滚的
+     * 那个元素上（见 `fern-kit/src/styles/elements.css`）：刷错了地方，这块就成
+     * 了一个立刻触底的滚动容器，光标停在日志上时滚轮会被它整个吃掉，页面不动。
+     */
+    scrolls?: boolean
   }
 
-  let { lines, emptyNote = '本次运行尚无输出。' }: Props = $props()
+  let { lines, emptyNote = '本次运行尚无输出。', scrolls = false }: Props = $props()
 
   /** 只看有问题的。默认全看——过滤是找问题时才用的动作。 */
   let onlyProblems = $state(false)
@@ -48,7 +58,7 @@
 {#if lines.length === 0}
   <p class="empty t-quiet">{emptyNote}</p>
 {:else}
-  <div class="lines scroll">
+  <div class="lines" class:scroll={scrolls}>
     {#each shown as line, index (index)}
       <p class="line t-mono {levelClass(line.level)}">{line.message}</p>
     {/each}

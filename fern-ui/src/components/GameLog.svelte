@@ -40,7 +40,8 @@
   </header>
 
   <div class="body">
-    <LogLines lines={launch.log} />
+    <!-- 浮层的高度是定死的，所以这段自己滚。 -->
+    <LogLines lines={launch.log} scrolls />
   </div>
 </Dialog>
 
