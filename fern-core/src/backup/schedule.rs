@@ -76,7 +76,12 @@ pub struct Held {
 ///
 /// 一遍走完，不反复扫仓库：每删一张就重新量一次占用是几次全目录遍历，而这件事
 /// 发生在刚拍完一张快照之后，那时磁盘已经忙过一轮了。
-pub fn over_limit(held: &[Held], size_of: &dyn Fn(&str) -> u64, total: u64, limit: u64) -> Vec<(String, String)> {
+pub fn over_limit(
+    held: &[Held],
+    size_of: &dyn Fn(&str) -> u64,
+    total: u64,
+    limit: u64,
+) -> Vec<(String, String)> {
     if total <= limit {
         return Vec::new();
     }
@@ -90,7 +95,11 @@ pub fn over_limit(held: &[Held], size_of: &dyn Fn(&str) -> u64, total: u64, limi
 
     // 从旧到新。同一时刻的按 id 定序，免得两次运行剪掉不同的那一张。
     let mut ordered: Vec<&Held> = held.iter().filter(|snapshot| !snapshot.pinned).collect();
-    ordered.sort_by(|left, right| left.taken_at.cmp(&right.taken_at).then_with(|| left.id.cmp(&right.id)));
+    ordered.sort_by(|left, right| {
+        left.taken_at
+            .cmp(&right.taken_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
 
     let mut freed = 0u64;
     let mut doomed = Vec::new();

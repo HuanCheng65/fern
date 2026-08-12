@@ -64,9 +64,8 @@ impl Verified {
 
     /// 这个文件上次算出来的 sha1，前提是它的大小和修改时间都还是那时候的样子。
     pub(crate) fn recall(&self, path: &Path, metadata: &std::fs::Metadata) -> Option<String> {
-        if self.file.is_none() {
-            return None;
-        }
+        // 没有落盘位置的账本是关着的，一律说不知道。
+        self.file.as_ref()?;
         let stamp = stamp(path, metadata)?;
         let mut state = self.state.lock().ok()?;
         let known = state.known.get(&stamp).cloned()?;

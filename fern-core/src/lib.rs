@@ -60,8 +60,8 @@ pub use backup::select::{SkipReason, Skipped};
 pub use backup::{
     Diff as SnapshotDiff, InstanceUsage, Missing, Mode as RestoreMode, Restored,
     Scope as RestoreScope, Snapshot, Usage, collect_garbage, diff as snapshot_diff,
-    label as label_snapshot, list as list_snapshots, mod_files as snapshot_mod_files,
-    enforce_limit as enforce_snapshot_limit, limit_bytes as snapshot_limit_bytes,
+    enforce_limit as enforce_snapshot_limit, label as label_snapshot,
+    limit_bytes as snapshot_limit_bytes, list as list_snapshots, mod_files as snapshot_mod_files,
     prune as prune_snapshots, reasons as snapshot_reasons, remove as remove_snapshot,
     restore as restore_snapshot, take as take_snapshot, usage as backup_usage,
 };

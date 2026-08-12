@@ -1156,7 +1156,10 @@ mod tests {
         assert!(client.satisfied(&task).await.expect("first pass"));
 
         // 内容原地换成同样长的另一份，再把修改时间按回原样。
-        let stamp = std::fs::metadata(&path).expect("stat").modified().expect("mtime");
+        let stamp = std::fs::metadata(&path)
+            .expect("stat")
+            .modified()
+            .expect("mtime");
         tokio::fs::write(&path, b"leaf").await.expect("overwrite");
         std::fs::File::options()
             .write(true)

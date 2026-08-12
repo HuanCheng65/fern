@@ -609,17 +609,12 @@ fn the_size_limit_cuts_from_the_oldest_and_spares_the_manual_one() {
     let left = list(&paths, "moss").expect("list");
     assert!(left.iter().any(|snapshot| snapshot.id == manual.id));
     assert!(
-        left.iter().any(|snapshot| snapshot.id == newer.id)
-            || removed.contains(&newer.id),
+        left.iter().any(|snapshot| snapshot.id == newer.id) || removed.contains(&newer.id),
         "剩下的要么还在，要么被记在删除清单里"
     );
 
     // 没超的时候一张都不动，而且不必把每份清单都读一遍。
-    assert!(
-        enforce_limit(&paths, u64::MAX)
-            .expect("enforce")
-            .is_empty()
-    );
+    assert!(enforce_limit(&paths, u64::MAX).expect("enforce").is_empty());
 
     fs::remove_dir_all(root).expect("clean up");
 }

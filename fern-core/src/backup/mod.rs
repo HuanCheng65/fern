@@ -938,7 +938,9 @@ fn quietly_about(paths: &DataPaths, instance_id: &str, reason: Reason, about: Op
     if let Some(limit) = limit_bytes()
         && let Err(error) = enforce_limit(paths, limit)
     {
-        let _ = paths.append_log(&format!("snapshot limit for {instance_id} skipped: {error:#}"));
+        let _ = paths.append_log(&format!(
+            "snapshot limit for {instance_id} skipped: {error:#}"
+        ));
     }
 }
 
