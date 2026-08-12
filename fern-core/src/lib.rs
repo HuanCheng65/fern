@@ -233,11 +233,12 @@ pub use supply::plan::{
     DependencyKind, InstallPlan, PlannedFile, Requirement, RequirementState,
     resolve as resolve_install_plan,
 };
+pub use supply::survey::{ModUpdate, updates as mod_updates};
 pub use supply::{
     GalleryImage, InstallOutcome, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind,
     SearchHit, SearchQuery, SearchResult, Source, VersionDependency,
     install as install_from_modrinth, is_external_url, project as modrinth_project,
-    search as search_modrinth, versions as modrinth_versions,
+    search as search_modrinth, update_mod, versions as modrinth_versions,
 };
 
 /// Marker for the Pearl integration boundary.

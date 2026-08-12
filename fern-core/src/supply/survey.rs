@@ -66,9 +66,50 @@ pub async fn installed(
     paths: &DataPaths,
     game_directory: &Path,
 ) -> Result<HashMap<String, Installed>> {
+    let mut out = HashMap::new();
+    for file in identify(paths, game_directory).await? {
+        let entry = Installed {
+            project_id: file.version.project_id,
+            version_id: file.version.version_id,
+            version_number: file.version.version_number,
+            file_name: file.file_name,
+            enabled: file.enabled,
+            game_versions: file.version.game_versions,
+            loaders: file.version.loaders,
+        };
+        // 同一个项目装了两份（一份禁用的旧版）时，启用的那份说了算。
+        match out.entry(entry.project_id.clone()) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(entry);
+            }
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                if entry.enabled && !slot.get().enabled {
+                    slot.insert(entry);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 一个认得出身份的模组文件。
+pub(crate) struct Recognized {
+    /// 文件内容的 sha1。它就是这份文件在 Modrinth 上的主键。
+    pub(crate) hash: String,
+    pub(crate) file_name: String,
+    pub(crate) enabled: bool,
+    pub(crate) version: KnownVersion,
+}
+
+/// `mods/` 里每个认得出身份的文件是哪个版本。
+///
+/// 「已经装了什么」和「有没有新版」问的是同一件事的两面，中间这一步——哈希、
+/// 批量反查、把答案缓存下来——两边完全一样，各写一遍就会各缓存一份，同一批
+/// 两三个 G 的 jar 被读两遍。
+async fn identify(paths: &DataPaths, game_directory: &Path) -> Result<Vec<Recognized>> {
     let files = mod_files(game_directory);
     if files.is_empty() {
-        return Ok(HashMap::new());
+        return Ok(Vec::new());
     }
 
     let mut cache = Cache::read(paths);
@@ -103,34 +144,89 @@ pub async fn installed(
         cache.dirty = true;
     }
 
-    let mut out = HashMap::new();
-    for (hash, enabled, file_name) in hashes {
-        let Some(Some(version)) = cache.versions.get(&hash) else {
+    let recognized = hashes
+        .into_iter()
+        .filter_map(|(hash, enabled, file_name)| {
+            let version = cache.versions.get(&hash)?.clone()?;
+            Some(Recognized {
+                hash,
+                file_name,
+                enabled,
+                version,
+            })
+        })
+        .collect();
+    cache.write(paths);
+    Ok(recognized)
+}
+
+/// 这个实例里有新版的那些模组。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModUpdate {
+    /// 磁盘上现在那一份。装上新版之后要把它删掉。
+    pub file_name: String,
+    /// 项目名。文件名认不出是什么的时候，只有它能读。
+    pub title: String,
+    pub current: String,
+    pub latest: String,
+    /// 新版本的 id，装它用的。
+    pub version_id: String,
+    /// 这份文件现在是不是启用的。
+    pub enabled: bool,
+}
+
+/// 查一遍哪些模组有新版。
+///
+/// **只在用户按下那一刻查。** 每次打开列表都联网，等于替所有人决定这件事值得
+/// 一次等待和一次请求；而它的答案几天才变一次。
+///
+/// 只看这个实例跑得起来的版本：一个只发了 1.21 版的更新，对 1.20.1 的实例来说
+/// 不是「有新版」，是「不适用」——把它列出来，按下去就是一个起不来的游戏。
+pub async fn updates(paths: &DataPaths, instance_id: &str) -> Result<Vec<ModUpdate>> {
+    let profile = crate::read_instance(paths, instance_id)?;
+    let game_directory = crate::instance::paths_for(paths, &profile).game_directory(instance_id);
+    let files = identify(paths, &game_directory).await?;
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let hashes: Vec<String> = files.iter().map(|file| file.hash.clone()).collect();
+    let latest = super::latest_by_hash(&hashes, &profile.game_version, profile.loader).await?;
+
+    let mut updates = Vec::new();
+    let mut projects = Vec::new();
+    for file in &files {
+        let Some(newer) = latest.get(&file.hash) else {
             continue;
         };
-        let entry = Installed {
-            project_id: version.project_id.clone(),
-            version_id: version.version_id.clone(),
-            version_number: version.version_number.clone(),
-            file_name,
-            enabled,
-            game_versions: version.game_versions.clone(),
-            loaders: version.loaders.clone(),
-        };
-        // 同一个项目装了两份（一份禁用的旧版）时，启用的那份说了算。
-        match out.entry(entry.project_id.clone()) {
-            std::collections::hash_map::Entry::Vacant(slot) => {
-                slot.insert(entry);
-            }
-            std::collections::hash_map::Entry::Occupied(mut slot) => {
-                if entry.enabled && !slot.get().enabled {
-                    slot.insert(entry);
-                }
-            }
+        // 上游给的可能就是手上这一份——那不是「有新版」。
+        if newer.version_id == file.version.version_id {
+            continue;
+        }
+        projects.push(file.version.project_id.clone());
+        updates.push(ModUpdate {
+            file_name: file.file_name.clone(),
+            // 名字随后换，换不到就退回文件名——列表里每一行都得有个能读的东西。
+            title: file.file_name.clone(),
+            current: file.version.version_number.clone(),
+            latest: newer.version_number.clone(),
+            version_id: newer.version_id.clone(),
+            enabled: file.enabled,
+        });
+    }
+    if updates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let names = super::project_names(&projects).await.unwrap_or_default();
+    for (update, project) in updates.iter_mut().zip(projects) {
+        if let Some(named) = names.get(&project) {
+            update.title = named.title.clone();
         }
     }
-    cache.write(paths);
-    Ok(out)
+    updates.sort_by(|left, right| left.title.cmp(&right.title));
+    Ok(updates)
 }
 
 struct ModFile {

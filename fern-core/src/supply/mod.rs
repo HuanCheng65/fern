@@ -15,7 +15,7 @@
 
 pub(crate) mod modpack;
 pub(crate) mod plan;
-pub(crate) mod survey;
+pub mod survey;
 
 use anyhow::{Context, Result, anyhow};
 use fern_download::{DownloadEvent, DownloadTask};
@@ -680,6 +680,52 @@ async fn versions_by_hash(
     Ok(out)
 }
 
+/// 一批 sha1 各自最新的**这个实例装得上的**版本。
+///
+/// 筛选交给上游做（`loaders` 和 `game_versions` 两个参数），而不是拉回整份版本
+/// 列表自己挑：一个实例三百个模组，那是三百次请求换一个上游一次就能答的问题。
+///
+/// 上游对每个 hash 回的可能就是手上这一份（已经是最新的了）。判断「算不算有
+/// 新版」在调用方，这里只负责把答案带回来。
+async fn latest_by_hash(
+    hashes: &[String],
+    game_version: &str,
+    loader: LoaderKind,
+) -> Result<std::collections::HashMap<String, survey::KnownVersion>> {
+    let tags = loader_tags(loader);
+    let mut out = std::collections::HashMap::new();
+    for chunk in hashes.chunks(100) {
+        let mut body = serde_json::json!({
+            "hashes": chunk,
+            "algorithm": "sha1",
+            "game_versions": [game_version],
+        });
+        // 原版实例没有加载器标签。传一个空数组等于要求「不属于任何加载器的
+        // 版本」，那会把所有东西筛光。
+        if !tags.is_empty() {
+            body["loaders"] = serde_json::json!(tags);
+        }
+        let found: std::collections::HashMap<String, RawVersion> = post(
+            &format!("{API}/version_files/update"),
+            serde_json::to_vec(&body)?,
+        )
+        .await?;
+        for (hash, version) in found {
+            out.insert(
+                hash.to_ascii_lowercase(),
+                survey::KnownVersion {
+                    project_id: version.project_id,
+                    version_id: version.id,
+                    version_number: version.version_number,
+                    game_versions: version.game_versions,
+                    loaders: version.loaders,
+                },
+            );
+        }
+    }
+    Ok(out)
+}
+
 /// 一批项目 id 分别叫什么。id 对用户没有任何意义。
 async fn project_names(ids: &[String]) -> Result<std::collections::HashMap<String, plan::Named>> {
     let mut unique: Vec<&str> = ids.iter().map(String::as_str).collect();
@@ -867,6 +913,39 @@ pub async fn install(
             .map(|item| item.title.clone())
             .collect(),
     })
+}
+
+/// 把一个模组换成新版。
+///
+/// 装上新的，再撤掉旧的那份文件——两步在一条命令里做完。让界面先调安装、再调
+/// 删除的话，中间任何一次失败都会在 `mods/` 里留下同一个模组的两个版本，而那
+/// 是一个起不来的游戏。
+///
+/// 旧的那份是禁用状态时，新的也跟着禁用：更新不是启用，用户没有要求过后者。
+pub async fn update_mod(
+    paths: &DataPaths,
+    instance_id: &str,
+    file_name: &str,
+    version_id: &str,
+    job: &crate::Job,
+) -> Result<InstallOutcome> {
+    // 新版那份文件叫什么，装之前就要知道：和旧的同名时，那一份已经被覆盖了，
+    // 再去删就是把刚下下来的东西删掉。
+    let incoming = raw_version(version_id)
+        .await?
+        .primary_file()
+        .map(|file| file.filename.clone())
+        .ok_or_else(|| anyhow!("这个版本没有可下载的文件"))?;
+
+    let outcome = install(paths, instance_id, version_id, ResourceKind::Mod, job).await?;
+
+    if incoming != file_name {
+        crate::instance::mods::remove(paths, instance_id, file_name)?;
+    }
+    if file_name.ends_with(".disabled") {
+        crate::instance::mods::set_enabled(paths, instance_id, &incoming, false)?;
+    }
+    Ok(outcome)
 }
 
 /// 装完之后有什么可说的。

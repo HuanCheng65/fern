@@ -1132,6 +1132,37 @@ async fn install_from_modrinth(
     result
 }
 
+/// 这个实例里哪些模组有新版。只在用户按下「检查更新」时跑。
+///
+/// 要读一遍 `mods/` 算哈希，再向 Modrinth 问一次，所以它是个可能要等几秒的
+/// 命令——界面上按下之后要有等待的样子。
+#[tauri::command]
+async fn mod_updates(instance_id: String) -> Result<Vec<fern_core::ModUpdate>, String> {
+    fern_core::mod_updates(&paths()?, &instance_id)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 把一个模组换成新版：装上新的，撤掉旧的。
+#[tauri::command]
+async fn update_mod(
+    app: tauri::AppHandle,
+    instance_id: String,
+    file_name: String,
+    version_id: String,
+    title: String,
+    subjects: Vec<String>,
+) -> Result<fern_core::InstallOutcome, String> {
+    let paths = paths()?;
+    let events = launcher_events(&app);
+    let job = fern_core::Job::begin(&events, title, subjects);
+    let result = fern_core::update_mod(&paths, &instance_id, &file_name, &version_id, &job)
+        .await
+        .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
+    result
+}
+
 /// 可执行文件旁边有没有一个现成的 `.minecraft`。首次启动时问一句用的。
 #[tauri::command]
 fn nearby_game_directory() -> Option<std::path::PathBuf> {
@@ -1729,6 +1760,8 @@ pub fn run() {
             list_mods,
             list_saves,
             trash_save,
+            mod_updates,
+            update_mod,
             set_mod_enabled,
             remove_mod,
             install_mods,
