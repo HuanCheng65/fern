@@ -66,6 +66,14 @@
   /** 按下启动会用谁的身份。和后端的 `roster::for_instance` 是同一条规则。 */
   const identity = $derived(current ? launchIdentity(current.id) : undefined)
   /**
+   * 这一屏的脸直接交给 `LaunchHero`，没经过 `components/AccountFace.svelte`，
+   * 所以取皮肤的那一次请求得在这里发——否则头一次打开永远是默认的 Steve/Alex，
+   * 要等别的屏（账户名单、实例设置）替它问过一遍才会换成真的。
+   */
+  $effect(() => {
+    if (identity) void skins.request(identity)
+  })
+  /**
    * 出处只在这个名字确实有第二个人在用时才写出来。
    *
    * 例外才发声：只有一个 Steve 的时候补一句「正版」，说的是一件没人问的事。

@@ -61,6 +61,9 @@ class SkinStore {
    *
    * 头一次问后端的那一两秒里显示的也是默认皮肤，随后换成真的。这一下轻微的
    * 跳变是游戏自己也有的行为，而且只发生在第一次——之后后端直接从磁盘给。
+   *
+   * **读脸不发请求**：新的调用点要自己配一个 `request` 的 `$effect`，否则它那一
+   * 屏永远停在默认皮肤上，直到别处替它问过。
    */
   face(account: Account): Face {
     if (account.kind === 'offline') return fallback(account.uuid)
