@@ -815,6 +815,23 @@ async fn prune_snapshots(instance_id: String) -> Result<Vec<String>, String> {
     .await?
 }
 
+/// 把快照仓库压回设置里那条线以下。返回删掉了几张。
+///
+/// 界面在用户改完上限之后调一次。不挂在保存设置上：那条路上什么都可能被改，
+/// 而删快照要在用户按下的那一刻发生、并且看得见结果。没设上限就什么也不做。
+#[tauri::command]
+async fn enforce_snapshot_limit() -> Result<usize, String> {
+    off_thread(move || {
+        let Some(limit) = fern_core::snapshot_limit_bytes() else {
+            return Ok(0);
+        };
+        fern_core::enforce_snapshot_limit(&paths()?, limit)
+            .map(|removed| removed.len())
+            .map_err(|error| format!("{error:#}"))
+    })
+    .await?
+}
+
 // ——— 存储 ———
 //
 // 全部走 `off_thread`：报数要遍历整个数据根，清理和瘦身要删文件。
@@ -1722,6 +1739,7 @@ pub fn run() {
             delete_snapshot,
             label_snapshot,
             prune_snapshots,
+            enforce_snapshot_limit,
             storage_report,
             instance_storage,
             clear_cache,

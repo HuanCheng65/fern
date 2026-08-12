@@ -574,3 +574,52 @@ fn deleting_an_instance_forgets_its_snapshots() {
     );
     fs::remove_dir_all(root).expect("clean up");
 }
+
+/// 上限是一把和保留策略不同的尺子：那把量时间，这把量磁盘。
+///
+/// 走真的文件系统而不只是 `schedule::over_limit` 的单测——这个函数的活是把
+/// 磁盘上的事实（仓库多大、每张引用了哪些对象、每个对象多大）喂给那套算法，
+/// 而喂错了单测一个都发现不了。
+#[test]
+fn the_size_limit_cuts_from_the_oldest_and_spares_the_manual_one() {
+    let root = scratch("limit");
+    let paths = instance(&root);
+
+    // 每一张都带一份只属于它自己的内容，这样每剪一张都真的能腾出空间。
+    put(&paths, "saves/家/level.dat", &[1u8; 64 * 1024]);
+    let manual = take(&paths, "moss", Reason::Manual, None, None).expect("manual");
+    put(&paths, "saves/家/level.dat", &[2u8; 64 * 1024]);
+    let older = take(&paths, "moss", Reason::BeforeLaunch, None, None).expect("older");
+    put(&paths, "saves/家/level.dat", &[3u8; 64 * 1024]);
+    let newer = take(&paths, "moss", Reason::BeforeLaunch, None, None).expect("newer");
+
+    let before = usage(&paths).expect("usage").bytes;
+    assert!(before > 0, "仓库应该有内容");
+
+    // 上限设成当前的一半：够不着的时候能剪的都剪，手动那张不动。
+    let removed = enforce_limit(&paths, before / 2).expect("enforce");
+    assert!(!removed.is_empty(), "超了上限却一张都没剪");
+    assert!(
+        !removed.contains(&manual.id),
+        "手动拍的那张永远不剪，哪怕仍然超着"
+    );
+    // 从最旧的开始：`older` 比 `newer` 先走。
+    assert_eq!(removed.first(), Some(&older.id));
+
+    let left = list(&paths, "moss").expect("list");
+    assert!(left.iter().any(|snapshot| snapshot.id == manual.id));
+    assert!(
+        left.iter().any(|snapshot| snapshot.id == newer.id)
+            || removed.contains(&newer.id),
+        "剩下的要么还在，要么被记在删除清单里"
+    );
+
+    // 没超的时候一张都不动，而且不必把每份清单都读一遍。
+    assert!(
+        enforce_limit(&paths, u64::MAX)
+            .expect("enforce")
+            .is_empty()
+    );
+
+    fs::remove_dir_all(root).expect("clean up");
+}

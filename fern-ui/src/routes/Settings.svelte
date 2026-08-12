@@ -51,6 +51,7 @@
   import { formatBytes } from '../lib/jobs.svelte'
   import { nameList } from '../lib/backup'
   import { backupUsage } from '../lib/backup'
+  import { flush } from '../lib/persist'
   import {
     clearCache,
     clearLogs,
@@ -69,6 +70,7 @@
     | 'appearance'
     | 'account'
     | 'game'
+    | 'snapshots'
     | 'java'
     | 'download'
     | 'data'
@@ -504,6 +506,60 @@
     expanded = expanded === key ? '' : key
   }
 
+  /**
+   * 快照仓库现在占多少。
+   *
+   * 单独量，不等「数据」那一节的全量报告——那一份要遍历整个数据根，而这里
+   * 只需要 backups 一个目录。没有这个数，填进去的上限就只是一个猜的数字。
+   */
+  let snapshotBytes = $state<number | undefined>()
+  let counted = false
+  $effect(() => {
+    if (section !== 'snapshots' || counted) return
+    counted = true
+    void countSnapshots()
+  })
+
+  async function countSnapshots() {
+    if (!inTauri()) return
+    try {
+      snapshotBytes = (await backupUsage()).bytes
+    } catch {
+      // 量不出来就不显示那句话，不必为此报错。
+    }
+  }
+
+  /** 上一次按上限剪掉了几张。空串表示没有要说的。 */
+  let trimmed = $state('')
+  let trimTimer: ReturnType<typeof setTimeout> | undefined
+
+  function setSnapshotLimit(limitGb: number | null) {
+    prefs.setSnapshots({ limitGb })
+    trimmed = ''
+    clearTimeout(trimTimer)
+    if (!limitGb || !inTauri()) return
+    // 停手一会儿再剪。一边打字一边删快照的话，输到一半的那个「1」会被当成
+    // 1 GB 执行掉，而删掉的快照回不来。
+    trimTimer = setTimeout(() => void trimSnapshots(), 800)
+  }
+
+  /**
+   * 把仓库压回上限以下。
+   *
+   * 不挂在保存设置上：那条路上什么都可能被改，而删快照该发生在用户按下的
+   * 那一刻，并且要看得见结果。后端读的是设置文件里那一份，所以先落盘。
+   */
+  async function trimSnapshots() {
+    if (!(await flush())) return
+    try {
+      const removed = await invoke<number>('enforce_snapshot_limit')
+      trimmed = removed > 0 ? `已删除 ${removed} 张最旧的快照` : ''
+      if (removed > 0) await countSnapshots()
+    } catch (error) {
+      trimmed = String(error)
+    }
+  }
+
   /** 量一遍。只在第一次进这一节时做：遍历整个数据根不是免费的。 */
   let measured = false
   $effect(() => {
@@ -901,6 +957,47 @@
                 { value: 'on', label: '最小化' },
               ]}
             />
+          </SettingRow>
+        {:else if section === 'snapshots'}
+          <SettingRow id="snapshots/automatic" found={focused === 'snapshots/automatic'}>
+            <SegmentedControl
+              aria-label="自动拍摄快照"
+              value={prefs.snapshots.automatic ? 'on' : 'off'}
+              onchange={(next) => prefs.setSnapshots({ automatic: next === 'on' })}
+              options={[
+                { value: 'on', label: '开启' },
+                { value: 'off', label: '关闭' },
+              ]}
+            />
+          </SettingRow>
+
+          <SettingRow id="snapshots/limit" found={focused === 'snapshots/limit'}>
+            <!--
+              这一行必须说得出「现在占了多少」——没有那个数，填进去的上限
+              只是一个猜的数字。
+            -->
+            {#snippet note()}
+              快照总占用超过此值时，从最旧的自动快照开始删除。手动拍摄与已加标签的快照不会被删除。留空表示不限。{#if snapshotBytes !== undefined}
+                当前占用 {formatBytes(snapshotBytes)}。{/if}
+            {/snippet}
+            <div class="ceiling-row">
+              <span class="t-mono amount">
+                {prefs.snapshots.limitGb ? `${prefs.snapshots.limitGb} GB` : '不限'}
+              </span>
+              {#if trimmed}<span class="t-quiet">{trimmed}</span>{/if}
+            </div>
+            <div class="figure-row">
+              <Input
+                class="figure"
+                type="number"
+                min="1"
+                aria-label="快照占用上限"
+                placeholder="不限"
+                value={prefs.snapshots.limitGb ?? ''}
+                oninput={(event) => setSnapshotLimit(countOrNull(event.currentTarget.value))}
+              />
+              <span class="t-quiet">GB</span>
+            </div>
           </SettingRow>
         {:else if section === 'java'}
           <!--

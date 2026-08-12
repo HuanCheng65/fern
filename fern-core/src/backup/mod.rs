@@ -791,6 +791,74 @@ pub fn prune(paths: &DataPaths, instance_id: &str) -> Result<Vec<String>> {
     Ok(expired)
 }
 
+/// 快照仓库最多占多少字节，`None` 是不限。
+///
+/// 0 当作没填：那不是「一点点」，那是「一张都不留」，而设置文件用户能直接改。
+pub fn limit_bytes() -> Option<u64> {
+    crate::data::settings::current()
+        .snapshots
+        .limit_gb
+        .filter(|gigabytes| *gigabytes > 0)
+        .map(|gigabytes| u64::from(gigabytes) * 1024 * 1024 * 1024)
+}
+
+/// 超过上限就从最旧的开始剪。返回删掉的快照 id。
+///
+/// 剪的顺序和「谁能腾出空间」的算法在 [`schedule::over_limit`]。这里只负责把
+/// 磁盘上的事实喂给它：仓库现在多大、每张快照引用了哪些对象、每个对象多大。
+pub fn enforce_limit(paths: &DataPaths, limit: u64) -> Result<Vec<String>> {
+    let backups = root(paths);
+    let store = Store::at(&backups);
+    // 先问一句总量。没超的话——绝大多数时候——就不必把每一份清单都读出来。
+    let total = store.bytes();
+    if total <= limit {
+        return Ok(Vec::new());
+    }
+
+    let held: Vec<schedule::Held> = manifest::every(&backups)
+        .into_iter()
+        .filter_map(|(instance, id)| {
+            let manifest = manifest::read(&manifest::path(&backups, &instance, &id).ok()?).ok()?;
+            Some(schedule::Held {
+                taken_at: manifest.taken_at,
+                pinned: manifest.label.is_some() || manifest.reason == Reason::Manual,
+                objects: manifest
+                    .files
+                    .iter()
+                    .flat_map(|file| file.chunks.iter().cloned())
+                    .collect(),
+                instance,
+                id,
+            })
+        })
+        .collect();
+
+    let mut sizes: HashMap<String, u64> = HashMap::new();
+    for snapshot in &held {
+        for object in &snapshot.objects {
+            sizes
+                .entry(object.clone())
+                .or_insert_with(|| store.stored_bytes(object));
+        }
+    }
+
+    let doomed = schedule::over_limit(
+        &held,
+        &|object| sizes.get(object).copied().unwrap_or_default(),
+        total,
+        limit,
+    );
+    let mut removed = Vec::new();
+    for (instance, id) in &doomed {
+        remove(paths, instance, id)?;
+        removed.push(id.clone());
+    }
+    if !removed.is_empty() {
+        collect_garbage(paths)?;
+    }
+    Ok(removed)
+}
+
 // ——— 触发点 ———
 //
 // 这三个都不返回错误：备份失败是一条通知，绝不能挡住用户正在做的事。
@@ -832,7 +900,12 @@ pub(crate) fn after_session(paths: &DataPaths, instance_id: &str, minutes: u64) 
 /// 和 [`quietly`] 分开，是为了让调用方能在真的要拍的时候先说一声——一次可能
 /// 要十几秒的读盘，界面上不该是一段没有说明的停顿。
 pub(crate) fn due_before_launch(paths: &DataPaths, instance_id: &str) -> bool {
-    !recent(paths, instance_id, None, LAUNCH_INTERVAL)
+    automatic() && !recent(paths, instance_id, None, LAUNCH_INTERVAL)
+}
+
+/// 自动拍摄开着没有。手动那一张不问这句话。
+fn automatic() -> bool {
+    crate::data::settings::current().snapshots.automatic
 }
 
 pub(crate) fn quietly(paths: &DataPaths, instance_id: &str, reason: Reason) {
@@ -840,6 +913,11 @@ pub(crate) fn quietly(paths: &DataPaths, instance_id: &str, reason: Reason) {
 }
 
 fn quietly_about(paths: &DataPaths, instance_id: &str, reason: Reason, about: Option<About>) {
+    // 自动拍摄的三个触发点全都走这里，所以这一句就是那个开关的全部实现。
+    // 手动 `take` 不经过这里——关掉自动之后，用户自己按的那一下照旧。
+    if !automatic() {
+        return;
+    }
     if let Err(error) = take(paths, instance_id, reason, None, about) {
         let _ = paths.append_log(&format!(
             "snapshot {} for {instance_id} skipped: {error:#}",
@@ -853,6 +931,14 @@ fn quietly_about(paths: &DataPaths, instance_id: &str, reason: Reason, about: Op
     // 永久保留，动手的时刻也轮不到我们顺手做别的）。
     if let Err(error) = prune(paths, instance_id) {
         let _ = paths.append_log(&format!("prune for {instance_id} skipped: {error:#}"));
+    }
+    // 保留策略剪完之后仍然可能超过用户定的那条线——那是两把不同的尺子，
+    // 一把量时间，一把量磁盘。设置里改了上限的那一刻由界面另行触发一次，
+    // 不必等到下一张快照。
+    if let Some(limit) = limit_bytes()
+        && let Err(error) = enforce_limit(paths, limit)
+    {
+        let _ = paths.append_log(&format!("snapshot limit for {instance_id} skipped: {error:#}"));
     }
 }
 

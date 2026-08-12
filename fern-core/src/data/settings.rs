@@ -123,6 +123,36 @@ pub struct JavaSettings {
     pub extra_paths: Vec<std::path::PathBuf>,
 }
 
+/// 快照。
+///
+/// 只有两项，而且都是**只有用户知道答案**的那种。保留策略（24 小时全留、30 天
+/// 每天一份、更早每月一份）不摆出来：那是我们对「想回到哪一刻的分辨率随时间
+/// 衰减」的判断，和内存那套自动算法一样，摆成一排开关只会变成没人敢动的东西。
+/// 真正只有用户知道的是**愿意为回滚花多少磁盘**，那就是一个数。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SnapshotSettings {
+    /// 自动拍摄。关掉之后只剩手动那一张。
+    pub automatic: bool,
+    /// 快照总共最多占多少 GB。`None` 是不限。
+    ///
+    /// 管的是整个仓库，不是每个实例——对象是跨实例去重的，按实例分账会得出
+    /// 一堆加起来不等于总数的数字。
+    pub limit_gb: Option<u32>,
+}
+
+impl Default for SnapshotSettings {
+    /// **`automatic` 必须手写成 `true`。** 派生出来的默认值是 `false`，而老的
+    /// settings.json 里没有这一段，反序列化时正好走默认——那等于给每一个已有
+    /// 用户悄悄关掉快照。
+    fn default() -> Self {
+        Self {
+            automatic: true,
+            limit_gb: None,
+        }
+    }
+}
+
 /// 自更新。
 ///
 /// `bucket` 不是用户设置的东西，但它存在这里而不是另起一个文件：设置文件本来就是
@@ -203,6 +233,7 @@ pub struct Settings {
     /// 所有实例的起点。实例设置只写它要偏离的那几项。
     pub game: GameDefaults,
     pub java: JavaSettings,
+    pub snapshots: SnapshotSettings,
     pub update: UpdateSettings,
     /// 首次启动向导走完过一次。
     pub setup_done: bool,
@@ -221,6 +252,7 @@ impl Default for Settings {
             download: DownloadSettings::default(),
             game: GameDefaults::default(),
             java: JavaSettings::default(),
+            snapshots: SnapshotSettings::default(),
             update: UpdateSettings::default(),
             setup_done: false,
             minimize_on_launch: false,
@@ -395,6 +427,17 @@ mod tests {
         assert_eq!(read.appearance["density"], "compact");
 
         fs::remove_dir_all(root).expect("remove test data root");
+    }
+
+    /// 老的 settings.json 里没有 `snapshots` 那一段，反序列化时走的正是默认值。
+    /// 派生一个 `Default` 会把 `automatic` 变成 false——那等于给每一个已有用户
+    /// 悄悄关掉快照，而且没有任何地方会报错。
+    #[test]
+    fn snapshots_are_on_for_anyone_who_never_chose() {
+        assert!(Settings::default().snapshots.automatic);
+        let migrated: Settings = serde_json::from_str("{}").expect("empty settings");
+        assert!(migrated.snapshots.automatic);
+        assert_eq!(migrated.snapshots.limit_gb, None);
     }
 
     #[test]

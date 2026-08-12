@@ -57,6 +57,61 @@ pub fn expired(snapshots: &[(String, u64, bool)], now: u64) -> Vec<String> {
     expired
 }
 
+/// 一张快照，以及它引用了哪些对象。给 [`over_limit`] 用。
+pub struct Held {
+    pub instance: String,
+    pub id: String,
+    pub taken_at: u64,
+    /// 手动拍的、打过标签的。永远不剪，哪怕已经超了上限。
+    pub pinned: bool,
+    pub objects: Vec<String>,
+}
+
+/// 总占用超了上限时，从最旧的开始剪到不超为止。返回该删的 `(实例, id)`。
+///
+/// 剪掉一张快照能腾出多少空间，不等于它引用的对象加起来有多大：对象是跨快照、
+/// 跨实例去重的，还被别人引用着的那些删了也不会消失。所以这里维护一份引用
+/// 计数，一张一张地减，**只有降到零的那些才算进腾出来的空间**——手动拍的那些
+/// 从不参与，它们的引用一直压着，共享的对象也就一直在。
+///
+/// 一遍走完，不反复扫仓库：每删一张就重新量一次占用是几次全目录遍历，而这件事
+/// 发生在刚拍完一张快照之后，那时磁盘已经忙过一轮了。
+pub fn over_limit(held: &[Held], size_of: &dyn Fn(&str) -> u64, total: u64, limit: u64) -> Vec<(String, String)> {
+    if total <= limit {
+        return Vec::new();
+    }
+
+    let mut references: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for snapshot in held {
+        for object in &snapshot.objects {
+            *references.entry(object.as_str()).or_default() += 1;
+        }
+    }
+
+    // 从旧到新。同一时刻的按 id 定序，免得两次运行剪掉不同的那一张。
+    let mut ordered: Vec<&Held> = held.iter().filter(|snapshot| !snapshot.pinned).collect();
+    ordered.sort_by(|left, right| left.taken_at.cmp(&right.taken_at).then_with(|| left.id.cmp(&right.id)));
+
+    let mut freed = 0u64;
+    let mut doomed = Vec::new();
+    for snapshot in ordered {
+        if total.saturating_sub(freed) <= limit {
+            break;
+        }
+        for object in &snapshot.objects {
+            let Some(count) = references.get_mut(object.as_str()) else {
+                continue;
+            };
+            *count -= 1;
+            if *count == 0 {
+                freed = freed.saturating_add(size_of(object));
+            }
+        }
+        doomed.push((snapshot.instance.clone(), snapshot.id.clone()));
+    }
+    doomed
+}
+
 /// 这个时刻属于哪个自然月，编成一个数。
 ///
 /// 自己算，不引日期库：为一个月份号背上一个依赖的版本策略和时区语义不划算。
@@ -132,6 +187,76 @@ mod tests {
         ];
         // 三张都在同一个月里：两张永久的不参与分桶，剩下两张留最新的一张。
         assert_eq!(expired(&snapshots, NOW), vec!["survivor"]);
+    }
+
+    fn held(id: &str, ago: u64, pinned: bool, objects: &[&str]) -> Held {
+        Held {
+            instance: "one".to_owned(),
+            id: id.to_owned(),
+            taken_at: NOW - ago,
+            pinned,
+            objects: objects.iter().map(|it| (*it).to_owned()).collect(),
+        }
+    }
+
+    /// 每个对象都算 100 字节。
+    fn flat(_: &str) -> u64 {
+        100
+    }
+
+    #[test]
+    fn nothing_is_cut_while_the_repository_fits() {
+        let snapshots = vec![held("a", DAY, false, &["x"]), held("b", 0, false, &["y"])];
+        assert!(over_limit(&snapshots, &flat, 200, 200).is_empty());
+    }
+
+    #[test]
+    fn the_oldest_go_first_and_only_until_it_fits() {
+        let snapshots = vec![
+            held("newest", 0, false, &["c"]),
+            held("oldest", 3 * DAY, false, &["a"]),
+            held("middle", 2 * DAY, false, &["b"]),
+        ];
+        // 300 字节要压到 150 以下：剪掉最旧的腾出 100 还不够，再剪一张就够了。
+        assert_eq!(
+            over_limit(&snapshots, &flat, 300, 150),
+            vec![
+                ("one".to_owned(), "oldest".to_owned()),
+                ("one".to_owned(), "middle".to_owned())
+            ]
+        );
+    }
+
+    /// 被别人也引用着的对象，删了不会腾出空间——所以不能算进账里。
+    #[test]
+    fn shared_objects_do_not_count_as_freed() {
+        let snapshots = vec![
+            held("kept-forever", 9 * DAY, true, &["shared"]),
+            held("old", 3 * DAY, false, &["shared"]),
+            held("new", 0, false, &["own"]),
+        ];
+        // `old` 只引用了一个手动那张也引用着的对象，剪掉它一个字节都腾不出来，
+        // 于是只能接着剪下一张。
+        assert_eq!(
+            over_limit(&snapshots, &flat, 200, 50),
+            vec![
+                ("one".to_owned(), "old".to_owned()),
+                ("one".to_owned(), "new".to_owned())
+            ]
+        );
+    }
+
+    /// 上限低到连手动那些都装不下时，能剪的都剪掉，然后停手。
+    #[test]
+    fn pinned_snapshots_survive_a_limit_they_cannot_meet() {
+        let snapshots = vec![
+            held("manual", 5 * DAY, true, &["a"]),
+            held("auto", 4 * DAY, false, &["b"]),
+        ];
+        assert_eq!(
+            over_limit(&snapshots, &flat, 200, 10),
+            vec![("one".to_owned(), "auto".to_owned())]
+        );
     }
 
     #[test]

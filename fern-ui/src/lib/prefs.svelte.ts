@@ -15,10 +15,12 @@
 import {
   emptyDownload,
   emptyGameDefaults,
+  emptySnapshots,
   patch,
   snapshot,
   type DownloadDoc,
   type GameDefaults,
+  type SnapshotDoc,
 } from './persist'
 import { looksLikeChina } from './region'
 
@@ -50,6 +52,8 @@ class PrefsStore {
    * 只会做一次，之后的实例全都带着一份自己没选过的默认值。
    */
   game = $state<GameDefaults>(emptyGameDefaults())
+  /** 快照拍不拍、最多占多少盘。 */
+  snapshots = $state<SnapshotDoc>(emptySnapshots())
   setupDone = $state(false)
   minimizeOnLaunch = $state(false)
 
@@ -63,6 +67,7 @@ class PrefsStore {
     const doc = snapshot()
     this.download = { ...emptyDownload(), ...(doc.download ?? {}) }
     this.game = { ...emptyGameDefaults(), ...(doc.game ?? {}) }
+    this.snapshots = { ...emptySnapshots(), ...(doc.snapshots ?? {}) }
     this.setupDone = doc.setupDone === true
     this.minimizeOnLaunch = doc.minimizeOnLaunch === true
   }
@@ -84,6 +89,13 @@ class PrefsStore {
 
   setDownloadSource(source: DownloadSource) {
     this.setDownload({ source })
+  }
+
+  /** 改一项快照设置。整段写回去，Rust 那边的 serde 只认完整的一段。 */
+  setSnapshots(change: Partial<SnapshotDoc>) {
+    this.snapshots = { ...this.snapshots, ...change }
+    const snapshots = this.snapshots
+    patch((doc) => (doc.snapshots = snapshots))
   }
 
   setMinimizeOnLaunch(minimize: boolean) {

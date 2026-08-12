@@ -21,6 +21,7 @@ export interface SettingsDoc {
   download: DownloadDoc
   /** 所有实例的起点。实例设置只写它要偏离的那几项。 */
   game: GameDefaults
+  snapshots: SnapshotDoc
   update: UpdateDoc
   setupDone: boolean
   /** 游戏窗口开出来之后把启动器收起来。 */
@@ -45,6 +46,15 @@ export const emptyDownload = (): DownloadDoc => ({
   proxy: 'system',
   proxyUrl: '',
 })
+
+export interface SnapshotDoc {
+  /** 自动拍摄。关掉之后只剩手动那一张。 */
+  automatic: boolean
+  /** 快照总共最多占多少 GB。null 表示不限。 */
+  limitGb: number | null
+}
+
+export const emptySnapshots = (): SnapshotDoc => ({ automatic: true, limitGb: null })
 
 export interface UpdateDoc {
   channel: 'stable' | 'beta'
@@ -84,6 +94,7 @@ export const emptyDoc = (): SettingsDoc => ({
   account: { kind: 'offline', playerName: '' },
   download: emptyDownload(),
   game: emptyGameDefaults(),
+  snapshots: emptySnapshots(),
   update: { channel: 'stable', automatic: true, bucket: null },
   setupDone: false,
   minimizeOnLaunch: false,

@@ -46,6 +46,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: 'appearance', label: '外观' },
   { id: 'account', label: '账户' },
   { id: 'game', label: '游戏' },
+  { id: 'snapshots', label: '快照' },
   { id: 'java', label: 'Java' },
   { id: 'download', label: '下载' },
   { id: 'data', label: '数据' },
@@ -110,6 +111,20 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     label: '启动后最小化',
     note: '在游戏窗口出现后最小化 Fern，而非点击启动时。',
     keywords: 'minimize 最小化 隐藏',
+  },
+
+  {
+    id: 'snapshots/automatic',
+    label: '自动拍摄',
+    note: '在改动模组前、启动前与游戏结束后自动拍摄。关闭后仅保留手动拍摄，改动模组导致存档损坏时将无法回滚。',
+    keywords: 'snapshot backup automatic 快照 备份 自动 回滚',
+  },
+  {
+    id: 'snapshots/limit',
+    label: '占用上限',
+    note: '快照总占用超过此值时，从最旧的自动快照开始删除。手动拍摄与已加标签的快照不会被删除。留空表示不限。',
+    keywords: 'snapshot backup limit size disk 快照 备份 上限 占用 磁盘 清理',
+    stack: true,
   },
   {
     id: 'java/runtimes',

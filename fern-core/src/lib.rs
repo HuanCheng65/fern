@@ -61,13 +61,14 @@ pub use backup::{
     Diff as SnapshotDiff, InstanceUsage, Missing, Mode as RestoreMode, Restored,
     Scope as RestoreScope, Snapshot, Usage, collect_garbage, diff as snapshot_diff,
     label as label_snapshot, list as list_snapshots, mod_files as snapshot_mod_files,
+    enforce_limit as enforce_snapshot_limit, limit_bytes as snapshot_limit_bytes,
     prune as prune_snapshots, reasons as snapshot_reasons, remove as remove_snapshot,
     restore as restore_snapshot, take as take_snapshot, usage as backup_usage,
 };
 pub use data::settings::{
-    AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, Settings, SourcePreference,
-    UpdateSettings, current as current_settings, effective as effective_settings,
-    load as load_settings, save as save_settings,
+    AccountSettings, DownloadSettings, EffectiveSettings, GameDefaults, ProxyMode, Settings,
+    SnapshotSettings, SourcePreference, UpdateSettings, current as current_settings,
+    effective as effective_settings, load as load_settings, save as save_settings,
 };
 pub use data::{DataPaths, ExternalGame, Isolation, nearby_game_directory};
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
