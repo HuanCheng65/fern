@@ -30,6 +30,8 @@ use std::{
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
+use super::activity::Activity;
+
 /// 轮询进程是否结束的间隔。
 const POLL: Duration = Duration::from_millis(200);
 
@@ -43,6 +45,9 @@ pub struct RunningGame {
     pub started_at: u64,
     /// 游戏窗口已经开出来了。false 是「进程起来了，还在加载」。
     pub ready: bool,
+    /// 这会儿在哪一屏（见 `launch::activity`）。事件是变化时才发的，晚订阅
+    /// 的人从这里补上当前值。
+    pub activity: Activity,
 }
 
 struct Session {
@@ -51,6 +56,7 @@ struct Session {
     process_id: u32,
     started_at: u64,
     ready: bool,
+    activity: Activity,
     child: Arc<Mutex<Child>>,
 }
 
@@ -71,6 +77,7 @@ pub fn list() -> Vec<RunningGame> {
             process_id: session.process_id,
             started_at: session.started_at,
             ready: session.ready,
+            activity: session.activity.clone(),
         })
         .collect()
 }
@@ -118,6 +125,7 @@ pub(crate) fn register(
         process_id,
         started_at,
         ready: false,
+        activity: Activity::default(),
         child,
     });
 }
@@ -129,6 +137,16 @@ pub(crate) fn mark_ready(instance_id: &str) {
         .find(|session| session.instance_id == instance_id)
     {
         session.ready = true;
+    }
+}
+
+/// 人换地方了。
+pub(crate) fn mark_activity(instance_id: &str, activity: &Activity) {
+    if let Some(session) = sessions()
+        .iter_mut()
+        .find(|session| session.instance_id == instance_id)
+    {
+        session.activity = activity.clone();
     }
 }
 
@@ -177,6 +195,7 @@ pub(crate) mod testing {
             process_id: 0,
             started_at: 0,
             ready: false,
+            activity: Activity::default(),
             child: Arc::new(Mutex::new(
                 std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
                     .args(if cfg!(windows) {

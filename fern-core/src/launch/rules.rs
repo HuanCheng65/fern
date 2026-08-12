@@ -84,6 +84,12 @@ pub struct Features {
     pub custom_resolution: bool,
     /// 试玩模式。Fern 不启动试玩版，永远是 false。
     pub demo: bool,
+    /// 要不要 `--quickPlayPath`。
+    ///
+    /// 它曾经只是「有没有指定去处」的附属品，现在不是了：那份日志是游戏唯一
+    /// 主动告诉我们「人进了哪个世界」的地方（见 `launch::activity`），所以每
+    /// 次启动都要，哪怕这一次是从主菜单老老实实进的。
+    pub quick_play_log: bool,
     /// 启动后直接进某个存档或服务器。
     pub quick_play: Option<QuickPlay>,
 }
@@ -119,7 +125,7 @@ pub fn context(features: Features) -> RuleContext {
             ("is_demo_user".to_owned(), features.demo),
             (
                 "has_quick_plays_support".to_owned(),
-                features.quick_play.is_some(),
+                features.quick_play_log || features.quick_play.is_some(),
             ),
             (
                 "is_quick_play_singleplayer".to_owned(),
@@ -129,6 +135,9 @@ pub fn context(features: Features) -> RuleContext {
                 "is_quick_play_multiplayer".to_owned(),
                 matches!(features.quick_play, Some(QuickPlay::Server(_))),
             ),
+            // Fern 不从启动器直接进 Realms，但这个键要在：漏写一个键，将来
+            // 某条要求它为 false 的规则会被判成不匹配。
+            ("is_quick_play_realms".to_owned(), false),
         ]),
     }
 }
@@ -164,6 +173,20 @@ mod tests {
         .features;
         assert!(!server["is_quick_play_singleplayer"]);
         assert!(server["is_quick_play_multiplayer"]);
+    }
+
+    #[test]
+    fn the_quick_play_log_can_be_asked_for_on_its_own() {
+        // 没指定去处也要那份日志：它是游戏唯一主动说「人进了哪」的地方。
+        // 只开这一条时，另外两条参数不能跟着出现。
+        let log = context(Features {
+            quick_play_log: true,
+            ..Features::default()
+        })
+        .features;
+        assert!(log["has_quick_plays_support"]);
+        assert!(!log["is_quick_play_singleplayer"]);
+        assert!(!log["is_quick_play_multiplayer"]);
     }
 
     #[test]

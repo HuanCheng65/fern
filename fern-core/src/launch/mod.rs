@@ -9,6 +9,7 @@
 //! **补全与启动必须读同一份合并后的元数据**（`version::resolve`）。两边各算
 //! 各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
 
+pub(crate) mod activity;
 pub(crate) mod compat;
 pub(crate) mod crash;
 pub(crate) mod forge;
@@ -247,6 +248,10 @@ pub async fn launch_instance(
     stage(LaunchStage::CheckingFiles);
     let context = rules::context(rules::Features {
         custom_resolution: effective.resolution.is_some(),
+        // 那份日志每次都要：它是游戏唯一主动告诉我们「人进了哪个世界、哪个
+        // 服务器」的地方（见 launch::activity）。1.20 之前的元数据里没有这条
+        // feature，参数自然不会出现。
+        quick_play_log: true,
         quick_play: quick_play.clone(),
         ..rules::Features::default()
     });
@@ -380,11 +385,13 @@ pub async fn launch_instance(
         .insert("launcher_version", env!("CARGO_PKG_VERSION"))
         .insert("clientid", "")
         .insert("auth_xuid", "");
+    // 那份日志每次都要，指定了去处也好，从主菜单进也好——游戏进世界时会把
+    // 「进的是哪」写进去，那是 activity 那两条通道里准的那条。
+    variables = variables.insert("quickPlayPath", activity::LOG_ARGUMENT);
     // 直接进某个世界或某个服务器。元数据里那三条参数由 feature 决定要不要
     // 出现，这里只负责把它们要的值备好——变量缺了的话参数会原样带着
     // `${...}` 进命令行，游戏收到的是一个字面上的占位符。
     if let Some(quick) = &quick_play {
-        variables = variables.insert("quickPlayPath", "quickPlay/log.json");
         variables = match quick {
             crate::QuickPlay::World(name) => variables.insert("quickPlaySingleplayer", name),
             crate::QuickPlay::Server(address) => variables.insert("quickPlayMultiplayer", address),
@@ -551,6 +558,9 @@ pub async fn launch_instance(
     stage(LaunchStage::StartingProcess);
     // 命令行拼好了，注脚说完了。
     job.note("");
+    // 上一次会话留下的那条 quickPlay 记录要在进程起来之前清掉，否则这一次
+    // 一开局就会读到一个「已经在某个服务器里」。
+    activity::reset(&plan.working_directory);
     let started_at = std::time::SystemTime::now();
     let mut command = Command::new(&java_binary);
     command
@@ -577,6 +587,12 @@ pub async fn launch_instance(
     let tail = Arc::new(Mutex::new(String::new()));
     // 「窗口已经开出来了」只报一次，两个读线程加一个超时兜底都可能先到。
     let running = Arc::new(AtomicBool::new(false));
+    // 人这会儿在哪。日志读线程和 quickPlay 轮询线程共用这一个，谁先知道谁说。
+    let activity = Arc::new(activity::Tracker::new(
+        instance_id,
+        &plan.working_directory,
+        events.clone(),
+    ));
 
     if let Some(stdout) = child.stdout.take() {
         spawn_log_reader(
@@ -588,6 +604,7 @@ pub async fn launch_instance(
                 events: events.clone(),
                 tail: tail.clone(),
                 running: running.clone(),
+                activity: activity.clone(),
             },
         );
     }
@@ -601,6 +618,7 @@ pub async fn launch_instance(
                 events: events.clone(),
                 tail: tail.clone(),
                 running: running.clone(),
+                activity: activity.clone(),
             },
         );
     }
@@ -626,6 +644,7 @@ pub async fn launch_instance(
         events.clone(),
         alive.clone(),
     );
+    spawn_quick_play_watch(activity.clone(), alive.clone());
 
     let process_id = child.id();
     // 交给注册表之后，这个进程就是可寻址的了：能查、能停。`Child` 包在锁里
@@ -805,6 +824,23 @@ fn spawn_memory_watch(
     });
 }
 
+/// 游戏跑着的时候，每隔几秒看一眼 quickPlay 日志。
+///
+/// 轮询而不是文件监听：一个文件、几秒一次、几百字节，为它引一个跨平台的
+/// 监听器不划算。这份文件游戏只在进世界的那一下重写，读到的要么是上一次的
+/// 原文（直接跳过），要么就是新的一条。
+fn spawn_quick_play_watch(tracker: Arc<activity::Tracker>, alive: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        while alive.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            if !alive.load(Ordering::SeqCst) {
+                break;
+            }
+            tracker.poll_quick_play();
+        }
+    });
+}
+
 /// 一份日志的最后若干字节，按 UTF-8 尽力解出来。
 fn read_log_tail(path: &Path, bytes: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
@@ -929,6 +965,7 @@ struct LogSink {
     events: UnboundedSender<LauncherEvent>,
     tail: Arc<Mutex<String>>,
     running: Arc<AtomicBool>,
+    activity: Arc<activity::Tracker>,
 }
 
 /// 崩溃分析看最后这么多字节就够，再多只是把内存和 IPC 撑大。
@@ -975,6 +1012,7 @@ where
             if gamelog::signals_window_ready(&parsed.message) {
                 announce_running(&sink.running, &sink.events, &sink.instance_id);
             }
+            sink.activity.observe_log(&parsed.message);
             if sink
                 .events
                 .send(LauncherEvent::GameLog {
@@ -1267,6 +1305,57 @@ mod tests {
         assert_eq!(first.uuid, second.uuid);
         assert_eq!(first.uuid.as_bytes()[14], b'3');
         assert_eq!(first.user_type, "legacy");
+    }
+
+    /// 官方元数据里 quickPlay 那四条参数，原样抄自 1.21.1。
+    const QUICK_PLAY_ARGUMENTS: &str = r#"{"id":"1.21.1","arguments":{"jvm":[],"game":[
+        {"rules":[{"action":"allow","features":{"has_quick_plays_support":true}}],"value":["--quickPlayPath","${quickPlayPath}"]},
+        {"rules":[{"action":"allow","features":{"is_quick_play_singleplayer":true}}],"value":["--quickPlaySingleplayer","${quickPlaySingleplayer}"]},
+        {"rules":[{"action":"allow","features":{"is_quick_play_multiplayer":true}}],"value":["--quickPlayMultiplayer","${quickPlayMultiplayer}"]},
+        {"rules":[{"action":"allow","features":{"is_quick_play_realms":true}}],"value":["--quickPlayRealms","${quickPlayRealms}"]}
+    ]}}"#;
+
+    #[test]
+    fn every_launch_asks_for_the_quick_play_log_and_for_nothing_else() {
+        // 这是条接缝，单测一个都抓不到的那种：feature 表 → 元数据里那四条带
+        // 规则的参数 → 变量替换。每次启动都要那份日志（人进了哪个世界只有它
+        // 说得准），但没指定去处的时候，另外三条一条都不能跟着出现——带上
+        // `--quickPlaySingleplayer ${...}`，游戏会拿一个字面上的占位符当存档名。
+        let metadata: VersionMetadata =
+            serde_json::from_str(QUICK_PLAY_ARGUMENTS).expect("parse the argument fixture");
+        let context = rules::context(rules::Features {
+            quick_play_log: true,
+            ..rules::Features::default()
+        });
+        let (_, game) = metadata.resolved_arguments(&context);
+        assert_eq!(game, ["--quickPlayPath", "${quickPlayPath}"]);
+
+        let variables = LaunchVariables::new().insert("quickPlayPath", activity::LOG_ARGUMENT);
+        assert_eq!(
+            variables.substitute("${quickPlayPath}"),
+            "quickPlay/fern.json"
+        );
+    }
+
+    #[test]
+    fn asking_for_a_world_still_brings_its_own_argument() {
+        let metadata: VersionMetadata =
+            serde_json::from_str(QUICK_PLAY_ARGUMENTS).expect("parse the argument fixture");
+        let context = rules::context(rules::Features {
+            quick_play_log: true,
+            quick_play: Some(rules::QuickPlay::World("新的世界".to_owned())),
+            ..rules::Features::default()
+        });
+        let (_, game) = metadata.resolved_arguments(&context);
+        assert_eq!(
+            game,
+            [
+                "--quickPlayPath",
+                "${quickPlayPath}",
+                "--quickPlaySingleplayer",
+                "${quickPlaySingleplayer}"
+            ]
+        );
     }
 
     #[test]

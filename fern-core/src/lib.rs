@@ -207,6 +207,7 @@ pub use storage::{
     slim::{SlimContents, SlimPlan, apply as slim_apply, preview as slim_preview},
 };
 
+pub use launch::activity::{Activity, Place as ActivityPlace};
 pub use launch::gamelog::{LogLine, LogParser};
 pub use launch::loader::{
     LoaderOption, LoaderVersion, addons_for as loader_addons, display_name as loader_display_name,

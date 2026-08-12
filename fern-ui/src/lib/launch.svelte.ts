@@ -76,11 +76,29 @@ export interface MemoryPressure {
   xmxMb: number
 }
 
+/**
+ * 人这会儿在哪一屏。
+ *
+ * `unknown` **不等于在主菜单**：后端那两条通道（quickPlay 日志和游戏日志里的
+ * 几个标志，见 `launch::activity`）都还没说过话而已。老版本、重度模组包都可能
+ * 一直停在这里，那时候界面照旧只说「运行中」。
+ */
+export type ActivityPlace = 'unknown' | 'menu' | 'singleplayer' | 'multiplayer' | 'realms'
+
+export interface Activity {
+  place: ActivityPlace
+  /** 存档目录名、服务器地址、或者 Realm 的 id。 */
+  id?: string | null
+  /** 存档名，或者服务器列表里那个自己起的名字。只有 quickPlay 日志给得出。 */
+  name?: string | null
+}
+
 type LauncherEvent =
   | { type: 'launch_stage'; payload: { instanceId: string; stage: LaunchStage } }
   | { type: 'game_log'; payload: { instanceId: string; level: LogLevel; message: string } }
   | { type: 'game_exited'; payload: { instanceId: string; exitCode: number | null } }
   | { type: 'game_memory'; payload: MemoryPressure }
+  | { type: 'game_activity'; payload: { instanceId: string; activity: Activity } }
   | { type: 'game_crashed'; payload: CrashReport }
   | { type: string; payload: unknown }
 
@@ -135,6 +153,7 @@ class LaunchStore {
   instanceId = $state('')
   #logs = $state<Record<string, GameLogLine[]>>({})
   #memory = $state<Record<string, MemoryPressure>>({})
+  #activity = $state<Record<string, Activity>>({})
 
   /** 正在看的那个实例的日志。 */
   log = $derived(this.#logs[this.instanceId] ?? [])
@@ -157,6 +176,12 @@ class LaunchStore {
     return this.#memory[instanceId]
   }
 
+  /** 这个实例的人在哪。说不出来的时候是 undefined，那时候界面别猜。 */
+  activityOf(instanceId: string): Activity | undefined {
+    const activity = this.#activity[instanceId]
+    return activity && activity.place !== 'unknown' ? activity : undefined
+  }
+
   async connect() {
     if (!inTauri() || this.#unlisten) return
     this.#unlisten = await listen<LauncherEvent>('launcher-event', ({ payload }) =>
@@ -175,7 +200,13 @@ class LaunchStore {
     if (!inTauri()) return
     try {
       const live = await invoke<
-        { instanceId: string; processId: number; startedAt: number; ready: boolean }[]
+        {
+          instanceId: string
+          processId: number
+          startedAt: number
+          ready: boolean
+          activity?: Activity
+        }[]
       >('running_games')
       const next: Record<string, GameState> = {}
       for (const game of live) {
@@ -184,6 +215,9 @@ class LaunchStore {
           processId: game.processId,
           startedAt: game.startedAt,
         }
+        // 位置事件只在变化时发，进游戏之后才挂上监听就一条都收不到。这张表
+        // 里存着当前值，对表的时候顺手接上。
+        if (game.activity) this.#activity[game.instanceId] = game.activity
       }
       // 正在准备的那些还没有进程，后端不知道它们，别被这一次对表抹掉。
       for (const [id, game] of Object.entries(this.games)) {
@@ -216,11 +250,20 @@ class LaunchStore {
         const { instanceId } = event.payload as { instanceId: string }
         delete this.games[instanceId]
         delete this.#memory[instanceId]
+        delete this.#activity[instanceId]
         break
       }
       case 'game_memory': {
         const pressure = event.payload as MemoryPressure
         this.#memory[pressure.instanceId] = pressure
+        break
+      }
+      case 'game_activity': {
+        const { instanceId, activity } = event.payload as {
+          instanceId: string
+          activity: Activity
+        }
+        this.#activity[instanceId] = activity
         break
       }
       case 'game_crashed':
@@ -262,6 +305,7 @@ class LaunchStore {
     this.crash = null
     this.#logs[instanceId] = []
     delete this.#memory[instanceId]
+    delete this.#activity[instanceId]
   }
 
   /**
@@ -377,8 +421,8 @@ contributes((): Presence[] => {
     .map(([instanceId, game]) => {
       const name = nameOf(instanceId)
       const memory = launch.memoryOf(instanceId)
-      // 堆压力是这一句里唯一一个会动的数，而它几秒才变一次——所以它进 detail，
-      // 不进那条会被反复念出来的 label。
+      // 堆压力和位置都是会动的东西，而它们几秒才变一次——所以都进行内，不进
+      // 那条会被反复念出来的 label。
       const pressure = memory ? `${gigabytes(memory.usedMb)} / ${gigabytes(memory.xmxMb)}` : ''
       const starting = game.phase === 'starting'
       return {
@@ -393,7 +437,12 @@ contributes((): Presence[] => {
           {
             id: `game:${instanceId}`,
             label: name,
-            detail: starting ? '等待游戏窗口' : pressure ? `内存 ${pressure}` : '运行中',
+            // 人话说人在哪，机器数说堆用了多少。位置说不出来的时候退回
+            // 「运行中」——那是老实话，「在主菜单」不是。
+            detail: starting
+              ? '等待游戏窗口'
+              : (whereabouts(launch.activityOf(instanceId)) ?? '运行中'),
+            meta: starting ? undefined : pressure || undefined,
           },
         ],
         actions: [
@@ -409,6 +458,29 @@ contributes((): Presence[] => {
       } satisfies Presence
     })
 })
+
+const PLACES: Record<ActivityPlace, string> = {
+  unknown: '',
+  menu: '在主菜单',
+  singleplayer: '单人世界',
+  multiplayer: '多人游戏',
+  realms: 'Realms',
+}
+
+/**
+ * 人在哪，说成一句话。
+ *
+ * 说不出来就返回 undefined，让调用方退回自己的老实话——**没有数据的位置一个
+ * 字都不编**。名字优先于地址：服务器列表里那个自己起的名字比 IP 有意义得多，
+ * 两个都没有就只说是哪一类。
+ */
+function whereabouts(activity: Activity | undefined): string | undefined {
+  const place = activity && PLACES[activity.place]
+  if (!activity || !place) return undefined
+  if (activity.place === 'menu') return place
+  const which = activity.name || activity.id
+  return which ? `${place} · ${which}` : place
+}
 
 /** MB 变成一句话。和实例设置那一屏用的是同一条规则。 */
 function gigabytes(mb: number) {

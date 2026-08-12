@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::job::JobEvent;
+use crate::launch::activity::Activity;
 use crate::launch::crash::CrashReport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +67,14 @@ pub enum LauncherEvent {
         /// 这次给了多少堆，MB。分母。
         xmx_mb: u32,
     },
+    /// 游戏这会儿在哪：主菜单、哪个存档、哪个服务器（见 `launch::activity`）。
+    ///
+    /// 只在变了的时候发。说不出来的时候发的是 `unknown`，那是一个正经状态
+    /// ——两条通道都没说话，不代表人在主菜单。
+    GameActivity {
+        instance_id: String,
+        activity: Activity,
+    },
     /// 非正常退出。和 `GameExited` 分开发：正常关掉游戏不该在界面上留下任何
     /// 痕迹，崩了才需要说话。
     GameCrashed(CrashReport),
@@ -85,5 +94,26 @@ mod tests {
 
         assert_eq!(value["type"], "launch_stage");
         assert_eq!(value["payload"]["stage"], "checking_files");
+    }
+
+    #[test]
+    fn activity_reaches_the_frontend_with_its_place_intact() {
+        // 嵌在里面的结构体不吃外层的 rename_all_fields，字段名要自己钉住
+        // ——改错了不报编译错，只会在界面上变成 undefined。
+        let event = LauncherEvent::GameActivity {
+            instance_id: "cinder-valley".to_owned(),
+            activity: Activity {
+                place: crate::launch::activity::Place::Multiplayer,
+                id: Some("mc.example.net".to_owned()),
+                name: Some("朋友的服".to_owned()),
+            },
+        };
+        let value = serde_json::to_value(event).expect("serialize launcher event");
+
+        assert_eq!(value["type"], "game_activity");
+        assert_eq!(value["payload"]["instanceId"], "cinder-valley");
+        assert_eq!(value["payload"]["activity"]["place"], "multiplayer");
+        assert_eq!(value["payload"]["activity"]["id"], "mc.example.net");
+        assert_eq!(value["payload"]["activity"]["name"], "朋友的服");
     }
 }
