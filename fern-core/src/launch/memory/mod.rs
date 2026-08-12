@@ -534,6 +534,7 @@ mod tests {
             history::Session {
                 at: 0,
                 minutes: 40.0,
+                in_world_minutes: None,
                 xmx_mb: 6144,
                 metrics: gclog::SessionMetrics {
                     peak_mb: 5900,
@@ -548,6 +549,7 @@ mod tests {
             history::Session {
                 at: 1,
                 minutes: 50.0,
+                in_world_minutes: None,
                 xmx_mb: 6144,
                 metrics: gclog::SessionMetrics {
                     peak_mb: 5960,

@@ -21,6 +21,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,14 @@ impl Activity {
             name: None,
         }
     }
+
+    /// 人在世界里，不是在主菜单待着。
+    fn in_world(&self) -> bool {
+        matches!(
+            self.place,
+            Place::Singleplayer | Place::Multiplayer | Place::Realms
+        )
+    }
 }
 
 /// 命令行上交给游戏的那个相对路径（相对游戏目录，也就是进程的工作目录）。
@@ -104,6 +113,15 @@ struct State {
     /// 上一次读到的 quickPlay 日志原文。变了才算有新的一条——`lastPlayedTime`
     /// 精确到微秒，同一个世界进两次也是两份不同的原文。
     seen: Option<String>,
+    /// 有没有任何一条通道说过话。
+    ///
+    /// 没说过 ≠ 没进过世界：老版本没有 quickPlay 日志，重度模组包的日志也可能
+    /// 一条标志都对不上。那时候这一整套观察必须**弃权**，而不是报一个 0。
+    heard: bool,
+    /// 累计在世界里的时间。
+    in_world: Duration,
+    /// 当前这一段是什么时候进去的。`None` 表示这会儿不在世界里。
+    since: Option<Instant>,
 }
 
 impl Tracker {
@@ -169,11 +187,38 @@ impl Tracker {
         self.settle(&mut state, activity);
     }
 
+    /// 这一次会话，人真正待在世界里的分钟数。
+    ///
+    /// `None` 是**弃权**：两条通道一句话都没说过，这次会话说不出人在哪，判断
+    /// 就该退回别的依据（见 `memory::history::Session::is_valid`）。报 0 会把
+    /// 一次正常的游玩说成挂机。
+    pub(crate) fn in_world_minutes(&self) -> Option<f64> {
+        let state = self.state();
+        if !state.heard {
+            return None;
+        }
+        let mut total = state.in_world;
+        // 退出游戏时人多半还在世界里，那一段没有「离开」事件来结算。
+        if let Some(since) = state.since {
+            total += since.elapsed();
+        }
+        Some(total.as_secs_f64() / 60.0)
+    }
+
     /// 变了才说话。同一件事两条通道各报一次，界面不该收到两条。
     fn settle(&self, state: &mut State, next: Activity) {
         if state.activity == next {
             return;
         }
+        // 只在状态真的变了的时候结算：没变就说明这一段还在继续。
+        let now = Instant::now();
+        if let Some(since) = state.since.take() {
+            state.in_world += now.duration_since(since);
+        }
+        if next.in_world() {
+            state.since = Some(now);
+        }
+        state.heard = true;
         state.activity = next.clone();
         super::running::mark_activity(&self.instance_id, &next);
         let _ = self.events.send(LauncherEvent::GameActivity {
@@ -432,6 +477,26 @@ mod tests {
         tracker.observe_log("[12:40:00] [Render thread/INFO]: Stopping worker threads");
         tracker.poll_quick_play();
         assert_eq!(places(&mut events), [Activity::somewhere(Place::Menu)]);
+    }
+
+    #[test]
+    fn only_time_inside_a_world_counts_as_playing() {
+        let (tracker, _log, _events) = session("played");
+
+        // 一条通道都没说过话：这次会话说不出人在哪，弃权而不是报零——报零会
+        // 把一次正常的游玩（老版本、认不出日志的模组包）说成挂机。
+        assert_eq!(tracker.in_world_minutes(), None);
+
+        // 说过话了，而且说的是「在主菜单」。开着游戏挂在这里多久都不算玩。
+        tracker.observe_log("[12:00:00] [Render thread/INFO]: Stopping worker threads");
+        assert_eq!(tracker.in_world_minutes(), Some(0.0));
+
+        // 进服务器，再退回菜单：中间那一段算进去，退出来之后不再增长。
+        tracker.observe_log("[12:00:01] [Render thread/INFO]: Connecting to mc.example.net, 25565");
+        tracker.observe_log("[12:30:00] [Render thread/INFO]: Stopping worker threads");
+        let played = tracker.in_world_minutes().expect("知道人在哪");
+        assert!(played > 0.0);
+        assert_eq!(tracker.in_world_minutes(), Some(played));
     }
 
     #[test]

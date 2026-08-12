@@ -151,6 +151,7 @@ mod tests {
         Session {
             at: 0,
             minutes: 45.0,
+            in_world_minutes: None,
             xmx_mb,
             metrics: SessionMetrics {
                 peak_mb,

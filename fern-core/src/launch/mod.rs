@@ -680,6 +680,7 @@ pub async fn launch_instance(
         xmx_mb: allocation.xmx_mb,
         zgc: allocation.gc.behaves_like_zgc(),
         started_at,
+        activity: activity.clone(),
     };
     std::thread::spawn(move || {
         let running = wait_running;
@@ -866,6 +867,8 @@ struct SessionRecord {
     xmx_mb: u32,
     zgc: bool,
     started_at: std::time::SystemTime,
+    /// 这一次人待在世界里多久，退出的时候问它。
+    activity: Arc<activity::Tracker>,
 }
 
 impl SessionRecord {
@@ -891,6 +894,7 @@ impl SessionRecord {
             memory::history::Session {
                 at: memory::history::now_seconds(),
                 minutes,
+                in_world_minutes: self.activity.in_world_minutes(),
                 xmx_mb: self.xmx_mb,
                 metrics,
                 // 堆真的爆了的那一行只会出现在游戏自己的输出里，GC 日志看不到。

@@ -38,6 +38,14 @@ pub struct Session {
     /// Unix 秒。
     pub at: u64,
     pub minutes: f64,
+    /// 这段时间里真正待在世界里的分钟数。
+    ///
+    /// `None` 是「说不出来」，不是零：老版本没有 quickPlay 日志，重度模组包的
+    /// 日志也可能一条标志都对不上（见 `launch::activity`）。这个字段是后加的，
+    /// 已经攒下的历史里全是 `None`——那些记录必须照旧算数，所以缺省是弃权，
+    /// 弃权就退回 `minutes`。
+    #[serde(default)]
+    pub in_world_minutes: Option<f64>,
     /// 那一次实际给了多少堆。调整规则算的是「相对上次给的量」，所以必须存。
     pub xmx_mb: u32,
     #[serde(default)]
@@ -52,7 +60,20 @@ pub struct Session {
 
 impl Session {
     pub fn is_valid(&self) -> bool {
-        self.minutes >= MINIMUM_MINUTES && !self.metrics.is_empty()
+        self.playing_minutes() >= MINIMUM_MINUTES && !self.metrics.is_empty()
+    }
+
+    /// 拿来和 [`MINIMUM_MINUTES`] 比的那个数。
+    ///
+    /// **时长不等于强度。** 开着游戏在主菜单挂半小时，进程活着、GC 也在跑，
+    /// 按总时长算是一次堂堂正正的会话，可它描述的是主菜单的内存占用。这种
+    /// 会话进了窗口不会把数算低（窗口里取的是高位），但它占掉八格中的一格，
+    /// 挤掉一次真实游玩——换了玩法之后要更久才跟得上，代价出在这里。
+    ///
+    /// 知道人在世界里待了多久就按那个算，不知道就退回总时长——那正是这个字段
+    /// 存在之前的判据。
+    fn playing_minutes(&self) -> f64 {
+        self.in_world_minutes.unwrap_or(self.minutes)
     }
 }
 
@@ -205,6 +226,8 @@ mod tests {
         Session {
             at: now_seconds(),
             minutes,
+            // 这一层的测试问的是窗口和淘汰，不是「玩没玩」。弃权，判据退回总时长。
+            in_world_minutes: None,
             xmx_mb,
             metrics: SessionMetrics {
                 peak_mb,
@@ -216,6 +239,51 @@ mod tests {
             oom: false,
             zgc: false,
         }
+    }
+
+    #[test]
+    fn idling_in_the_menu_is_not_a_session() {
+        // 开着游戏挂在主菜单半小时：进程活着、GC 也在跑，按总时长算是堂堂正正
+        // 的一次会话，可它描述的是主菜单的内存占用。
+        let mut idle = session(30.0, 4096, 900);
+        idle.in_world_minutes = Some(0.5);
+        assert!(!idle.is_valid());
+
+        // 玩够了就算数，哪怕之后又挂了很久。
+        let mut played = session(120.0, 4096, 3000);
+        played.in_world_minutes = Some(40.0);
+        assert!(played.is_valid());
+    }
+
+    #[test]
+    fn a_session_that_cannot_say_falls_back_to_the_wall_clock() {
+        // 老版本、认不出日志的模组包——弃权的那些照旧按总时长判，那正是这个
+        // 字段存在之前的规则。
+        assert!(session(30.0, 4096, 3000).is_valid());
+        assert!(!session(2.0, 4096, 3000).is_valid());
+    }
+
+    #[test]
+    fn history_written_before_this_field_existed_still_counts() {
+        // 缺省成「没进过世界」的话，升级那一刻所有人的历史全部作废，自适应
+        // 退回静态估算重学。
+        let written = r#"{
+            "at": 1,
+            "minutes": 30.0,
+            "xmxMb": 4096,
+            "metrics": {
+                "peakMb": 3000,
+                "liveSetMb": 1500,
+                "pauseP99Ms": 20.0,
+                "collections": 40,
+                "stalls": 0
+            },
+            "oom": false,
+            "zgc": false
+        }"#;
+        let session: Session = serde_json::from_str(written).expect("read an old record");
+        assert_eq!(session.in_world_minutes, None);
+        assert!(session.is_valid());
     }
 
     #[test]
