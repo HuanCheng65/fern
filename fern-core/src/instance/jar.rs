@@ -1073,8 +1073,8 @@ version = "1.6.5"
         assert!(read.supplies("obsidianui"), "{:?}", read.provides);
 
         // 字面量之外的换行本来就该在，转义只发生在引号里面。
-        let value = json("{\n  \"a\": \"one\ntwo\",\n  \"b\": \"back\\\\slash\"\n}")
-            .expect("宽容那一遍");
+        let value =
+            json("{\n  \"a\": \"one\ntwo\",\n  \"b\": \"back\\\\slash\"\n}").expect("宽容那一遍");
         assert_eq!(value["a"], serde_json::json!("one\ntwo"));
         assert_eq!(value["b"], serde_json::json!("back\\slash"));
 

@@ -17,9 +17,12 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
+use segment::{MIN_SEGMENT, PIECE, Plan, Slot};
+
+mod segment;
 mod verified;
 
 pub use verified::Verified;
@@ -318,6 +321,24 @@ fn wire_path(staged: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// 分段下载的续传状态落在哪。同样是追加后缀，同样是为了名字唯一。
+fn state_path(landing: &Path) -> PathBuf {
+    let mut name = landing.to_path_buf().into_os_string();
+    name.push(".state");
+    PathBuf::from(name)
+}
+
+/// 这个任务在网上跑的那份字节，期望的 sha1 是哪个。
+///
+/// 压缩过的任务，网上跑的是压缩包，所以是它的；否则就是成品自己的。续传状态
+/// 认的是这个值——它变了说明上游换了内容，上次下了一半的东西一文不值。
+fn wire_sha1(task: &DownloadTask) -> Option<&str> {
+    match &task.wire {
+        Some(wire) => Some(wire.sha1.as_str()),
+        None => task.sha1.as_deref(),
+    }
+}
+
 pub fn safe_join(root: &Path, relative: &Path) -> Result<PathBuf> {
     if relative.is_absolute()
         || relative
@@ -358,6 +379,28 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(80);
 /// `write` 都要往阻塞线程池派一次活——一个两百兆的文件就是几千次派发。攒够一
 /// 大块再落盘，这个数就降两个数量级。
 const STREAM_BUFFER: usize = 512 * 1024;
+
+/// 小于这个大小不分段。
+///
+/// 资源文件平均一百多 KB，为它们多开连接、多发一个探测请求是净亏损。真正会
+/// 落单的是 client jar 和 Java 运行时里的大家伙——实测一份运行时 82% 的传输
+/// 字节都压在**一个**没有压缩变体的文件上。
+const SEGMENT_THRESHOLD: u64 = 8 * 1024 * 1024;
+
+/// 一个文件最多同时开几段。
+const MAX_SEGMENTS: usize = 8;
+
+/// 一条工人连着栽几次就放弃。每次栽了都会换一个源。
+const SEGMENT_ATTEMPTS: u32 = 3;
+
+/// 续传状态多久落一次盘。进程被杀是没有钩子的，只能按时间存。
+const STATE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// 多久回头再试着为一个大文件多招一条工人。
+///
+/// 名额是别的文件下完之后才腾出来的，所以这件事必须反复试。间隔取得短一点
+/// 没关系——试一次只是一个 `try_acquire`。
+const RECRUIT_INTERVAL: Duration = Duration::from_millis(250);
 
 /// 对账时一个阻塞任务包多少个文件。
 ///
@@ -505,6 +548,42 @@ impl SourceHealth {
 
 /// 一批下完之后，那行账写到哪去。
 pub type LogSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// 一个文件分段下载时，几条工人共用的那些东西。
+///
+/// 打包成一个是因为它们要跨 `spawn` 走，而挨个 clone 七八个 `Arc` 传进去，
+/// 读的人会以为那七八样东西之间有什么讲究——其实它们只是同一件事的零件。
+struct Crew {
+    task: DownloadTask,
+    /// 哪些片下完了、哪几段在途中。唯一的真相。
+    plan: Arc<Mutex<Plan>>,
+    /// 段往哪个文件里写。压缩过的任务，这是压缩包的临时文件。
+    landing: PathBuf,
+    progress: Arc<BatchProgress>,
+    events: tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+    counted: Arc<AtomicU64>,
+    /// 续传状态上次落盘是什么时候（批次开始起算的毫秒）。
+    saved: Arc<AtomicU64>,
+    sources: Vec<Arc<dyn DownloadSource>>,
+}
+
+/// 接上次断掉的地方，接不上就从头来。
+///
+/// 「接不上」的判据有三条，缺一不可：临时文件还在且长度对得上、状态文件读得
+/// 出来、状态描述的正是这个文件（大小和校验和都对）。任何一条不成立都从头
+/// 下——拿一份对不上号的位图去拼，只会得到一个校验永远过不了的文件，而那种
+/// 失败查起来最费劲。
+async fn load_plan(landing: &Path, size: u64, sha1: Option<&str>) -> Plan {
+    let sized = matches!(tokio::fs::metadata(landing).await, Ok(meta) if meta.len() == size);
+    if sized
+        && let Ok(bytes) = tokio::fs::read(state_path(landing)).await
+        && let Ok(state) = serde_json::from_slice(&bytes)
+        && let Some(plan) = Plan::restore(size, sha1, &state)
+    {
+        return plan;
+    }
+    Plan::new(size)
+}
 
 /// 一个文件没下下来，以及再试一次有没有意义。
 struct Refusal {
@@ -1154,10 +1233,12 @@ impl DownloadClient {
         Ok(actual.eq_ignore_ascii_case(expected))
     }
 
+    /// `progress` 收的是 `Arc` 而不是引用：分段那条路要把它交给几条 `spawn`
+    /// 出去的工人，而它们各自的生命周期和这个调用栈无关。
     async fn download_one(
         &self,
         task: &DownloadTask,
-        progress: &BatchProgress,
+        progress: &Arc<BatchProgress>,
         events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
     ) -> std::result::Result<(), Refusal> {
         // 先过自己那一支，再过全局。反过来的话，一支拿满了全局配额却卡在自己
@@ -1183,6 +1264,21 @@ impl DownloadClient {
         let mut last_error = None;
         // 每个源都明确回答「我这里没有」时，重试整批也不会有别的结果。
         let mut all_missing = true;
+
+        // 大文件先试分段。一条连接吃不满带宽是常态而不是意外，而一份 Java
+        // 运行时 82% 的字节就压在一个文件上——那个文件多快，这一批就多快。
+        // 这条路自己管选源和重试；走不通（服务器不认 Range）就退回单流。
+        if let Some(size) = task.wire_size().filter(|size| *size >= SEGMENT_THRESHOLD) {
+            match self.download_segmented(task, size, progress, events).await {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(error) => {
+                    all_missing = false;
+                    last_error = Some(format!("分段下载失败：{error}"));
+                }
+            }
+        }
+
         for source in self.ordered_sources(task.wire_url()) {
             let url = source.rewrite(task.wire_url());
             let host = url.host_str().unwrap_or_default().to_owned();
@@ -1223,6 +1319,291 @@ impl DownloadClient {
             Err(Refusal::fatal(reason))
         } else {
             Err(Refusal::retryable(reason))
+        }
+    }
+
+    /// 大文件切成几段并发拉。`Ok(false)` = 这条路不适用，退回单流。
+    ///
+    /// 账目纪律和 [`Self::attempt_download`] 一样：没成就把这一趟计进去的字节
+    /// 原样退回去。这里尤其要紧——失败之后还要退回单流再下一遍，不退的话同一
+    /// 批字节会被计两遍。
+    async fn download_segmented(
+        &self,
+        task: &DownloadTask,
+        size: u64,
+        progress: &Arc<BatchProgress>,
+        events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+    ) -> Result<bool> {
+        let counted = Arc::new(AtomicU64::new(0));
+        let outcome = self
+            .segmented_inner(task, size, progress, events, &counted)
+            .await;
+        if !matches!(outcome, Ok(true)) {
+            progress
+                .done
+                .fetch_sub(counted.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+        outcome
+    }
+
+    async fn segmented_inner(
+        &self,
+        task: &DownloadTask,
+        size: u64,
+        progress: &Arc<BatchProgress>,
+        events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+        counted: &Arc<AtomicU64>,
+    ) -> Result<bool> {
+        let temporary = part_path(&task.path);
+        let landing = match task.wire {
+            Some(_) => wire_path(&temporary),
+            None => temporary.clone(),
+        };
+        let sources = self.ordered_sources(task.wire_url());
+        let Some(first) = sources.first() else {
+            return Ok(false);
+        };
+
+        // 先问一句服务器认不认 Range。这多花一个来回，但这条路上的文件都在
+        // 8 MB 以上——一个来回相对于它们要跑的几秒到几十秒是零头，换来的是
+        // 底下整套逻辑不必再和「服务器其实不支持」这件事纠缠。
+        progress.requests.fetch_add(1, Ordering::Relaxed);
+        if !self.accepts_ranges(&first.rewrite(task.wire_url())).await? {
+            return Ok(false);
+        }
+
+        // 先把文件占到该有的长度：段是往中间写的，文件不够长就没有「中间」。
+        // 长度对得上也正是续传状态可信的前提之一。
+        // 有多少活就值得开多少条，再多也不超过上限。段按这个人头分，抢只用来
+        // 抹平剩下的不均。
+        let want = ((size / MIN_SEGMENT).max(1) as usize).min(MAX_SEGMENTS);
+        let mut plan = load_plan(&landing, size, wire_sha1(task)).await;
+        plan.share_between(want);
+        // 续传回来的时候剩的活可能已经不多了，那就别按整个文件的块头招人。
+        let want = plan.workers_wanted(want);
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&landing)
+            .await?;
+        file.set_len(size).await?;
+        drop(file);
+
+        let plan = Arc::new(Mutex::new(plan));
+        // 续传捡回来的那部分也是下过的，给进度垫上。
+        let recovered = plan.lock().expect("plan poisoned").settled_bytes();
+        counted.fetch_add(recovered, Ordering::Relaxed);
+        progress.done.fetch_add(recovered, Ordering::Relaxed);
+
+        let crew = Arc::new(Crew {
+            task: task.clone(),
+            plan: plan.clone(),
+            landing: landing.clone(),
+            progress: progress.clone(),
+            events: events.clone(),
+            counted: counted.clone(),
+            saved: Arc::new(AtomicU64::new(0)),
+            sources,
+        });
+
+        // 第一条工人用 download_one 已经握着的那个名额，所以它一定开得起来：
+        // 没人来帮忙时，它领走整个文件，行为和分段之前的单流一模一样。
+        let mut jobs = tokio::task::JoinSet::new();
+        let mut hired = 1;
+        {
+            let (client, crew) = (self.clone(), crew.clone());
+            jobs.spawn(async move { client.segment_worker(&crew, 0).await });
+        }
+
+        let mut failure = None;
+        loop {
+            // **反复招工**，不是开工时招一次。名额一开始多半是满的——同一批里
+            // 还有几百个小文件在下——而它们陆续下完腾出来的时候，正是这个大
+            // 文件还在跑的时候。只在开头试一次的话，等于永远招不到人。
+            while hired < want {
+                let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
+                    break;
+                };
+                let (client, crew, index) = (self.clone(), crew.clone(), hired);
+                jobs.spawn(async move {
+                    // 名额跟着这条工人走，它一收工就还回去。
+                    let _permit = permit;
+                    client.segment_worker(&crew, index).await
+                });
+                hired += 1;
+            }
+            match tokio::time::timeout(RECRUIT_INTERVAL, jobs.join_next()).await {
+                Ok(Some(Ok(Ok(())))) => {}
+                Ok(Some(Ok(Err(error)))) => failure = Some(error),
+                Ok(Some(Err(error))) => failure = Some(anyhow!("分段任务异常结束：{error}")),
+                // 都收工了。
+                Ok(None) => break,
+                // 这一轮没人收工，回去再招一次。
+                Err(_) => {}
+            }
+        }
+
+        if !plan.lock().expect("plan poisoned").is_complete() {
+            // 状态留在盘上，下一轮（甚至下次开启动器）接着下。
+            self.save_state(&crew, true).await;
+            return Err(failure.unwrap_or_else(|| anyhow!("分段下载没能凑齐所有片")));
+        }
+
+        // 段是乱序落盘的，哈希只能等字节齐了整体读一遍。一份 55 MB 的文件在有
+        // SHA-NI 的机器上是零点几秒，相对于刚跑完的几十秒可以忽略。
+        let arrived = {
+            let path = landing.clone();
+            tokio::task::spawn_blocking(move || hash_on_disk(&path)).await??
+        };
+        self.land(
+            task,
+            &landing,
+            &temporary,
+            (arrived, size),
+            progress,
+            events,
+        )
+        .await
+    }
+
+    /// 服务器认不认 Range。
+    ///
+    /// 只认 206。有些服务器发着 `Accept-Ranges: bytes` 却照样把整个文件塞回来，
+    /// 所以问的是「你对一个真的 Range 请求怎么答」，而不是「你声称支持什么」。
+    async fn accepts_ranges(&self, url: &Url) -> Result<bool> {
+        let response = self
+            .client
+            .get(url.clone())
+            .header(reqwest::header::RANGE, "bytes=0-0")
+            .send()
+            .await?;
+        Ok(response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
+    }
+
+    /// 一条工人：领活、拉、再领，直到没活可领。
+    async fn segment_worker(&self, crew: &Crew, index: usize) -> Result<()> {
+        // 每条工人从不同的源起步：一个镜像出问题，不该让所有段一起卡住。
+        let mut source = index % crew.sources.len();
+        let mut failures = 0;
+        loop {
+            let slot = crew.plan.lock().expect("plan poisoned").take();
+            let Some(slot) = slot else { return Ok(()) };
+            let url = crew.sources[source].rewrite(crew.task.wire_url());
+            let host = url.host_str().unwrap_or_default().to_owned();
+            crew.progress.requests.fetch_add(1, Ordering::Relaxed);
+
+            let outcome = self.pull_segment(crew, &slot, &url).await;
+            // 先交还这一段，没下完的部分才重新变成「没人管」，别的工人捡得到。
+            crew.plan.lock().expect("plan poisoned").retire(&slot);
+
+            match outcome {
+                Ok(()) => {
+                    self.health.record(&host, true);
+                    failures = 0;
+                }
+                Err(error) => {
+                    self.health.record(&host, false);
+                    failures += 1;
+                    if failures >= SEGMENT_ATTEMPTS {
+                        return Err(error);
+                    }
+                    // 换个源接着来。已经落盘的整片留着，重下的只是没完成的部分。
+                    crew.progress.retries.fetch_add(1, Ordering::Relaxed);
+                    source = (source + 1) % crew.sources.len();
+                    tokio::time::sleep(backoff(failures)).await;
+                }
+            }
+        }
+    }
+
+    /// 拉一段。
+    async fn pull_segment(&self, crew: &Crew, slot: &Arc<Slot>, url: &Url) -> Result<()> {
+        let (start, end) = (slot.at(), slot.end());
+        if start >= end {
+            return Ok(());
+        }
+        let mut response = self
+            .client
+            .get(url.clone())
+            .header(reqwest::header::RANGE, format!("bytes={start}-{}", end - 1))
+            .send()
+            .await?;
+        // 探测时还认 Range，这会儿不认了（换了源、对端换了节点）。当作这一段
+        // 失败：接着按整份重下是错的，我们已经在往文件中间写了。
+        if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(anyhow!("段请求没有拿到 206，而是 {}", response.status()));
+        }
+
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&crew.landing)
+            .await?;
+        let mut file = tokio::io::BufWriter::with_capacity(STREAM_BUFFER, file);
+        file.seek(std::io::SeekFrom::Start(start)).await?;
+
+        let mut at = start;
+        let mut flushed = start;
+        while let Some(chunk) = response.chunk().await? {
+            // 收下了才拦，但拦得住：不去取下一块，背压一路传到对端。
+            if let Some(limiter) = &self.limiter {
+                limiter.take(chunk.len() as u64).await;
+            }
+            // 后半截被别人抢走了就收手，别写进人家的地盘。
+            let end = slot.end();
+            if at >= end {
+                break;
+            }
+            let take = ((end - at) as usize).min(chunk.len());
+            file.write_all(&chunk[..take]).await?;
+            at += take as u64;
+            slot.advance(at);
+            crew.counted.fetch_add(take as u64, Ordering::Relaxed);
+            crew.progress.done.fetch_add(take as u64, Ordering::Relaxed);
+            crew.progress.emit(&crew.events, false);
+
+            // 跨过一整片才谈得上「这片下完了」。而记之前必须真的落盘——位图
+            // 说下完了、字节还在内存缓冲里，正是续传拼出一份坏文件的方式。
+            if at / PIECE > flushed / PIECE {
+                file.flush().await?;
+                crew.plan.lock().expect("plan poisoned").mark(start, at);
+                flushed = at;
+                self.save_state(crew, false).await;
+            }
+        }
+        file.flush().await?;
+        crew.plan.lock().expect("plan poisoned").mark(start, at);
+        if at < slot.end() {
+            return Err(anyhow!("这一段断了，还差 {} 字节", slot.end() - at));
+        }
+        Ok(())
+    }
+
+    /// 续传状态落盘，默认限流。
+    async fn save_state(&self, crew: &Crew, force: bool) {
+        let now = crew.progress.started.elapsed().as_millis() as u64;
+        if !force {
+            let previous = crew.saved.load(Ordering::Relaxed);
+            if now.saturating_sub(previous) < STATE_INTERVAL.as_millis() as u64 {
+                return;
+            }
+            // 输的那条这一轮就不写了，下一片马上还会来。
+            if crew
+                .saved
+                .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
+        } else {
+            crew.saved.store(now, Ordering::Relaxed);
+        }
+        let state = {
+            let plan = crew.plan.lock().expect("plan poisoned");
+            plan.state(wire_sha1(&crew.task))
+        };
+        if let Ok(bytes) = serde_json::to_vec(&state) {
+            let _ = tokio::fs::write(state_path(&crew.landing), bytes).await;
         }
     }
 
@@ -1360,9 +1741,35 @@ impl DownloadClient {
         }
         file.flush().await?;
 
+        self.land(
+            task,
+            &landing,
+            temporary,
+            (hex(hasher.finalize()), received),
+            progress,
+            events,
+        )
+        .await
+    }
+
+    /// 字节齐了之后的落位：验、解压、搬到目的地、记账本。
+    ///
+    /// 单流和分段两条路共用这一段。它们的区别只在**哈希是怎么算出来的**——
+    /// 单流就着流现算，分段落盘后整体读一遍（段是乱序的，现算无从谈起）——
+    /// 而收尾要做的判断一模一样，所以只能有一份。
+    async fn land(
+        &self,
+        task: &DownloadTask,
+        landing: &Path,
+        temporary: &Path,
+        // 网上跑过来那份字节的 sha1，以及它有多少字节。
+        arrived: (String, u64),
+        progress: &BatchProgress,
+        events: &tokio::sync::mpsc::UnboundedSender<DownloadEvent>,
+    ) -> Result<bool> {
+        let (arrived, received) = arrived;
         // 传过来的这一份先自证清白。压缩过的那些，这一步验的是压缩包自己——
         // 成品的 sha1 要等解出来才谈得上。
-        let arrived = hex(hasher.finalize());
         let (expected_sha1, expected_size) = match &task.wire {
             Some(wire) => (Some(wire.sha1.as_str()), Some(wire.size)),
             None => (task.sha1.as_deref(), task.size),
@@ -1370,9 +1777,11 @@ impl DownloadClient {
         if !(expected_size.is_none_or(|size| received == size)
             && expected_sha1.is_none_or(|sha1| arrived.eq_ignore_ascii_case(sha1)))
         {
-            // 校验不过说明落盘的那份是脏的，续传只会一直错下去。
-            let _ = tokio::fs::remove_file(&landing).await;
-            return Err(anyhow!("checksum or size mismatch for {url}"));
+            // 校验不过说明落盘的那份是脏的，续传只会一直错下去。连同续传状态
+            // 一起清掉，下一轮从头来。
+            let _ = tokio::fs::remove_file(landing).await;
+            let _ = tokio::fs::remove_file(state_path(landing)).await;
+            return Err(anyhow!("checksum or size mismatch for {}", task.url));
         }
 
         // 压缩过的还要再解一道。解出来的那份才是要落到目的地的东西，也才是
@@ -1380,14 +1789,15 @@ impl DownloadClient {
         let produced = match &task.wire {
             None => arrived,
             Some(wire) => {
-                let (codec, from, to) = (wire.codec, landing.clone(), temporary.to_path_buf());
+                let (codec, from, to) =
+                    (wire.codec, landing.to_path_buf(), temporary.to_path_buf());
                 // 解压是 CPU 的活，不该按下载那个并发数来开：64 个一起解不会更
                 // 快，而 LZMA 的解码器每个都要留一份字典大小的缓冲，内存峰值
                 // 就成了「并发数 × 字典大小」。
                 let _expanding = expanders().acquire().await;
                 let expanded =
                     tokio::task::spawn_blocking(move || expand(codec, &from, &to)).await?;
-                let _ = tokio::fs::remove_file(&landing).await;
+                let _ = tokio::fs::remove_file(landing).await;
                 let (sha1, size) = expanded?;
                 if !(task.size.is_none_or(|expected| size == expected)
                     && task
@@ -1403,6 +1813,8 @@ impl DownloadClient {
         };
 
         replace(temporary, &task.path).await?;
+        // 落位了，续传状态就没有意义了。
+        let _ = tokio::fs::remove_file(state_path(landing)).await;
         // 哈希是就着流现算的，刚落成的这一份就是它。记下来，紧接着的下一次启动
         // 才不用把刚下的四千个文件再读一遍。没有声明校验和的任务不记：账本只在
         // 有期望值可比的时候派得上用场。
@@ -1777,6 +2189,99 @@ mod tests {
         Url::parse(&format!("http://{address}/client.jar")).expect("server url")
     }
 
+    /// 一个认 Range 的服务器，会记下它一共发出去多少字节、收过几个区间请求。
+    ///
+    /// `honour_ranges` 为假时它无视 Range 直接把整份塞回去——那正是我们要退回
+    /// 单流的那种服务器，而「声称支持却不照做」在野外是真实存在的。
+    async fn ranged_server(
+        body: Arc<Vec<u8>>,
+        honour_ranges: bool,
+    ) -> (Url, Arc<AtomicU64>, Arc<AtomicU64>, Arc<AtomicU64>) {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("local address");
+        let (served, ranged) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
+        let peak = Arc::new(AtomicU64::new(0));
+        let (sent, counted, highest) = (served.clone(), ranged.clone(), peak.clone());
+        tokio::spawn(async move {
+            let live = Arc::new(AtomicU64::new(0));
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let (body, sent, counted) = (body.clone(), sent.clone(), counted.clone());
+                let (live, highest) = (live.clone(), highest.clone());
+                tokio::spawn(async move {
+                    // 同时压在身上的请求数，用来验「段也要从全局那道闸里取名额」。
+                    highest.fetch_max(live.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    let mut buffer = [0u8; 2048];
+                    let read = stream.read(&mut buffer).await.unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buffer[..read]).to_string();
+                    let wanted = head.lines().find_map(|line| {
+                        let rest = line.strip_prefix("range: bytes=").or_else(|| {
+                            line.to_ascii_lowercase()
+                                .starts_with("range: bytes=")
+                                .then(|| &line["Range: bytes=".len()..])
+                        })?;
+                        let (from, to) = rest.trim().split_once('-')?;
+                        Some((
+                            from.parse::<u64>().ok()?,
+                            to.parse::<u64>().unwrap_or(body.len() as u64 - 1),
+                        ))
+                    });
+
+                    let (status, slice, extra) = match wanted {
+                        Some((from, to)) if honour_ranges => {
+                            counted.fetch_add(1, Ordering::SeqCst);
+                            let to = to.min(body.len() as u64 - 1);
+                            (
+                                "206 Partial Content",
+                                &body[from as usize..=to as usize],
+                                format!("Content-Range: bytes {from}-{to}/{}\r\n", body.len()),
+                            )
+                        }
+                        _ => ("200 OK", &body[..], String::new()),
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n",
+                        slice.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    // 一小块一小块地发，边发边记——统计的必须是**真的发出去了
+                    // 多少**。客户端把一段抢走之后会断开，那之后没发成的字节
+                    // 不该算在账上，否则量不出重复下载。
+                    for piece in slice.chunks(64 * 1024) {
+                        if stream.write_all(piece).await.is_err() {
+                            break;
+                        }
+                        sent.fetch_add(piece.len() as u64, Ordering::SeqCst);
+                    }
+                    let _ = stream.flush().await;
+                    live.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+        (
+            Url::parse(&format!("http://{address}/big.bin")).expect("server url"),
+            served,
+            ranged,
+            peak,
+        )
+    }
+
+    /// 一份够大、又压得动的测试数据。
+    fn bulk(size: usize) -> Arc<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(size);
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        while bytes.len() < size {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            bytes.extend_from_slice(&seed.to_le_bytes());
+        }
+        bytes.truncate(size);
+        Arc::new(bytes)
+    }
+
     fn lzma_blob(body: &[u8]) -> Vec<u8> {
         let mut packed = Vec::new();
         lzma_rs::lzma_compress(&mut std::io::BufReader::new(body), &mut packed)
@@ -2120,6 +2625,167 @@ mod tests {
             .expect("download");
 
         assert_eq!(std::fs::read(&path).expect("replaced file"), BODY);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 大文件真的被切开并发拉了，拼回来还是原来那份。
+    #[tokio::test]
+    async fn a_large_file_is_pulled_in_several_pieces_at_once() {
+        let body = bulk(12 * PIECE as usize);
+        let (url, served, ranged, _peak) = ranged_server(body.clone(), true).await;
+        let root = scratch("segmented");
+        let path = root.join("big.bin");
+
+        let task = DownloadTask::new(&path, url.as_str(), sha1_hex(&body), body.len() as u64)
+            .expect("build task");
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+        DownloadClient::new(vec![Arc::new(OfficialSource)], 64)
+            .download_all(vec![task], &events)
+            .await
+            .expect("download");
+
+        assert_eq!(std::fs::read(&path).expect("downloaded"), *body);
+        assert!(
+            ranged.load(Ordering::SeqCst) > 2,
+            "只发了 {} 个区间请求，没有真的切开",
+            ranged.load(Ordering::SeqCst)
+        );
+        // 每个字节只该过一次网（探测那一个字节除外）。
+        assert!(
+            served.load(Ordering::SeqCst) < body.len() as u64 + PIECE,
+            "重复下了太多字节：{}",
+            served.load(Ordering::SeqCst)
+        );
+        assert!(!part_path(&path).exists(), "临时文件没清掉");
+        assert!(!state_path(&part_path(&path)).exists(), "续传状态没清掉");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 分段是**空闲产能的用途，不是新增产能**：段和别的文件从同一道全局闸里
+    /// 取名额，取不到就不开。不然一个大文件切八段，等于偷偷把并发从 64 变成 71。
+    #[tokio::test]
+    async fn segments_draw_from_the_same_global_gate_as_everything_else() {
+        let body = bulk(24 * PIECE as usize);
+        let (url, _served, ranged, peak) = ranged_server(body.clone(), true).await;
+        let root = scratch("gate");
+        let path = root.join("big.bin");
+
+        let task = DownloadTask::new(&path, url.as_str(), sha1_hex(&body), body.len() as u64)
+            .expect("build task");
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+        // 全局只给 2 个名额：一个被这个文件自己占着，段最多再拿到一个。
+        DownloadClient::new(vec![Arc::new(OfficialSource)], 2)
+            .download_all(vec![task], &events)
+            .await
+            .expect("download");
+
+        assert_eq!(std::fs::read(&path).expect("downloaded"), *body);
+        let peak = peak.load(Ordering::SeqCst);
+        assert!(peak <= 2, "段越过了全局那道闸，峰值到了 {peak}");
+        assert!(
+            ranged.load(Ordering::SeqCst) > 2,
+            "根本没切开，这条测试就什么也没验到"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 服务器不认 Range 就老实退回单流，而不是把一份拼错的文件落到磁盘上。
+    #[tokio::test]
+    async fn a_server_that_ignores_ranges_falls_back_to_one_stream() {
+        let body = bulk(10 * PIECE as usize);
+        let (url, _served, ranged, _peak) = ranged_server(body.clone(), false).await;
+        let root = scratch("no-ranges");
+        let path = root.join("big.bin");
+
+        let task = DownloadTask::new(&path, url.as_str(), sha1_hex(&body), body.len() as u64)
+            .expect("build task");
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+        DownloadClient::new(vec![Arc::new(OfficialSource)], 64)
+            .download_all(vec![task], &events)
+            .await
+            .expect("download");
+
+        assert_eq!(std::fs::read(&path).expect("downloaded"), *body);
+        assert_eq!(ranged.load(Ordering::SeqCst), 0, "它根本不认 Range");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 断在半路的分段下载，下次只补没下完的那部分。
+    ///
+    /// 这是跨进程续传：状态文件和临时文件都在盘上，进程已经没了。所以这个
+    /// 测试不「先下一半再中断」，而是直接摆出上一个进程留下的现场。
+    #[tokio::test]
+    async fn a_half_finished_download_only_fetches_what_is_missing() {
+        const HALF: u64 = 6 * PIECE;
+        let body = bulk(12 * PIECE as usize);
+        let (url, served, _ranged, _peak) = ranged_server(body.clone(), true).await;
+        let root = scratch("resume");
+        let path = root.join("big.bin");
+        let sha1 = sha1_hex(&body);
+
+        // 上一个进程留下的：整长的临时文件，前一半是对的，后一半还是空的。
+        let temporary = part_path(&path);
+        let mut half = body[..HALF as usize].to_vec();
+        half.resize(body.len(), 0);
+        std::fs::write(&temporary, &half).expect("write part");
+        let mut plan = Plan::new(body.len() as u64);
+        plan.mark(0, HALF);
+        std::fs::write(
+            state_path(&temporary),
+            serde_json::to_vec(&plan.state(Some(&sha1))).expect("encode state"),
+        )
+        .expect("write state");
+
+        let task =
+            DownloadTask::new(&path, url.as_str(), &sha1, body.len() as u64).expect("build task");
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+        DownloadClient::new(vec![Arc::new(OfficialSource)], 64)
+            .download_all(vec![task], &events)
+            .await
+            .expect("download");
+
+        assert_eq!(std::fs::read(&path).expect("downloaded"), *body);
+        let served = served.load(Ordering::SeqCst);
+        assert!(
+            served < HALF + PIECE,
+            "已经下过的那一半又下了一遍：一共发了 {served} 字节"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 上游换了内容，上次那份状态就一文不值——接着下只会拼出一份校验永远
+    /// 过不了的文件，而那种失败最难查。
+    #[tokio::test]
+    async fn a_stale_resume_state_is_thrown_away_instead_of_trusted() {
+        let body = bulk(12 * PIECE as usize);
+        let (url, served, _ranged, _peak) = ranged_server(body.clone(), true).await;
+        let root = scratch("stale-resume");
+        let path = root.join("big.bin");
+
+        // 现场描述的是另一份内容：位图说前一半下好了，字节却是垃圾。
+        let temporary = part_path(&path);
+        std::fs::write(&temporary, vec![0u8; body.len()]).expect("write part");
+        let mut plan = Plan::new(body.len() as u64);
+        plan.mark(0, 6 * PIECE);
+        std::fs::write(
+            state_path(&temporary),
+            serde_json::to_vec(&plan.state(Some("0".repeat(40).as_str()))).expect("encode"),
+        )
+        .expect("write state");
+
+        let task = DownloadTask::new(&path, url.as_str(), sha1_hex(&body), body.len() as u64)
+            .expect("build task");
+        let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+        DownloadClient::new(vec![Arc::new(OfficialSource)], 64)
+            .download_all(vec![task], &events)
+            .await
+            .expect("download");
+
+        assert_eq!(std::fs::read(&path).expect("downloaded"), *body);
+        assert!(
+            served.load(Ordering::SeqCst) >= body.len() as u64,
+            "该整份重下的，却信了那份对不上号的状态"
+        );
         std::fs::remove_dir_all(root).ok();
     }
 
