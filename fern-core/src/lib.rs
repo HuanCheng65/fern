@@ -70,7 +70,10 @@ pub use data::settings::{
     SnapshotSettings, SourcePreference, UpdateSettings, current as current_settings,
     effective as effective_settings, load as load_settings, save as save_settings,
 };
-pub use data::{DataPaths, ExternalGame, Isolation, nearby_game_directory};
+pub use data::{
+    DataPaths, ExternalGame, Isolation, disk::DiskSpace, disk::space as disk_space,
+    nearby_game_directory,
+};
 pub use event::{LaunchStage, LauncherEvent, LogLevel};
 pub use fern_download::DownloadEvent;
 pub use fern_meta::{VersionManifest, VersionManifestEntry};

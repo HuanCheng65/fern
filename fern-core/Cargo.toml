@@ -33,11 +33,12 @@ toml.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
-# 物理内存、系统版本号、注册表里登记的 Java——三样都没有跨平台的读法。
+# 物理内存、磁盘容量、系统版本号、注册表里登记的 Java——四样都没有跨平台的读法。
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Wdk_System_SystemServices",
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
 ] }

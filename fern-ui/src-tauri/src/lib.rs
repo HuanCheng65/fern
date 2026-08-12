@@ -815,6 +815,12 @@ async fn prune_snapshots(instance_id: String) -> Result<Vec<String>, String> {
     .await?
 }
 
+/// 数据目录所在那块盘有多大。快照上限那根尺的右端就是它。
+#[tauri::command]
+async fn data_disk_space() -> Result<Option<fern_core::DiskSpace>, String> {
+    off_thread(|| Ok(fern_core::disk_space(&paths()?.root))).await?
+}
+
 /// 把快照仓库压回设置里那条线以下。返回删掉了几张。
 ///
 /// 界面在用户改完上限之后调一次。不挂在保存设置上：那条路上什么都可能被改，
@@ -1740,6 +1746,7 @@ pub fn run() {
             label_snapshot,
             prune_snapshots,
             enforce_snapshot_limit,
+            data_disk_space,
             storage_report,
             instance_storage,
             clear_cache,

@@ -128,7 +128,7 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   {
     id: 'snapshots/limit',
     label: '占用上限',
-    note: '快照总占用超过此值时，从最旧的自动快照开始删除。手动拍摄与已加标签的快照不会被删除。留空表示不限。',
+    note: '全部实例的快照共用一份存储，内容相同的文件只保存一份，因此占用远小于快照数量乘以游戏目录大小。超过上限时从最旧的自动快照开始删除，直至回到上限以内；手动拍摄与已加标签的快照不会被删除。修改在关闭设置后生效。',
     keywords: 'snapshot backup limit size disk 快照 备份 上限 占用 磁盘 清理',
     stack: true,
   },

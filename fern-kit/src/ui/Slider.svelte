@@ -19,17 +19,26 @@
     label: string
     /** 读屏器听到的那句话。不给就念数字本身。 */
     text?: string
+    /**
+     * 尺上再画一道刻度，标出一个既成事实（比如「现在已经占了这么多」）。
+     *
+     * 做这个决定要看的那个数，就该出现在决定发生的地方——和内存那根尺上的
+     * 实测刻度是同一件事。图例归调用方写。
+     */
+    mark?: number
     onchange: (value: number) => void
   }
 
-  let { value, min = 0, max, step = 1, page, label, text, onchange }: Props = $props()
+  let { value, min = 0, max, step = 1, page, label, text, mark, onchange }: Props = $props()
 
   let track = $state<HTMLElement>()
   let dragging = $state(false)
 
   const clamp = (raw: number) =>
     Math.min(max, Math.max(min, min + Math.round((raw - min) / step) * step))
-  const at = $derived(`${((clamp(value) - min) / Math.max(max - min, 1)) * 100}%`)
+  const along = (raw: number) =>
+    `${Math.min(100, Math.max(0, ((raw - min) / Math.max(max - min, 1)) * 100))}%`
+  const at = $derived(along(clamp(value)))
 
   function valueAt(clientX: number) {
     if (!track) return value
@@ -89,6 +98,9 @@
   onkeydown={keys}
 >
   <span class="fill" style:width={at}></span>
+  {#if mark !== undefined}
+    <span class="tick" style:left={along(mark)}></span>
+  {/if}
   <span class="grip" style:left={at}></span>
 </div>
 
@@ -115,6 +127,18 @@
     border-radius: 999px;
     background: var(--accent);
     transition: width var(--t-fast) var(--ease);
+  }
+
+  /* 压在填充上面，所以要比它亮。和内存尺上那道刻度长得一样。 */
+  .tick {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 1px;
+    background: var(--ink);
+    opacity: 0.55;
   }
 
   .grip {

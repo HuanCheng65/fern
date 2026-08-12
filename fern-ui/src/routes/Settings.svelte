@@ -22,7 +22,7 @@
    * 外观这一节是文档里「个性化出口」的第一批：改动写进主题状态，立刻
    * 全局生效，序列化出来就是一份可以贴给别人的主题码。
    */
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { open } from '@tauri-apps/plugin-dialog'
   import { Check, ChevronLeft, ChevronRight, Copy, FolderOpen, X } from 'lucide-svelte'
@@ -52,6 +52,7 @@
   import { nameList } from '../lib/backup'
   import { backupUsage } from '../lib/backup'
   import { flush } from '../lib/persist'
+  import { notices } from '../lib/notices.svelte'
   import {
     clearCache,
     clearLogs,
@@ -238,6 +239,8 @@
     usedMb: null,
   })
   const GIGABYTE = 1024
+  /** 一 GB 有多少字节。内存那边按 MB 算，磁盘这边按字节。 */
+  const GIGABYTE_BYTES = 1024 * 1024 * 1024
   /** 滑杆读的是 GB：内存这件事上没人以 MB 为单位思考。 */
   const gigabytes = (mb: number) => Math.round((mb / GIGABYTE) * 10) / 10
   const ceilingGb = $derived(gigabytes(prefs.game.memoryCeilingMb ?? budget.ceilingMb))
@@ -527,38 +530,53 @@
     } catch {
       // 量不出来就不显示那句话，不必为此报错。
     }
+    try {
+      disk = (await invoke<{ total: number; free: number } | null>('data_disk_space')) ?? undefined
+    } catch {
+      // 读不到盘就退回输入框，不编一个右端出来。
+    }
   }
 
-  /** 上一次按上限剪掉了几张。空串表示没有要说的。 */
-  let trimmed = $state('')
-  let trimTimer: ReturnType<typeof setTimeout> | undefined
+  /** 数据目录所在那块盘。快照上限那根尺的右端就是它的容量。 */
+  let disk = $state<{ total: number; free: number } | undefined>()
+  /** 这根尺一共多少格，单位 GB。读不到盘就退回一个输入框。 */
+  const diskGb = $derived(disk ? Math.max(1, Math.floor(disk.total / GIGABYTE_BYTES)) : 0)
+
+  /**
+   * 这一趟进来动过上限没有。
+   *
+   * 动过才在离开时剪一次——**删快照是不可逆的**，不该跟着每一次按键发生。
+   * 上一版在停手 800ms 之后就动手，等于让人一边试数字一边眼看着快照消失。
+   */
+  let limitTouched = false
 
   function setSnapshotLimit(limitGb: number | null) {
     prefs.setSnapshots({ limitGb })
-    trimmed = ''
-    clearTimeout(trimTimer)
-    if (!limitGb || !inTauri()) return
-    // 停手一会儿再剪。一边打字一边删快照的话，输到一半的那个「1」会被当成
-    // 1 GB 执行掉，而删掉的快照回不来。
-    trimTimer = setTimeout(() => void trimSnapshots(), 800)
+    limitTouched = true
   }
 
   /**
-   * 把仓库压回上限以下。
+   * 把仓库压回上限以下。设置页关掉的那一刻做。
    *
-   * 不挂在保存设置上：那条路上什么都可能被改，而删快照该发生在用户按下的
-   * 那一刻，并且要看得见结果。后端读的是设置文件里那一份，所以先落盘。
+   * 不挂在保存设置上：那条路上什么都可能被改。也不跟着输入走：这一步会真的
+   * 删文件，得等人把话说完。结果说给通知——那时这一页已经不在了，而「删了
+   * 几张」是一件已经发生完的事，正是通知该承载的东西。
    */
   async function trimSnapshots() {
+    if (!limitTouched || !inTauri()) return
+    limitTouched = false
     if (!(await flush())) return
     try {
       const removed = await invoke<number>('enforce_snapshot_limit')
-      trimmed = removed > 0 ? `已删除 ${removed} 张最旧的快照` : ''
-      if (removed > 0) await countSnapshots()
+      if (removed > 0) {
+        notices.say({ title: `已删除 ${removed} 张最旧的快照`, detail: '快照占用已回到上限以内。' })
+      }
     } catch (error) {
-      trimmed = String(error)
+      notices.say({ title: '快照未能清理', detail: String(error), tone: 'warn' })
     }
   }
+
+  onDestroy(() => void trimSnapshots())
 
   /** 量一遍。只在第一次进这一节时做：遍历整个数据根不是免费的。 */
   let measured = false
@@ -986,32 +1004,54 @@
           </SettingRow>
 
           <SettingRow id="snapshots/limit" found={focused === 'snapshots/limit'}>
-            <!--
-              这一行必须说得出「现在占了多少」——没有那个数，填进去的上限
-              只是一个猜的数字。
-            -->
-            {#snippet note()}
-              快照总占用超过此值时，从最旧的自动快照开始删除。手动拍摄与已加标签的快照不会被删除。留空表示不限。{#if snapshotBytes !== undefined}
-                当前占用 {formatBytes(snapshotBytes)}。{/if}
-            {/snippet}
             <div class="ceiling-row">
               <span class="t-mono amount">
                 {prefs.snapshots.limitGb ? `${prefs.snapshots.limitGb} GB` : '不限'}
               </span>
-              {#if trimmed}<span class="t-quiet">{trimmed}</span>{/if}
+              <Button
+                variant="link"
+                disabled={prefs.snapshots.limitGb === null}
+                onclick={() => setSnapshotLimit(null)}
+              >
+                不限制
+              </Button>
             </div>
-            <div class="figure-row">
-              <Input
-                class="figure"
-                type="number"
-                min="1"
-                aria-label="快照占用上限"
-                placeholder="不限"
-                value={prefs.snapshots.limitGb ?? ''}
-                oninput={(event) => setSnapshotLimit(countOrNull(event.currentTarget.value))}
+            {#if diskGb > 0}
+              <!--
+                右端是这块盘的容量，不是一个写死的数——「最多 200 GB」在一台
+                128 GB 的笔记本和一台 8 TB 的机器上都是错的。尺上那道刻度是
+                现在已经占了多少：做这个决定要看的数，就该在决定发生的地方。
+              -->
+              <Slider
+                label="快照占用上限"
+                min={1}
+                max={diskGb}
+                page={Math.max(1, Math.round(diskGb / 20))}
+                value={prefs.snapshots.limitGb ?? diskGb}
+                text={prefs.snapshots.limitGb ? `${prefs.snapshots.limitGb} GB` : '不限'}
+                mark={snapshotBytes !== undefined ? snapshotBytes / GIGABYTE_BYTES : undefined}
+                onchange={(value) => setSnapshotLimit(value >= diskGb ? null : value)}
               />
-              <span class="t-quiet">GB</span>
-            </div>
+              <p class="ruler-legend t-quiet">
+                {#if snapshotBytes !== undefined}
+                  <span class="keyed"><i class="tick-key"></i>当前占用 {formatBytes(snapshotBytes)}</span>
+                {/if}
+                <span class="whole">本盘 {formatBytes(disk?.total ?? 0)}</span>
+              </p>
+            {:else}
+              <div class="figure-row">
+                <Input
+                  class="figure"
+                  type="number"
+                  min="1"
+                  aria-label="快照占用上限"
+                  placeholder="不限"
+                  value={prefs.snapshots.limitGb ?? ''}
+                  oninput={(event) => setSnapshotLimit(countOrNull(event.currentTarget.value))}
+                />
+                <span class="t-quiet">GB</span>
+              </div>
+            {/if}
           </SettingRow>
         {:else if section === 'java'}
           <!--
@@ -1851,6 +1891,37 @@
     gap: var(--s2);
     color: var(--ink-2);
     font-size: var(--t-body);
+  }
+
+  /* 尺下面那一行图例。和内存那根尺的图例长得一样，两处读起来该是一回事。 */
+  .ruler-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s2) var(--s4);
+    margin: var(--s3) 0 0;
+    font-size: var(--t-small);
+  }
+
+  .keyed {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+  }
+
+  /* 和尺上那道刻度是同一个东西，所以长得一样。 */
+  .tick-key {
+    align-self: center;
+    width: 2px;
+    height: 9px;
+    border-radius: 1px;
+    background: var(--ink);
+    opacity: 0.55;
+  }
+
+  .whole {
+    margin-left: auto;
+    white-space: nowrap;
   }
 
   /* 和条上那一段是同一个颜色，所以它就是那一段的钥匙。描一圈发丝线，最暗的
