@@ -1235,6 +1235,38 @@ mod tests {
         assert!(look(vec![leaks(), nameless]).is_empty());
     }
 
+    /// 版本号后面那截 `+mc1.20.1` 不是版本号的一部分。
+    ///
+    /// 1.20.1 上最常见的一对：Sodium 写着 `breaks: iris <1.7.6`，装着的 Iris
+    /// 版本号是 `1.7.6+mc1.20.1`。把加号后面那截当成版本号的一段去比，它排到
+    /// 1.7.6 前面，于是这一对随处可见、而且工作得好好的组合被报成起不来。
+    #[test]
+    fn build_metadata_does_not_make_a_mod_older_than_it_is() {
+        let sodium = || {
+            related(
+                jar("Sodium", "sodium", LoaderKind::Fabric),
+                0,
+                "iris",
+                "<1.7.6",
+                Relation::Incompatible,
+            )
+        };
+        let iris = |version: &str| {
+            let mut jar = jar("Iris Shaders", "iris", LoaderKind::Fabric);
+            jar.version = Some(version.to_owned());
+            jar
+        };
+        let look =
+            |jars: Vec<ModJar>| inspect(&jars, LoaderKind::Fabric, &Game::of("1.20.1", None), None);
+
+        assert!(look(vec![sodium(), iris("1.7.6+mc1.20.1")]).is_empty());
+        // 真的旧版本照报——这条检查还在。
+        let findings = look(vec![sodium(), iris("1.7.5+mc1.20.1")]);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].kind, kind::INCOMPATIBLE);
+        assert_eq!(findings[0].args["other"], "Iris Shaders");
+    }
+
     /// 区间看不懂时不许报，这一条和别处的兜底方向正好相反。
     #[test]
     fn an_unreadable_range_never_becomes_a_conflict() {

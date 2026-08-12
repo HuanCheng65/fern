@@ -198,16 +198,33 @@ pub fn compare(left: &str, right: &str) -> std::cmp::Ordering {
 }
 
 fn segments(version: &str) -> impl Iterator<Item = &str> {
-    let version = version.trim();
+    let version = build_metadata_stripped(version.trim());
     // 结尾那一道分隔符是有意义的，不能跟着空段一起丢掉：`>=1.21.6-` 是模组声明
     // 「支持 1.21.6 的快照」的标准写法——空的先行版本段比任何一个先行版本段都
     // 小，于是 `1.21.6-alpha.25.15.a` 落在它上面，而 `1.21.6` 本身也落在上面。
     // 丢掉它，这个区间就退化成 `>=1.21.6`，为快照发布的模组会被判成不兼容。
-    let open_ended = version.ends_with(['.', '-', '+', '_']);
+    let open_ended = version.ends_with(['.', '-', '_']);
     version
-        .split(['.', '-', '+', '_'])
+        .split(['.', '-', '_'])
         .filter(|part| !part.is_empty())
         .chain(open_ended.then_some(""))
+}
+
+/// `+` 之后的那一截不参与比较。
+///
+/// 语义化版本号里它是构建元数据，规范明说不算进先后——而模组世界里几乎人人
+/// 这么标游戏版本：Iris 的 `1.7.6+mc1.20.1` 就是 `1.7.6`，fabric-loader 也是
+/// 这么比的。当成一段普通的文本段去比，它会排在正式版前面（文本段小于数字
+/// 段），于是 Sodium 那条 `breaks: iris <1.7.6` 会对上一个 1.7.6，预检查凭空
+/// 报出一条拦路的冲突。
+///
+/// 两边都要剥：区间那头同样可能写着构建元数据，而 loader 归一化出来的
+/// 那些愚人节版本自己就带着一个（`1.9.2-rv+trendy`）。
+fn build_metadata_stripped(version: &str) -> &str {
+    match version.split_once('+') {
+        Some((head, _)) => head,
+        None => version,
+    }
 }
 
 fn compare_segment(left: &str, right: &str) -> std::cmp::Ordering {
@@ -311,6 +328,32 @@ mod tests {
         assert_eq!(contains("看不懂 || >=1.0", "2.0"), Some(true));
         // 都不成立、但有看不懂的，就是看不懂。
         assert_eq!(contains("看不懂 || >=9.0", "2.0"), None);
+    }
+
+    /// `+` 之后是构建元数据，不参与比较。
+    ///
+    /// 模组几乎人人拿它标游戏版本。Sodium 写着 `breaks: iris <1.7.6`，而 1.20.1
+    /// 上的 Iris 版本号是 `1.7.6+mc1.20.1`——把那一截当成一段普通文本去比，它就
+    /// 排到了 1.7.6 前面，一对本来正常工作的模组被报成装在一起起不来。
+    #[test]
+    fn what_comes_after_a_plus_is_not_part_of_the_version() {
+        assert_eq!(
+            compare("1.7.6+mc1.20.1", "1.7.6"),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(contains("<1.7.6", "1.7.6+mc1.20.1"), Some(false));
+        assert_eq!(contains(">=1.7.6", "1.7.6+mc1.20.1"), Some(true));
+        // 区间那头写着构建元数据也一样剥。
+        assert_eq!(contains(">=0.92.0+1.20.1", "0.92.2"), Some(true));
+        // 这条判断没有被架空：真的旧版本照报。
+        assert_eq!(contains("<1.7.6", "1.7.5+mc1.20.1"), Some(true));
+        // 剥的只是构建元数据，先行版本段照旧算数。
+        assert_eq!(contains("<1.7.6", "1.7.6-beta.1+mc1.20.1"), Some(true));
+        // loader 归一化出来的那些愚人节版本自己就带着一个，同样不算进先后。
+        assert_eq!(
+            compare("1.8.4-alpha.15.14.a+loveandhugs", "1.8.4-alpha.15.14.a"),
+            std::cmp::Ordering::Equal
+        );
     }
 
     /// Maven 那边串接的几段同样是「或」。
