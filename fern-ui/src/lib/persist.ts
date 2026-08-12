@@ -75,6 +75,8 @@ export interface GameDefaults {
   memoryCeilingMb: number | null
   garbageCollector: 'auto' | 'g1' | 'z' | null
   resolution: { width: number; height: number } | null
+  /** 实例没指定时的进程优先级。null 就是正常。 */
+  processPriority: 'low' | 'normal' | 'high' | null
   /** 额外 JVM 参数，原样一行。 */
   jvmArguments: string
 }
@@ -83,6 +85,7 @@ export const emptyGameDefaults = (): GameDefaults => ({
   memoryCeilingMb: null,
   garbageCollector: null,
   resolution: null,
+  processPriority: null,
   jvmArguments: '',
 })
 

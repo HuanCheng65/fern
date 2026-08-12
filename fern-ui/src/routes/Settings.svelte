@@ -947,6 +947,20 @@
             />
           </SettingRow>
 
+          <SettingRow id="game/priority" found={focused === 'game/priority'}>
+            <SegmentedControl
+              aria-label="进程优先级"
+              value={prefs.game.processPriority ?? 'normal'}
+              onchange={(next) =>
+                prefs.setGame({ processPriority: next as 'low' | 'normal' | 'high' })}
+              options={[
+                { value: 'low', label: '低' },
+                { value: 'normal', label: '正常' },
+                { value: 'high', label: '高' },
+              ]}
+            />
+          </SettingRow>
+
           <SettingRow id="game/minimize" found={focused === 'game/minimize'}>
             <SegmentedControl
               aria-label="启动后最小化"

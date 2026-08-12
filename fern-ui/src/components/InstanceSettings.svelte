@@ -66,18 +66,27 @@
       garbageCollector: GcChoice | null
       resolution: { width: number; height: number } | null
       jvmArguments: string
+      processPriority: Priority | null
     }
     memoryCeilingMb: number
   }
 
   type GcChoice = 'auto' | 'g1' | 'z'
+  type Priority = 'low' | 'normal' | 'high'
 
   interface InstanceSettings {
     javaPath: string | null
     maxMemoryMb: number | null
     resolution: { width: number; height: number } | null
     garbageCollector: GcChoice | null
-    processPriority: 'low' | 'normal' | 'high' | null
+    processPriority: Priority | null
+    /**
+     * 额外 JVM 参数。null 是跟随全局，空串是「这个实例一个都不要」。
+     *
+     * 这个字段必须和后端一起加：`settings` 是被整份替换的，界面不认识的字段
+     * 会在下一次改任何一项设置时被顺手抹掉。
+     */
+    jvmArguments: string | null
   }
 
   interface Props {
@@ -106,6 +115,7 @@
     resolution: null,
     garbageCollector: null,
     processPriority: null,
+    jvmArguments: null,
   })
   /** 高级项默认收起：绝大多数人不该看到它们。 */
   let advanced = $state(false)
@@ -122,6 +132,8 @@
   /** 全局选的那个回收器，「跟随全局」要说得出是哪一个。 */
   const globalGc = $derived<GcChoice>(runtime?.defaults.garbageCollector ?? 'auto')
   const GC_LABEL: Record<GcChoice, string> = { auto: '自动', g1: 'G1', z: 'ZGC' }
+  const globalPriority = $derived<Priority>(runtime?.defaults.processPriority ?? 'normal')
+  const PRIORITY_LABEL: Record<Priority, string> = { low: '低', normal: '正常', high: '高' }
   const memoryAuto = $derived(settings.maxMemoryMb === null)
   const memoryValue = $derived(settings.maxMemoryMb ?? runtime?.automaticMemoryMb ?? 2048)
 
@@ -523,23 +535,63 @@
             ]}
           />
 
+          <!--
+            和垃圾回收器同样是四档。以前「正常」这一档存的是 null，那时全局
+            还没有这一项，两者恰好等价；现在 null 是「跟随全局」，把它读成
+            「正常」就会让改了全局的人发现实例没跟着变。
+          -->
           <div class="row-head adv">
             <span class="label">进程优先级</span>
             <span class="t-quiet">降低优先级可减少对其他程序的影响。</span>
           </div>
           <SegmentedControl
             aria-label="进程优先级"
-            value={settings.processPriority ?? 'normal'}
+            value={settings.processPriority ?? 'inherit'}
             onchange={(next) => {
-              settings.processPriority = next === 'normal' ? null : next
+              settings.processPriority = next === 'inherit' ? null : (next as Priority)
               void persist()
             }}
             options={[
+              { value: 'inherit', label: `跟随全局（${PRIORITY_LABEL[globalPriority]}）` },
               { value: 'low', label: '低' },
               { value: 'normal', label: '正常' },
               { value: 'high', label: '高' },
             ]}
           />
+
+          <!--
+            老整合包常常要几个特定的 flag，而在此之前只有一行全局参数——想给
+            某一个实例加一条，就得让所有实例都带上它。
+          -->
+          <div class="row-head adv">
+            <span class="label">额外 JVM 参数</span>
+            <span class="t-quiet">
+              填写后将替换全局参数，而不是追加。留空表示这个实例不使用额外参数。
+            </span>
+          </div>
+          <div class="jvm">
+            <Input
+              mono
+              aria-label="额外 JVM 参数"
+              spellcheck="false"
+              placeholder={runtime?.defaults.jvmArguments || '跟随全局：无'}
+              value={settings.jvmArguments ?? ''}
+              oninput={(event) => {
+                settings.jvmArguments = event.currentTarget.value
+                void persist()
+              }}
+            />
+            <Button
+              variant="link"
+              disabled={settings.jvmArguments === null}
+              onclick={() => {
+                settings.jvmArguments = null
+                void persist()
+              }}
+            >
+              跟随全局
+            </Button>
+          </div>
         {/if}
       </section>
 
@@ -692,10 +744,17 @@
     margin-top: var(--s2);
   }
 
-  .rename {
+  .rename,
+  .jvm {
     display: flex;
     gap: var(--s2);
     margin-top: var(--s2);
+  }
+
+  /* 布局归调用方，作用域样式进不了组件，罩一层自己的祖先。 */
+  .jvm :global(.input) {
+    flex: 1;
+    min-width: 0;
   }
 
   /* 布局归调用方，作用域样式进不了组件，罩一层自己的祖先。 */

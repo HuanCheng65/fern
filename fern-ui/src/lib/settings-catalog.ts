@@ -107,6 +107,12 @@ export const SETTINGS_ROWS: SettingsRow[] = [
     stack: true,
   },
   {
+    id: 'game/priority',
+    label: '进程优先级',
+    note: '降低优先级可减少游戏对其他程序的影响。多数情况下无需调整。实例可单独覆盖。',
+    keywords: 'priority nice cpu 优先级 后台 前台',
+  },
+  {
     id: 'game/minimize',
     label: '启动后最小化',
     note: '在游戏窗口出现后最小化 Fern，而非点击启动时。',

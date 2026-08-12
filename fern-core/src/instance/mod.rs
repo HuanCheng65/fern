@@ -220,9 +220,15 @@ pub struct InstanceSettings {
     /// 不填就是 G1。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub garbage_collector: Option<GarbageCollector>,
-    /// 不填就是 Normal。
+    /// 不填就跟随全局默认。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_priority: Option<ProcessPriority>,
+    /// 额外 JVM 参数，原样一行。不填就跟随全局那一行。
+    ///
+    /// 填了是**整段换掉**，不是接在全局后面——老整合包要的那几个 flag 常常和
+    /// 全局那行冲突，接在后面就没有任何实例摆脱得了它。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jvm_arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

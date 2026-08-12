@@ -105,6 +105,11 @@ pub struct GameDefaults {
     pub garbage_collector: Option<crate::GarbageCollector>,
     /// 实例没指定时的游戏窗口尺寸。
     pub resolution: Option<crate::Resolution>,
+    /// 不填就是 Normal。
+    ///
+    /// 多数人不需要动它——调度器本来就偏向前台进程。摆出来是因为「这台机器上
+    /// 游戏该不该给别的事让路」只有用户答得了，而它此前根本没有入口。
+    pub process_priority: Option<crate::ProcessPriority>,
     /// 额外 JVM 参数，原样一行，按空白切开。
     ///
     /// 不做引号解析：真正的 shell 引号规则是一大片表面积，而这个框在实践中
@@ -214,9 +219,17 @@ pub fn effective(
             .or(defaults.garbage_collector)
             .unwrap_or_default(),
         resolution: instance.resolution.or(defaults.resolution),
-        process_priority: instance.process_priority.unwrap_or_default(),
-        jvm_arguments: defaults
+        process_priority: instance
+            .process_priority
+            .or(defaults.process_priority)
+            .unwrap_or_default(),
+        // 实例填了就整段换掉，不是接在全局后面。和上面四项同一个意思：
+        // 「跟随全局」或者「我自己定」。接在后面的话，全局里一条不合用的参数
+        // 就没有任何实例能摆脱它。
+        jvm_arguments: instance
             .jvm_arguments
+            .as_deref()
+            .unwrap_or(&defaults.jvm_arguments)
             .split_whitespace()
             .map(str::to_owned)
             .collect(),
@@ -442,7 +455,7 @@ mod tests {
 
     #[test]
     fn an_instance_only_writes_down_what_it_wants_to_differ_on() {
-        use crate::{GarbageCollector, InstanceSettings, Resolution};
+        use crate::{GarbageCollector, InstanceSettings, ProcessPriority, Resolution};
 
         let defaults = GameDefaults {
             memory_ceiling_mb: Some(6144),
@@ -451,6 +464,7 @@ mod tests {
                 width: 1600,
                 height: 900,
             }),
+            process_priority: Some(ProcessPriority::Low),
             jvm_arguments: "-Dfoo=1  -XX:+Bar".to_owned(),
         };
         let physical = Some(32 * 1024 * 1024 * 1024u64);
@@ -461,6 +475,7 @@ mod tests {
         assert_eq!(plain.garbage_collector, GarbageCollector::Z);
         assert_eq!(plain.resolution.map(|r| r.width), Some(1600));
         assert_eq!(plain.memory_ceiling_mb, 6144);
+        assert_eq!(plain.process_priority, ProcessPriority::Low);
         // 参数按空白切开，连续空白不该切出空串。
         assert_eq!(plain.jvm_arguments, vec!["-Dfoo=1", "-XX:+Bar"]);
 
@@ -477,6 +492,31 @@ mod tests {
         // 没说的仍然跟全局，不会因为说了一项就整份脱钩。
         assert_eq!(special.resolution.map(|r| r.width), Some(1600));
 
+        // JVM 参数是**整段换掉**，不是接在全局后面：老整合包要的那几个 flag
+        // 常常和全局那行冲突，接在后面就没有实例摆脱得了它。
+        let overridden = crate::data::settings::effective(
+            &InstanceSettings {
+                jvm_arguments: Some("-XX:+Only".to_owned()),
+                process_priority: Some(ProcessPriority::High),
+                ..InstanceSettings::default()
+            },
+            &defaults,
+            physical,
+        );
+        assert_eq!(overridden.jvm_arguments, vec!["-XX:+Only"]);
+        assert_eq!(overridden.process_priority, ProcessPriority::High);
+
+        // 填成空串是「这个实例一个额外参数都不要」，不是「跟随全局」。
+        let none = crate::data::settings::effective(
+            &InstanceSettings {
+                jvm_arguments: Some(String::new()),
+                ..InstanceSettings::default()
+            },
+            &defaults,
+            physical,
+        );
+        assert!(none.jvm_arguments.is_empty());
+
         // 全局也没说时才落到内置默认。
         let bare = crate::data::settings::effective(
             &InstanceSettings::default(),
@@ -488,6 +528,7 @@ mod tests {
         assert_eq!(bare.garbage_collector, GarbageCollector::Auto);
         assert_eq!(bare.resolution, None);
         assert_eq!(bare.memory_ceiling_mb, 16384);
+        assert_eq!(bare.process_priority, ProcessPriority::Normal);
         assert!(bare.jvm_arguments.is_empty());
     }
 
