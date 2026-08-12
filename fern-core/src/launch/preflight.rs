@@ -156,6 +156,7 @@ pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
         profile.loader,
         &game,
         runtime.as_ref().map(|runtime| runtime.major),
+        &bundled(&scoped, profile),
     );
     findings.extend(refusals(profile, runtime.as_ref()));
     if let Some(java) = runtime.as_ref().map(|runtime| runtime.major) {
@@ -297,11 +298,15 @@ fn lower_bound(range: &str) -> Option<u16> {
 ///
 /// 和磁盘分开，于是它能对着构造出来的元数据单独测——而这一层的价值全在判断上，
 /// 不在读文件上。
+///
+/// `bundled` 是加载器自己带进来的那些 modid，由 [`bundled`] 从它那个 jar 里读
+/// 出来。它们不在 mods 目录里，但确确实实装着。
 pub fn inspect(
     jars: &[ModJar],
     loader: LoaderKind,
     minecraft: &Game,
     java_major: Option<u16>,
+    bundled: &[String],
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
     let enabled: Vec<&ModJar> = jars.iter().filter(|jar| jar.enabled).collect();
@@ -334,7 +339,7 @@ pub fn inspect(
         .filter_map(|jar| live(jar, loader, minecraft).map(|manifest| (*jar, manifest)))
         .collect();
     findings.extend(wrong_game_version(&loadable, minecraft, loader));
-    findings.extend(missing_dependencies(jars, &loadable, loader));
+    findings.extend(missing_dependencies(jars, &loadable, loader, bundled));
     findings.extend(incompatible(&loadable));
     findings.extend(wrong_java(&loadable, java_major));
     findings.sort_by_key(|finding| finding.severity);
@@ -496,13 +501,15 @@ fn missing_dependencies(
     all: &[ModJar],
     loadable: &[(&ModJar, &Manifest)],
     loader: LoaderKind,
+    bundled: &[String],
 ) -> Vec<Finding> {
     // 加载器和游戏自己也是依赖项，但它们不在 mods 目录里，不该被当成缺失。
     // 一个 jar 里打包的那些 jar 同样算装了（`ModJar::provides`）——Fabric API
-    // 的四十来个模块就是这么进来的。
+    // 的四十来个模块就是这么进来的，加载器自己打包的那些也一样（`bundled`）。
     let provided: std::collections::HashSet<String> = loadable
         .iter()
         .flat_map(|(jar, _)| jar.mod_id.iter().chain(jar.provides.iter()).cloned())
+        .chain(bundled.iter().cloned())
         .chain(builtin(loader))
         .collect();
 
@@ -695,11 +702,76 @@ pub(crate) fn supplier(mod_id: &str) -> &str {
     if module { "fabric-api" } else { mod_id }
 }
 
-/// 加载器自带的那些 id。模组会把它们写进 depends，但它们不是 mods 里的文件。
+/// 加载器自己带进来的那些 modid，**从它那个 jar 里读出来**。
+///
+/// 加载器不止提供它自己：从 0.15.0 起 fabric-loader 的 jar 里躺着一份
+/// `META-INF/jars/mixinextras-fabric-*.jar`（quilt-loader 同样），那是一个
+/// 注册在案的模组，id 就叫 `mixinextras`。Dynamic FPS 因此直接写
+/// `depends: { "mixinextras": ">=0.3.2" }` 而自己一份都不打包——mods 目录里
+/// 当然找不到它，游戏却照常启动，于是预检查报出一条根本不存在的缺前置。
+///
+/// **所以不猜。** 手写一张「加载器提供什么」的名单，是在替别人家的软件做记录：
+/// 今天漏一个 `mixinextras`，明天加载器再打包点别的，名单又过期一次；而 0.15
+/// 之前的加载器确实不带它，一张不看版本的名单在那些实例上还会反过来漏报。那
+/// 个 jar 就在 `libraries/` 里躺着，它自报的东西比任何名单都准——而读它的代码
+/// 已经有了（[`jar::read`]，连里面套的 jar 一起读，Fabric API 那四十个模块走
+/// 的就是这条路）。
+///
+/// 只读 Fabric 和 Quilt 的：这两家的加载器是以一个模组的身份出现的，jar 里带着
+/// 自己的清单。FML 那边的 `forge` / `fml` 是语言层注册的内置模组，不是这么来的，
+/// 没读过就不假装读过——那几个 id 仍然由 [`builtin`] 那张兜底名单管。
+fn bundled(paths: &DataPaths, profile: &InstanceProfile) -> Vec<String> {
+    let artifact = match profile.loader {
+        LoaderKind::Fabric => "net.fabricmc:fabric-loader:",
+        LoaderKind::Quilt => "org.quiltmc:quilt-loader:",
+        LoaderKind::Forge | LoaderKind::NeoForge | LoaderKind::Vanilla | LoaderKind::LiteLoader => {
+            return Vec::new();
+        }
+    };
+    // 启动读的是哪一份合并后的元数据，这里就读哪一份——加载器那一层的库写在
+    // 哪一层里，只有它知道（[`version::resolve_profile`](super::version::resolve_profile)）。
+    let Ok(metadata) = super::version::resolve_profile(paths, profile) else {
+        return Vec::new();
+    };
+    provided_by(
+        &paths.libraries,
+        metadata
+            .libraries
+            .iter()
+            .map(|library| library.name.as_str())
+            .filter(|name| name.starts_with(artifact)),
+    )
+}
+
+/// 这些 Maven 坐标指着的 jar 自报了哪些 modid，连它们里面套着的一起。
+fn provided_by<'a>(
+    libraries: &std::path::Path,
+    coordinates: impl Iterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut names: Vec<String> = coordinates
+        .filter_map(fern_meta::maven_path)
+        .filter_map(|relative| {
+            fern_download::safe_join(libraries, std::path::Path::new(&relative)).ok()
+        })
+        .filter(|path| path.is_file())
+        .flat_map(|path| {
+            let jar = jar::read(&path);
+            jar.mod_id.into_iter().chain(jar.provides)
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// 读不到那个 jar 时的兜底：这些 id 无论如何都不该被当成缺失。
+///
+/// 加载器的 jar 不一定在手边——从别的启动器接管过来的实例，版本描述和 libraries
+/// 都还在它自己那边，[`bundled`] 会两手空空地回来。那时仍然要有一份最起码的
+/// 名单，否则每个实例都会挨一条「缺少 fabricloader」。
 ///
 /// **`fabric` 不在这里面。** 它是 Fabric API 自己的 id（新版写成 `fabric-api`
-/// 加一条 `provides: ["fabric"]`），不是加载器提供的——fabric-loader 注册的内置
-/// 模组只有 `minecraft`、`java`、`fabricloader` 三个。把它当成自带，等于让所有
+/// 加一条 `provides: ["fabric"]`），不是加载器提供的。把它当成自带，等于让所有
 /// 写 `depends: fabric` 的模组永远报不出缺前置，而那是最常见的一种缺前置。
 ///
 /// `java` 留在这里：它永远存在，只可能版本不对，那件事由 [`wrong_java`] 说。
@@ -826,7 +898,13 @@ mod tests {
             "fabric-api",
             "*",
         )];
-        let findings = inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None);
+        let findings = inspect(
+            &jars,
+            LoaderKind::Fabric,
+            &Game::of("1.21.1", None),
+            None,
+            &[],
+        );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY);
         assert_eq!(findings[0].args["dependency"], "fabric-api");
@@ -852,7 +930,8 @@ mod tests {
                 &[sodium],
                 LoaderKind::Fabric,
                 &Game::of("1.21.1", None),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -872,7 +951,13 @@ mod tests {
             ),
             api,
         ];
-        let findings = inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None);
+        let findings = inspect(
+            &jars,
+            LoaderKind::Fabric,
+            &Game::of("1.21.1", None),
+            None,
+            &[],
+        );
         assert_eq!(findings[0].id, "disabled-dependency:fabric-api");
         assert_eq!(findings[0].kind, kind::DISABLED_DEPENDENCY);
         assert!(findings[0].action.is_none());
@@ -889,10 +974,120 @@ mod tests {
             "fabric",
             "*",
         )];
-        let findings = inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None);
+        let findings = inspect(
+            &jars,
+            LoaderKind::Fabric,
+            &Game::of("1.21.1", None),
+            None,
+            &[],
+        );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY);
         assert_eq!(findings[0].args["dependency"], "fabric");
+    }
+
+    /// 加载器带进来的模组顶得上一条依赖。
+    ///
+    /// Dynamic FPS 写着 `depends: { "mixinextras": ">=0.3.2" }`，自己一份都不
+    /// 打包——那一份在 fabric-loader 的 jar 里（0.15.0 起）。按「mods 目录里没有
+    /// 就是缺前置」去看，这个装好就能玩的实例会挨一条拦路的红字，而用户照着去
+    /// 装的那份，反倒会和加载器自带的那份撞成两个同名模组。
+    #[test]
+    fn what_the_loader_brings_along_is_not_missing() {
+        let dynamic_fps = || {
+            needs(
+                jar("Dynamic FPS", "dynamic_fps", LoaderKind::Fabric),
+                "mixinextras",
+                ">=0.3.2",
+            )
+        };
+        let bundled = ["mixinextras".to_owned()];
+        assert!(
+            inspect(
+                &[dynamic_fps()],
+                LoaderKind::Fabric,
+                &Game::of("1.20.1", None),
+                None,
+                &bundled
+            )
+            .is_empty()
+        );
+
+        // 加载器没带它的那些实例照报——这正是名单式的兜底做不到的分辨。
+        let findings = inspect(
+            &[dynamic_fps()],
+            LoaderKind::Fabric,
+            &Game::of("1.20.1", None),
+            None,
+            &[],
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].args["dependency"], "mixinextras");
+    }
+
+    /// 加载器带了什么，是从它那个 jar 里读出来的。
+    ///
+    /// 这一条走的是真路：坐标 → Maven 路径 → 读 jar → 连里面套着的一起。
+    /// fabric-loader 的 jar 就是这个形状——自己是 `fabricloader`，
+    /// `META-INF/jars/` 里躺着 MixinExtras。
+    #[test]
+    fn the_loader_jar_says_what_it_brings() {
+        use std::io::Write;
+
+        let root =
+            std::env::temp_dir().join(format!("fern-preflight-bundled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let directory = root.join("net/fabricmc/fabric-loader/0.16.14");
+        std::fs::create_dir_all(&directory).expect("create libraries");
+
+        let mut module = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut module));
+            writer
+                .start_file("fabric.mod.json", zip::write::SimpleFileOptions::default())
+                .expect("start entry");
+            writer
+                .write_all(
+                    br#"{"id":"mixinextras","version":"0.4.1",
+                         "provides":["com_github_llamalad7_mixinextras"]}"#,
+                )
+                .expect("write entry");
+            writer.finish().expect("finish module");
+        }
+
+        let mut writer = zip::ZipWriter::new(
+            std::fs::File::create(directory.join("fabric-loader-0.16.14.jar")).expect("create jar"),
+        );
+        writer
+            .start_file("fabric.mod.json", zip::write::SimpleFileOptions::default())
+            .expect("start entry");
+        writer
+            .write_all(br#"{"id":"fabricloader","version":"0.16.14"}"#)
+            .expect("write entry");
+        writer
+            .start_file(
+                "META-INF/jars/mixinextras-fabric-0.4.1.jar",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .expect("start nested");
+        writer.write_all(&module).expect("write nested");
+        writer.finish().expect("finish jar");
+
+        assert_eq!(
+            provided_by(&root, ["net.fabricmc:fabric-loader:0.16.14"].into_iter()),
+            vec![
+                "com_github_llamalad7_mixinextras",
+                "fabricloader",
+                "mixinextras"
+            ]
+        );
+        // 还没下下来的那一份不算，也不该把别的东西算进来。
+        assert!(
+            provided_by(&root, ["net.fabricmc:fabric-loader:0.15.0"].into_iter()).is_empty(),
+            "磁盘上没有的那一份"
+        );
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     /// 装着的 Fabric API 顶得上 `fabric`——`provides` 就是干这个的。
@@ -908,7 +1103,16 @@ mod tests {
             ),
             api,
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None).is_empty());
+        assert!(
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.21.1", None),
+                None,
+                &[]
+            )
+            .is_empty()
+        );
     }
 
     /// 模组要的 Java 比这个实例会用的那份新。加载器会因此拒绝启动。
@@ -924,6 +1128,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.5", None),
             Some(21),
+            &[],
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::WRONG_JAVA);
@@ -936,11 +1141,21 @@ mod tests {
                 &jars,
                 LoaderKind::Fabric,
                 &Game::of("1.21.5", None),
-                Some(22)
+                Some(22),
+                &[]
             )
             .is_empty()
         );
-        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.5", None), None).is_empty());
+        assert!(
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.21.5", None),
+                None,
+                &[]
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1010,20 +1225,43 @@ mod tests {
                 &[ready(">=1.21.6-alpha.25.14.craftmine")],
                 LoaderKind::Fabric,
                 &craftmine,
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
         // 为上一个正式版编译的：照报，而且说给人听的仍然是他认得的那个 id。
-        let findings = inspect(&[ready("1.21.5")], LoaderKind::Fabric, &craftmine, None);
+        let findings = inspect(
+            &[ready("1.21.5")],
+            LoaderKind::Fabric,
+            &craftmine,
+            None,
+            &[],
+        );
         assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
         assert_eq!(findings[0].args["minecraft"], "25w14craftmine");
 
         // 周更快照走的是另一条路（年/周表），结论同样是两个方向都出得来。
         let snapshot = Game::of("25w15a", None);
-        assert!(inspect(&[ready(">=1.21.6-")], LoaderKind::Fabric, &snapshot, None).is_empty());
+        assert!(
+            inspect(
+                &[ready(">=1.21.6-")],
+                LoaderKind::Fabric,
+                &snapshot,
+                None,
+                &[]
+            )
+            .is_empty()
+        );
         assert_eq!(
-            inspect(&[ready(">=1.21.6")], LoaderKind::Fabric, &snapshot, None)[0].kind,
+            inspect(
+                &[ready(">=1.21.6")],
+                LoaderKind::Fabric,
+                &snapshot,
+                None,
+                &[]
+            )[0]
+            .kind,
             kind::WRONG_GAME_VERSION
         );
     }
@@ -1047,7 +1285,7 @@ mod tests {
             "minecraft",
             "~1.21.5- <1.21.6- || =1.21.6-alpha.25.14.craftmine",
         );
-        assert!(inspect(&[lambda], LoaderKind::Fabric, &craftmine, None).is_empty());
+        assert!(inspect(&[lambda], LoaderKind::Fabric, &craftmine, None, &[]).is_empty());
 
         // 两段都不沾的版本照报，这条检查没有被架空。
         let lambda = needs(
@@ -1060,6 +1298,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.20.1", None),
             None,
+            &[],
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
@@ -1075,7 +1314,7 @@ mod tests {
         );
         let unknown = Game::of("我的整合包", None);
         assert!(unknown.semantic.is_none());
-        assert!(inspect(&[sodium], LoaderKind::Fabric, &unknown, None).is_empty());
+        assert!(inspect(&[sodium], LoaderKind::Fabric, &unknown, None, &[]).is_empty());
     }
 
     /// Forge 那边比的是版本号原样，不是 loader 归一化过的那个。
@@ -1098,7 +1337,8 @@ mod tests {
                 std::slice::from_ref(&applied),
                 LoaderKind::NeoForge,
                 &Game::of("1.21.6", None),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -1107,6 +1347,7 @@ mod tests {
             LoaderKind::NeoForge,
             &Game::of("1.21.1", None),
             None,
+            &[],
         );
         assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
 
@@ -1117,7 +1358,8 @@ mod tests {
                 &[applied],
                 LoaderKind::NeoForge,
                 &Game::of("25w15a", Some("1.21.6")),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -1132,6 +1374,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            &[],
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::DUPLICATE);
@@ -1145,6 +1388,7 @@ mod tests {
             LoaderKind::NeoForge,
             &Game::of("1.21.1", None),
             None,
+            &[],
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::WRONG_LOADER);
@@ -1155,7 +1399,8 @@ mod tests {
                 &[jar("Sodium", "sodium", LoaderKind::Fabric)],
                 LoaderKind::Quilt,
                 &Game::of("1.21.1", None),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -1183,7 +1428,8 @@ mod tests {
                 &[leaks],
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -1210,7 +1456,13 @@ mod tests {
             jar
         };
         let look = |jars: Vec<ModJar>| {
-            inspect(&jars, LoaderKind::NeoForge, &Game::of("1.21.1", None), None)
+            inspect(
+                &jars,
+                LoaderKind::NeoForge,
+                &Game::of("1.21.1", None),
+                None,
+                &[],
+            )
         };
 
         // 装的那一份落在区间里：这是加载器真的会拒绝启动的组合。
@@ -1256,8 +1508,15 @@ mod tests {
             jar.version = Some(version.to_owned());
             jar
         };
-        let look =
-            |jars: Vec<ModJar>| inspect(&jars, LoaderKind::Fabric, &Game::of("1.20.1", None), None);
+        let look = |jars: Vec<ModJar>| {
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.20.1", None),
+                None,
+                &[],
+            )
+        };
 
         assert!(look(vec![sodium(), iris("1.7.6+mc1.20.1")]).is_empty());
         // 真的旧版本照报——这条检查还在。
@@ -1284,7 +1543,8 @@ mod tests {
                 &[leaks, ambient],
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -1304,7 +1564,8 @@ mod tests {
                     &[old_mod()],
                     LoaderKind::NeoForge,
                     &Game::of(version, None),
-                    None
+                    None,
+                    &[]
                 )
                 .is_empty(),
                 "{version} 上 NeoForge 读的就是 mods.toml"
@@ -1317,6 +1578,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of(version, None),
                 None,
+                &[],
             );
             assert_eq!(findings.len(), 1, "{version}");
             assert_eq!(findings[0].kind, kind::WRONG_LOADER, "{version}");
@@ -1327,6 +1589,7 @@ mod tests {
             LoaderKind::Forge,
             &Game::of("1.20.1", None),
             None,
+            &[],
         );
         assert_eq!(findings[0].kind, kind::WRONG_LOADER);
     }
@@ -1361,7 +1624,8 @@ mod tests {
                 &[explorify()],
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -1369,7 +1633,7 @@ mod tests {
         // 同一个文件装进 Fabric 实例，那条 fabric-api 才真的算数——依赖是跟着
         // 清单走的，不是跟着文件走的。Quilt 读的也是这一份。
         for loader in [LoaderKind::Fabric, LoaderKind::Quilt] {
-            let findings = inspect(&[explorify()], loader, &Game::of("1.21.1", None), None);
+            let findings = inspect(&[explorify()], loader, &Game::of("1.21.1", None), None, &[]);
             assert_eq!(findings.len(), 1, "{loader:?}");
             assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY, "{loader:?}");
             assert_eq!(findings[0].args["dependency"], "fabric-api", "{loader:?}");
@@ -1382,6 +1646,7 @@ mod tests {
             LoaderKind::Forge,
             &Game::of("1.21.1", None),
             None,
+            &[],
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, kind::WRONG_LOADER);
@@ -1400,6 +1665,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            &[],
         );
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Warning);
@@ -1418,7 +1684,8 @@ mod tests {
                 &[sodium],
                 LoaderKind::Fabric,
                 &Game::of("1.21.1", None),
-                None
+                None,
+                &[]
             )
             .is_empty()
         );
@@ -1431,6 +1698,7 @@ mod tests {
             LoaderKind::Vanilla,
             &Game::of("1.21.1", None),
             None,
+            &[],
         );
         assert_eq!(findings[0].kind, kind::NO_LOADER);
     }
@@ -1453,7 +1721,16 @@ mod tests {
             ),
             api,
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None).is_empty());
+        assert!(
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.21.1", None),
+                None,
+                &[]
+            )
+            .is_empty()
+        );
     }
 
     /// 没装的时候要说的是「装 Fabric API」，而且只说一次——十个模块缺了，
@@ -1475,6 +1752,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            &[],
         );
         let missing: Vec<&str> = findings
             .iter()
@@ -1499,6 +1777,15 @@ mod tests {
             ),
             jar("Fabric API", "fabric-api", LoaderKind::Fabric),
         ];
-        assert!(inspect(&jars, LoaderKind::Fabric, &Game::of("1.21.1", None), None).is_empty());
+        assert!(
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.21.1", None),
+                None,
+                &[]
+            )
+            .is_empty()
+        );
     }
 }
