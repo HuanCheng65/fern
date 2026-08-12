@@ -259,7 +259,7 @@ fn read_entry<R: std::io::Read + std::io::Seek>(
 }
 
 fn fabric(text: &str) -> Option<Described> {
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let value = super::jar::json(text)?;
     Some(Described {
         name: string_at(&value, "name").or_else(|| string_at(&value, "id")),
         version: string_at(&value, "version"),
@@ -267,7 +267,7 @@ fn fabric(text: &str) -> Option<Described> {
 }
 
 fn quilt(text: &str) -> Option<Described> {
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let value = super::jar::json(text)?;
     let loader = value.get("quilt_loader")?;
     Some(Described {
         name: loader

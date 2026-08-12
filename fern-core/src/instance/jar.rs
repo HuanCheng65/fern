@@ -387,12 +387,64 @@ fn provided_ids(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 一份 `.mod.json`，按加载器的宽容度读。
+///
+/// **不能只读严格 JSON。** 加载器读这些文件用的是 gson，而 gson 从不检查字符串
+/// 字面量里的控制字符——`serde_json` 会。真的有模组因此在我们眼里凭空消失：
+/// ObsidianUI 的 `fabric.mod.json` 里 `description` 横跨两行，中间是两个没转义
+/// 的换行。它被 MidnightControls 打包在 `META-INF/jars/` 里，游戏照常启动，而
+/// 预检查读不出那份清单，于是对着一个装好了的前置报「缺少 obsidianui」。
+///
+/// 只在严格那一遍失败之后才走这条路：绝大多数清单是规规矩矩的 JSON，不必为了
+/// 一个别人家的手误让每一个 jar 都多走一趟。
+///
+/// `mods.rs` 为了列表另读一遍同样这几份文件，走的也是这里——不然同一个 jar
+/// 在预检查里认得出、在模组列表里只剩个文件名。
+pub(super) fn json(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(text)
+        .ok()
+        .or_else(|| serde_json::from_str(&escape_control_characters(text)).ok())
+}
+
+/// 把字符串字面量里那些没转义的控制字符转义掉，字面量之外一个字符都不动。
+fn escape_control_characters(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut inside = false;
+    let mut escaped = false;
+    for character in text.chars() {
+        if escaped {
+            // 转义序列的第二个字符，原样放回去——它不是引号，也不是反斜杠。
+            out.push(character);
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if inside => {
+                escaped = true;
+                out.push(character);
+            }
+            '"' => {
+                inside = !inside;
+                out.push(character);
+            }
+            control if inside && (control as u32) < 0x20 => match control {
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                other => out.push_str(&format!("\\u{:04x}", other as u32)),
+            },
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Fabric 的四张表，各是一种关系。
 ///
 /// `breaks` 和 `conflicts` 说的是「装在一起会坏」，方向和 `depends` 相反。
 /// `suggests` 只是一句推荐，加载器完全不管，不读。
 fn fabric(text: &str) -> Option<Described> {
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let value = json(text)?;
     let mut depends = Vec::new();
     for (key, relation) in [
         ("depends", Relation::Required),
@@ -422,7 +474,7 @@ fn fabric(text: &str) -> Option<Described> {
 
 /// Quilt 的 `depends` 和 `breaks` 是两个数组，写法一样，方向相反。
 fn quilt(text: &str) -> Option<Described> {
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let value = json(text)?;
     let loader = value.get("quilt_loader")?;
     let mut depends = Vec::new();
     for (key, present, absent) in [
@@ -971,6 +1023,60 @@ version = "1.6.5"
         assert!(!read.supplies("sodium"));
         // 外层一行代码都没有，崩在模块里的那一帧只能靠这些包认领。
         assert_eq!(read.packages, vec!["net.fabricmc.fabric.impl.blockview"]);
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 清单里有个没转义的换行，加载器照读，我们也得照读。
+    ///
+    /// 照着 ObsidianUI 0.2.11 的 `fabric.mod.json` 写：它的 `description` 横跨
+    /// 两行，中间是两个真的换行符——gson 不管，`serde_json` 直接判错。那一份躺在
+    /// MidnightControls 的 `META-INF/jars/` 里，于是一个装好了就能玩的实例，被
+    /// 报出一条「MidnightControls 缺少 obsidianui」。
+    #[test]
+    fn a_manifest_with_a_raw_newline_in_it_is_still_read() {
+        let root = temporary("lenient");
+        let module = jar(
+            &root,
+            "obsidianui.jar",
+            &[(
+                "fabric.mod.json",
+                "{\n  \"id\": \"obsidianui\",\n  \"version\": \"0.2.11+mc1.21.5\",\n  \
+                 \"name\": \"ObsidianUI\",\n  \
+                 \"description\": \"SpruceUI unofficial architectury port.\n\nJust a GUI library.\",\n  \
+                 \"depends\": {\"minecraft\": \">=1.21.5\"}\n}",
+            )],
+        );
+        let module_bytes = std::fs::read(&module).expect("read module");
+
+        let path = root.join("midnightcontrols.jar");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).expect("create jar"));
+        writer
+            .start_file("fabric.mod.json", zip::write::SimpleFileOptions::default())
+            .expect("start entry");
+        writer
+            .write_all(
+                br#"{"id":"midnightcontrols","name":"MidnightControls","version":"1.11.0",
+                     "depends":{"obsidianui":">=0.2.5"}}"#,
+            )
+            .expect("write entry");
+        writer
+            .start_file(
+                "META-INF/jars/obsidianui-0.2.11+mc1.21.5-fabric.jar",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .expect("start nested");
+        writer.write_all(&module_bytes).expect("write nested");
+        writer.finish().expect("finish jar");
+
+        let read = read(&path);
+        assert!(read.supplies("obsidianui"), "{:?}", read.provides);
+
+        // 字面量之外的换行本来就该在，转义只发生在引号里面。
+        let value = json("{\n  \"a\": \"one\ntwo\",\n  \"b\": \"back\\\\slash\"\n}")
+            .expect("宽容那一遍");
+        assert_eq!(value["a"], serde_json::json!("one\ntwo"));
+        assert_eq!(value["b"], serde_json::json!("back\\slash"));
 
         std::fs::remove_dir_all(root).ok();
     }
