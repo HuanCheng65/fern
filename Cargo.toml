@@ -23,7 +23,10 @@ libc = "0.2"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
 md-5 = "0.10.6"
 pearl-core = { git = "https://github.com/HuanCheng65/pearl.git", rev = "15b47647b02f55bcd07365bf90a73256ea825e3a" }
-reqwest = { version = "0.12.22", default-features = false, features = ["json", "rustls-tls"] }
+# `socks` 不是可选的：Clash、v2ray 这类工具在本机开的就是 socks5，而
+# `Proxy::all` 在没有这个 feature 时照样接受 `socks5://` 地址，只在真的发请求时
+# 才失败——设置界面会说地址没问题，下载却一个也下不动。
+reqwest = { version = "0.12.22", default-features = false, features = ["json", "rustls-tls", "socks"] }
 regex = "1.11.1"
 # 版本号要能被反序列化（清单里是字符串），也要能按 SemVer 的规则比大小——
 # 预发布版小于同号正式版这一条，是通道之间不需要额外逻辑的全部原因。
