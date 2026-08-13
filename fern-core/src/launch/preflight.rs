@@ -720,6 +720,8 @@ pub(crate) fn supplier(mod_id: &str) -> &str {
 /// 只读 Fabric 和 Quilt 的：这两家的加载器是以一个模组的身份出现的，jar 里带着
 /// 自己的清单。FML 那边的 `forge` / `fml` 是语言层注册的内置模组，不是这么来的，
 /// 没读过就不假装读过——那几个 id 仍然由 [`builtin`] 那张兜底名单管。
+///
+/// 读不到那个 jar 时退给 [`before_it_is_on_disk`]，理由见那里。
 fn bundled(paths: &DataPaths, profile: &InstanceProfile) -> Vec<String> {
     let artifact = match profile.loader {
         LoaderKind::Fabric => "net.fabricmc:fabric-loader:",
@@ -730,17 +732,63 @@ fn bundled(paths: &DataPaths, profile: &InstanceProfile) -> Vec<String> {
     };
     // 启动读的是哪一份合并后的元数据，这里就读哪一份——加载器那一层的库写在
     // 哪一层里，只有它知道（[`version::resolve_profile`](super::version::resolve_profile)）。
-    let Ok(metadata) = super::version::resolve_profile(paths, profile) else {
+    let read = super::version::resolve_profile(paths, profile)
+        .map(|metadata| {
+            provided_by(
+                &paths.libraries,
+                metadata
+                    .libraries
+                    .iter()
+                    .map(|library| library.name.as_str())
+                    .filter(|name| name.starts_with(artifact)),
+            )
+        })
+        .unwrap_or_default();
+    // 空手回来只有一个意思：那个 jar 还读不到。读到了的话，它至少会报出自己。
+    if read.is_empty() {
+        return before_it_is_on_disk(profile);
+    }
+    read
+}
+
+/// 那个 jar 还不在磁盘上时，我们已经知道的那一条。
+///
+/// **新建的实例什么都还没下载**（`create_instance_with_loader` 只记下选择），
+/// 而模组是在那之后装的，装完就要看一次预检查——[`bundled`] 在那一刻必然空手，
+/// 于是 Dynamic FPS 那条 `depends: mixinextras` 会变成一条拦路的红字，指着一个
+/// 用户装不了、也不该去装的东西：他真去装了，补全之后反倒和加载器自带的那份
+/// 撞成两个同名模组。
+///
+/// 这看起来正是 [`bundled`] 那段注释拒绝的「手写名单」，但拒绝的两条理由在这里
+/// 都不成立：**它只在看不见那个 jar 的时候才被问到**，补全过一次就再也轮不到它
+/// 说话，所以名单过期了也影响不到任何一个装好了的实例；而它看版本，0.15 之前的
+/// fabric-loader 确实不带 MixinExtras，那些实例照报。
+///
+/// 门槛是数出来的，不是估的：fabric-loader 0.14.24 的 jar 里没有嵌套 jar，
+/// 0.15.0 起有；quilt-loader 到 0.22.0 都没有，0.23.0 起有。
+///
+/// `com_github_llamalad7_mixinextras` 一起给：那是 MixinExtras 自己 `provides`
+/// 的另一个 id，跨加载器的模组写的往往是它。
+fn before_it_is_on_disk(profile: &InstanceProfile) -> Vec<String> {
+    let since = match profile.loader {
+        LoaderKind::Fabric => ">=0.15.0",
+        LoaderKind::Quilt => ">=0.23.0",
+        LoaderKind::Forge | LoaderKind::NeoForge | LoaderKind::Vanilla | LoaderKind::LiteLoader => {
+            return Vec::new();
+        }
+    };
+    let Some(component) = profile.loader_component() else {
         return Vec::new();
     };
-    provided_by(
-        &paths.libraries,
-        metadata
-            .libraries
-            .iter()
-            .map(|library| library.name.as_str())
-            .filter(|name| name.starts_with(artifact)),
-    )
+    // 看不懂的版本号当成带（`satisfies` 的口径）：这一头猜错只是少报一条不
+    // 存在的缺失，反过来猜错是往一个还没建完的实例上贴一条拦不住的红字。
+    if !ranges::satisfies(since, &component.version) {
+        return Vec::new();
+    }
+    vec![
+        "mixinextras".to_owned(),
+        "com_github_llamalad7_mixinextras".to_owned(),
+    ]
 }
 
 /// 这些 Maven 坐标指着的 jar 自报了哪些 modid，连它们里面套着的一起。
@@ -1091,6 +1139,93 @@ mod tests {
             provided_by(&root, ["net.fabricmc:fabric-loader:0.15.0"].into_iter()).is_empty(),
             "磁盘上没有的那一份"
         );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    fn fabric_profile(loader: LoaderKind, loader_version: &str) -> InstanceProfile {
+        InstanceProfile {
+            schema_version: crate::instance::INSTANCE_SCHEMA_VERSION,
+            id: crate::InstanceId::parse("moss").expect("valid id"),
+            name: "Moss".to_owned(),
+            game_version: "1.20.1".to_owned(),
+            loader,
+            components: vec![
+                crate::Component {
+                    kind: LoaderKind::Vanilla,
+                    version: "1.20.1".to_owned(),
+                    version_id: "1.20.1".to_owned(),
+                    jar_mods: Vec::new(),
+                },
+                crate::Component {
+                    kind: loader,
+                    version: loader_version.to_owned(),
+                    // 新建的实例这里是空的：装完加载器才知道上游给的是哪个 id。
+                    version_id: String::new(),
+                    jar_mods: Vec::new(),
+                },
+            ],
+            cover: crate::CoverSeed {
+                identity: "moss".to_owned(),
+                growth: 0,
+            },
+            settings: crate::InstanceSettings::default(),
+            account_id: None,
+            external: None,
+            created_at: None,
+            last_played: None,
+            play_seconds: 0,
+        }
+    }
+
+    /// 还没补全的实例上，加载器带的那些也不算缺。
+    ///
+    /// 建实例是不下载任何东西的，而模组可以在那之后马上装——装完就看一次预
+    /// 检查，那一刻 `libraries/` 是空的，连版本描述都还没有。读不到那个 jar 却
+    /// 照着「mods 目录里没有就是缺」去说，Dynamic FPS 会在一个还没建完的实例上
+    /// 挨一条指着 MixinExtras 的红字。
+    #[test]
+    fn what_the_loader_brings_is_assumed_until_its_jar_is_there() {
+        let root =
+            std::env::temp_dir().join(format!("fern-preflight-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = DataPaths::new(&root);
+
+        let brought = bundled(&paths, &fabric_profile(LoaderKind::Fabric, "0.18.4"));
+        assert!(
+            brought.contains(&"mixinextras".to_owned()),
+            "空目录上也要认得加载器自带的那一份：{brought:?}"
+        );
+        assert!(
+            inspect(
+                &[needs(
+                    jar("Dynamic FPS", "dynamic_fps", LoaderKind::Fabric),
+                    "mixinextras",
+                    ">=0.3.2",
+                )],
+                LoaderKind::Fabric,
+                &Game::of("1.20.1", None),
+                None,
+                &brought,
+            )
+            .is_empty()
+        );
+
+        // 但这一条要看版本：不带 MixinExtras 的那些加载器上，缺就是真缺。
+        // 门槛是数出来的——fabric-loader 0.15.0、quilt-loader 0.23.0 起才带。
+        assert!(bundled(&paths, &fabric_profile(LoaderKind::Fabric, "0.14.24")).is_empty());
+        assert!(bundled(&paths, &fabric_profile(LoaderKind::Quilt, "0.22.0")).is_empty());
+        assert!(
+            bundled(&paths, &fabric_profile(LoaderKind::Quilt, "0.23.0"))
+                .contains(&"mixinextras".to_owned())
+        );
+        // 预发布版也算：Quilt 现在挂在最前面的就是 `0.30.1-beta.2` 这种。
+        assert!(
+            bundled(&paths, &fabric_profile(LoaderKind::Quilt, "0.30.1-beta.2"))
+                .contains(&"mixinextras".to_owned())
+        );
+        // Forge 那边没有这回事，别顺手也给它加上。
+        assert!(bundled(&paths, &fabric_profile(LoaderKind::Forge, "47.4.0")).is_empty());
 
         std::fs::remove_dir_all(root).ok();
     }
