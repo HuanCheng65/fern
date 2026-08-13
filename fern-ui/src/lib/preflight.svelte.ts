@@ -71,9 +71,25 @@ class PreflightStore {
     }
   }
 
-  /** 模组变了，之前那一份不作数了。 */
+  /** 模组变了，之前那一份不作数了。当场重查：用户正看着这一屏。 */
   refresh(instanceId: string) {
     void this.check(instanceId, true)
+  }
+
+  /**
+   * 之前那一份不作数了，但**不当场重查**。
+   *
+   * 改动发生在别的屏上（在项目页装了个模组、在设置里删了份 Java）时用这个：
+   * 那个实例的页面没开着，替一个没人在看的地方扫一遍 mods 目录是白扫。丢掉
+   * 缓存就够了——下次进去，`check` 自然会重算一遍。
+   */
+  invalidate(instanceId: string) {
+    delete this.#byInstance[instanceId]
+  }
+
+  /** 变的那件事对所有实例都成立（哪份 Java 会被自动选中）。 */
+  invalidateAll() {
+    this.#byInstance = {}
   }
 }
 

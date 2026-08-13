@@ -18,9 +18,11 @@
   import Loading from '../components/Loading.svelte'
   import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
+  import { integrity } from '../lib/integrity.svelte'
   import { jobs } from '../lib/jobs.svelte'
   import { nav } from '../lib/nav.svelte'
   import { notices } from '../lib/notices.svelte'
+  import { preflight } from '../lib/preflight.svelte'
   import {
     compactNumber,
     compatibility,
@@ -192,6 +194,11 @@
         title: `安装 ${detail?.title ?? '资源'}`,
         subjects: [slug, where.id],
       })
+      // 那个实例的 mods 目录变了，它那边两句结论就都不作数了——尤其是预检查：
+      // 用户点进来装的往往正是它报缺的那个前置，回去还看见同一条红字，等于我
+      // 们在说他没装。
+      preflight.invalidate(where.id)
+      integrity.invalidate(where.id)
       // 结果不留在这一页：它是一件已经做完的事，而用户下一秒可能就走了。
       const extra = outcome.installed.length - 1
       notices.say({

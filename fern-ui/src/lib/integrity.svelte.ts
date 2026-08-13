@@ -85,9 +85,14 @@ class IntegrityStore {
     }
   }
 
-  /** 模组变了，之前那一份不作数了。 */
+  /** 模组变了，之前那一份不作数了。当场重查：用户正看着这一屏。 */
   refresh(instanceId: string) {
     void this.check(instanceId, true)
+  }
+
+  /** 同上，但改动发生在别的屏上，那个实例的页面没开着——丢掉就行，别扫。 */
+  invalidate(instanceId: string) {
+    delete this.#byInstance[instanceId]
   }
 }
 

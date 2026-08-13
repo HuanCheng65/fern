@@ -49,6 +49,7 @@
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
   import { updates } from '../lib/update.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
+  import { preflight } from '../lib/preflight.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import { nameList } from '../lib/backup'
   import { backupUsage } from '../lib/backup'
@@ -356,10 +357,32 @@
 
 
 
+  /**
+   * 这台机器上现在有哪些 Java、哪个大版本会自动选中哪一份。别处那些关于
+   * Java 的话都建立在它上面。
+   *
+   * 连没被选中的那些也一起记：某个实例可能正指名要它，而它刚被删掉。多作废
+   * 一次的代价是下次进那一页多扫几百毫秒，漏一次是一句假话摆在那儿。
+   *
+   * `undefined` 是还没读过——头一次读到不算变化。
+   */
+  let javaChoice: string | undefined
+
   async function loadRuntimes() {
     if (!inTauri()) return
     try {
       groups = await invoke('java_overview')
+      // 装了一份、删了一份、扫出来一份，都可能换掉自动选中的是谁。预检查里那
+      // 句「这个实例会用 Java 21，而某个模组要 25」正是照着它算的，换了人就不
+      // 作数了——这件事对所有实例都成立，不只是当前这个。
+      const choice = groups
+        .map(
+          (group) =>
+            `${group.major}:${group.preferred ?? ''}:${group.runtimes.map((rt) => rt.home).join(',')}`,
+        )
+        .join('|')
+      if (javaChoice !== undefined && choice !== javaChoice) preflight.invalidateAll()
+      javaChoice = choice
       runtimeError = ''
     } catch (error) {
       runtimeError = String(error)
