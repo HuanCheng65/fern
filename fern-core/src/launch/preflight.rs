@@ -66,11 +66,13 @@ pub mod kind {
     pub const INCOMPATIBLE: &str = "incompatible";
     /// 模组要求的 Java 大版本，不是这个实例会用的那个。
     pub const WRONG_JAVA: &str = "wrong-java";
+    /// 模组的代码比这个实例会用的 Java 新，加载它的那一刻就会崩。
+    pub const NEWER_CLASSES: &str = "newer-classes";
     /// 设置里写着一个这个 Java 已经不认的参数。
     pub const STALE_JVM_ARGUMENT: &str = "stale-jvm-argument";
 
     /// 全部取值。界面那边的文案表按它对齐。
-    pub const ALL: [&str; 9] = [
+    pub const ALL: [&str; 10] = [
         NO_LOADER,
         DUPLICATE,
         WRONG_LOADER,
@@ -79,6 +81,7 @@ pub mod kind {
         DISABLED_DEPENDENCY,
         INCOMPATIBLE,
         WRONG_JAVA,
+        NEWER_CLASSES,
         STALE_JVM_ARGUMENT,
     ];
 }
@@ -156,6 +159,7 @@ pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
         profile.loader,
         &game,
         runtime.as_ref().map(|runtime| runtime.major),
+        profile.settings.java_path.is_some(),
         &bundled(&scoped, profile),
     );
     findings.extend(refusals(profile, runtime.as_ref()));
@@ -242,23 +246,31 @@ fn chosen_runtime(
 
 /// 这些模组里，要求得最高的那条 Java 下界。
 ///
-/// 加载器把 Java 当成一个内置模组，`depends: { "java": ">=25" }` 是一条真的会让
-/// 它拒绝启动的约束。装了这样的模组，「自动」就该去挑一个 25——否则自动挑出来的
-/// 那份 Java 能跑游戏、跑不了这一屋子模组，而用户看到的只是「点了启动，什么也
-/// 没发生」。
+/// 两种证据，取高的那个：
 ///
-/// **只认读得懂的下界。** `>=25`、`[25,)`、`25` 认，`<=17` 这样的上界和看不懂的
-/// 写法一律不算——把一个上界当成下界去挑 Java，比不挑更糟。
+/// 一是**清单说的**。加载器把 Java 当成一个内置模组，`depends: { "java": ">=25" }`
+/// 是一条真的会让它拒绝启动的约束。装了这样的模组，「自动」就该去挑一个 25——
+/// 否则自动挑出来的那份 Java 能跑游戏、跑不了这一屋子模组，而用户看到的只是
+/// 「点了启动，什么也没发生」。
+///
+/// 二是**编译产物说的**（[`ModJar::compiled_for`]）。清单是人手写的，会漏：按
+/// Java 21 编译却按 17 声明的模组一路通过依赖求解，然后在构造入口类那一刻抛
+/// `UnsupportedClassVersionError`。class 文件头里的版本号不会漏。
+///
+/// **清单那一侧只认读得懂的下界。** `>=25`、`[25,)`、`25` 认，`<=17` 这样的上界
+/// 和看不懂的写法一律不算——把一个上界当成下界去挑 Java，比不挑更糟。
 ///
 /// 不分加载器地看每一份清单：一个多加载器打包的模组要 Java 25，它三份清单里
 /// 写的是同一件事，而挑错 Java 的代价是「点了启动什么也没发生」。
 pub fn java_floor(jars: &[ModJar]) -> Option<u16> {
-    jars.iter()
-        .filter(|jar| jar.enabled)
+    let enabled = || jars.iter().filter(|jar| jar.enabled);
+    let declared = enabled()
         .flat_map(|jar| jar.every_requirement())
         .filter(|dependency| dependency.mod_id == "java")
         .filter_map(|dependency| lower_bound(&dependency.range))
-        .max()
+        .max();
+    let compiled = enabled().filter_map(|jar| jar.compiled_for).max();
+    declared.max(compiled)
 }
 
 /// 区间的下界，读不出来就是 `None`。
@@ -301,11 +313,16 @@ fn lower_bound(range: &str) -> Option<u16> {
 ///
 /// `bundled` 是加载器自己带进来的那些 modid，由 [`bundled`] 从它那个 jar 里读
 /// 出来。它们不在 mods 目录里，但确确实实装着。
+///
+/// `pinned` 是「这个实例的 Java 是用户自己指定的」。它只影响一句话该不该说：
+/// 自动挑选会为模组去下一份更新的运行时，指定死了的那份不会（见
+/// [`newer_classes`]）。
 pub fn inspect(
     jars: &[ModJar],
     loader: LoaderKind,
     minecraft: &Game,
     java_major: Option<u16>,
+    pinned: bool,
     bundled: &[String],
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
@@ -342,6 +359,9 @@ pub fn inspect(
     findings.extend(missing_dependencies(jars, &loadable, loader, bundled));
     findings.extend(incompatible(&loadable));
     findings.extend(wrong_java(&loadable, java_major));
+    findings.extend(newer_classes(
+        &loadable, loader, minecraft, java_major, pinned,
+    ));
     findings.sort_by_key(|finding| finding.severity);
     findings
 }
@@ -667,6 +687,65 @@ fn wrong_java(loadable: &[(&ModJar, &Manifest)], java_major: Option<u16>) -> Vec
     findings
 }
 
+/// 模组的代码比这个实例会用的 Java 新。
+///
+/// 和 [`wrong_java`] 说的不是一件事：那一条是模组自己声明的约束，加载器会照它
+/// 拒绝启动；这一条是编译产物本身——声明可以漏写，class 文件头里的版本号不会。
+/// 漏写的后果正是这条检查存在的理由：依赖求解一路放行，然后崩在
+/// `UnsupportedClassVersionError`。
+///
+/// **只在启动自己解决不了的时候说。** 「这个实例现在会用 Java 17，而某个模组
+/// 要 21」并不都是问题：自动挑选那条路会为它去下一份 21（见
+/// [`ensure_java`](crate::java::runtime::ensure_java)），点一下启动就好了。剩下
+/// 两种它自己过不去：这个游戏版本根本用不了那么新的 Java，或者 Java 是用户自己
+/// 指定死的——指定了就以指定的为准，我们不会背着他换掉。
+///
+/// 同一个大版本只说一次：十个模组按 Java 21 编译，要做的仍然只有一件事。
+fn newer_classes(
+    loadable: &[(&ModJar, &Manifest)],
+    loader: LoaderKind,
+    minecraft: &Game,
+    java_major: Option<u16>,
+    pinned: bool,
+) -> Vec<Finding> {
+    let Some(current) = java_major else {
+        return Vec::new();
+    };
+    // 只看上限那一头：这条路上要换的永远是更新的那个，下限不可能被它违反。而
+    // 上限是「已知这个组合会坏」——把 1.16.5 换到 Java 17 之后崩的是另一件事，
+    // 而用户是照着我们的按钮做的。
+    let ceiling = crate::java::requirement(&minecraft.id, loader, None).maximum;
+    let mut findings = Vec::new();
+    let mut reported: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    for (jar, _) in loadable {
+        let Some(needed) = jar.compiled_for.filter(|needed| *needed > current) else {
+            continue;
+        };
+        // 真装得到的是这一档：没有哪份运行时是 Java 18，够得着它的是 21。
+        let wanted = crate::java::runtime::deliverable(needed);
+        let reachable = ceiling.is_none_or(|maximum| wanted <= maximum);
+        if reachable && !pinned {
+            continue;
+        }
+        if !reported.insert(needed) {
+            continue;
+        }
+        findings.push(Finding {
+            id: format!("{}:{needed}", kind::NEWER_CLASSES),
+            kind: kind::NEWER_CLASSES.to_owned(),
+            severity: Severity::Blocking,
+            args: args([
+                ("mod", jar.name.clone()),
+                ("needed", needed.to_string()),
+                ("java", current.to_string()),
+            ]),
+            action: reachable.then_some(Action::UseJava { major: wanted }),
+        });
+    }
+    findings.sort_by(|left, right| left.id.cmp(&right.id));
+    findings
+}
+
 /// 区间里那个大版本：`>=22` 与 `[17,)` 都是 17/22，`>=1.8` 是 8。
 ///
 /// 只取区间里第一个数字。它可能是下界（`>=22`）也可能是上界（`<=17`），但两种
@@ -916,6 +995,7 @@ mod tests {
             }],
             provides: Vec::new(),
             packages: Vec::new(),
+            compiled_for: None,
         }
     }
 
@@ -956,6 +1036,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -984,6 +1065,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1009,6 +1091,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings[0].id, "disabled-dependency:fabric-api");
@@ -1032,6 +1115,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1061,6 +1145,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.20.1", None),
                 None,
+                false,
                 &bundled
             )
             .is_empty()
@@ -1072,6 +1157,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.20.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1206,6 +1292,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.20.1", None),
                 None,
+                false,
                 &brought,
             )
             .is_empty()
@@ -1249,6 +1336,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1268,6 +1356,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.5", None),
             Some(21),
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1282,6 +1371,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.21.5", None),
                 Some(22),
+                false,
                 &[]
             )
             .is_empty()
@@ -1292,6 +1382,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.21.5", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1319,6 +1410,83 @@ mod tests {
         ];
         assert_eq!(java_floor(&jars), Some(25));
         assert_eq!(java_floor(&[]), None);
+    }
+
+    /// 一个字都没声明、但代码是按新 Java 编译的模组，同样把这条线抬起来。
+    #[test]
+    fn code_compiled_for_a_newer_java_raises_the_same_line() {
+        let mut silent = jar("VeinMiner", "veinminer", LoaderKind::Fabric);
+        silent.compiled_for = Some(21);
+        let jars = vec![
+            needs(jar("Sodium", "sodium", LoaderKind::Fabric), "java", ">=17"),
+            silent,
+        ];
+        assert_eq!(java_floor(&jars), Some(21));
+    }
+
+    /// 够不着的时候（区间容不下）总得有句话说，而且这句话要带着那颗按钮。
+    #[test]
+    fn a_mod_compiled_for_a_java_the_instance_will_not_use_is_reported() {
+        let mut ahead = jar("VeinMiner", "veinminer", LoaderKind::Fabric);
+        ahead.compiled_for = Some(21);
+        let jars = vec![ahead];
+        // 自动挑选那条路会为它去下一份 21，所以这里没有话要说——说了就是一条
+        // 点一下启动就会自己消失的「阻塞」。
+        assert!(
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.20.1", None),
+                Some(17),
+                false,
+                &[]
+            )
+            .iter()
+            .all(|finding| finding.kind != kind::NEWER_CLASSES)
+        );
+        // 用户自己指定了 Java，我们不会背着他换。那就得说，而且带上那颗按钮。
+        let findings = inspect(
+            &jars,
+            LoaderKind::Fabric,
+            &Game::of("1.20.1", None),
+            Some(17),
+            true,
+            &[],
+        );
+        let found = findings
+            .iter()
+            .find(|finding| finding.kind == kind::NEWER_CLASSES)
+            .expect("那一条");
+        assert_eq!(found.args["needed"], "21");
+        assert_eq!(found.args["java"], "17");
+        assert_eq!(found.action, Some(Action::UseJava { major: 21 }));
+        // 1.16.5 用不了 Java 17，那就只说话不给按钮：照着它换完，崩的是另一件事。
+        let old = inspect(
+            &jars,
+            LoaderKind::Fabric,
+            &Game::of("1.16.5", None),
+            Some(8),
+            false,
+            &[],
+        );
+        let found = old
+            .iter()
+            .find(|finding| finding.kind == kind::NEWER_CLASSES)
+            .expect("那一条");
+        assert_eq!(found.action, None);
+        // 挑中的那份已经够新，就没有话要说。
+        assert!(
+            inspect(
+                &jars,
+                LoaderKind::Fabric,
+                &Game::of("1.20.1", None),
+                Some(21),
+                false,
+                &[]
+            )
+            .iter()
+            .all(|finding| finding.kind != kind::NEWER_CLASSES)
+        );
     }
 
     /// 只认读得懂的下界。把一个上界当成下界去挑 Java，比不挑更糟。
@@ -1366,6 +1534,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &craftmine,
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1376,6 +1545,7 @@ mod tests {
             LoaderKind::Fabric,
             &craftmine,
             None,
+            false,
             &[],
         );
         assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
@@ -1389,6 +1559,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &snapshot,
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1399,6 +1570,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &snapshot,
                 None,
+                false,
                 &[]
             )[0]
             .kind,
@@ -1425,7 +1597,7 @@ mod tests {
             "minecraft",
             "~1.21.5- <1.21.6- || =1.21.6-alpha.25.14.craftmine",
         );
-        assert!(inspect(&[lambda], LoaderKind::Fabric, &craftmine, None, &[]).is_empty());
+        assert!(inspect(&[lambda], LoaderKind::Fabric, &craftmine, None, false, &[]).is_empty());
 
         // 两段都不沾的版本照报，这条检查没有被架空。
         let lambda = needs(
@@ -1438,6 +1610,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.20.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1454,7 +1627,7 @@ mod tests {
         );
         let unknown = Game::of("我的整合包", None);
         assert!(unknown.semantic.is_none());
-        assert!(inspect(&[sodium], LoaderKind::Fabric, &unknown, None, &[]).is_empty());
+        assert!(inspect(&[sodium], LoaderKind::Fabric, &unknown, None, false, &[]).is_empty());
     }
 
     /// Forge 那边比的是版本号原样，不是 loader 归一化过的那个。
@@ -1478,6 +1651,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of("1.21.6", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1487,6 +1661,7 @@ mod tests {
             LoaderKind::NeoForge,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings[0].kind, kind::WRONG_GAME_VERSION);
@@ -1499,6 +1674,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of("25w15a", Some("1.21.6")),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1514,6 +1690,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1528,6 +1705,7 @@ mod tests {
             LoaderKind::NeoForge,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1540,6 +1718,7 @@ mod tests {
                 LoaderKind::Quilt,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1569,6 +1748,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1601,6 +1781,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[],
             )
         };
@@ -1654,6 +1835,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.20.1", None),
                 None,
+                false,
                 &[],
             )
         };
@@ -1684,6 +1866,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1705,6 +1888,7 @@ mod tests {
                     LoaderKind::NeoForge,
                     &Game::of(version, None),
                     None,
+                    false,
                     &[]
                 )
                 .is_empty(),
@@ -1718,6 +1902,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of(version, None),
                 None,
+                false,
                 &[],
             );
             assert_eq!(findings.len(), 1, "{version}");
@@ -1729,6 +1914,7 @@ mod tests {
             LoaderKind::Forge,
             &Game::of("1.20.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings[0].kind, kind::WRONG_LOADER);
@@ -1765,6 +1951,7 @@ mod tests {
                 LoaderKind::NeoForge,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1773,7 +1960,14 @@ mod tests {
         // 同一个文件装进 Fabric 实例，那条 fabric-api 才真的算数——依赖是跟着
         // 清单走的，不是跟着文件走的。Quilt 读的也是这一份。
         for loader in [LoaderKind::Fabric, LoaderKind::Quilt] {
-            let findings = inspect(&[explorify()], loader, &Game::of("1.21.1", None), None, &[]);
+            let findings = inspect(
+                &[explorify()],
+                loader,
+                &Game::of("1.21.1", None),
+                None,
+                false,
+                &[],
+            );
             assert_eq!(findings.len(), 1, "{loader:?}");
             assert_eq!(findings[0].kind, kind::MISSING_DEPENDENCY, "{loader:?}");
             assert_eq!(findings[0].args["dependency"], "fabric-api", "{loader:?}");
@@ -1786,6 +1980,7 @@ mod tests {
             LoaderKind::Forge,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1805,6 +2000,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings.len(), 1);
@@ -1825,6 +2021,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1838,6 +2035,7 @@ mod tests {
             LoaderKind::Vanilla,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         assert_eq!(findings[0].kind, kind::NO_LOADER);
@@ -1867,6 +2065,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()
@@ -1892,6 +2091,7 @@ mod tests {
             LoaderKind::Fabric,
             &Game::of("1.21.1", None),
             None,
+            false,
             &[],
         );
         let missing: Vec<&str> = findings
@@ -1923,6 +2123,7 @@ mod tests {
                 LoaderKind::Fabric,
                 &Game::of("1.21.1", None),
                 None,
+                false,
                 &[]
             )
             .is_empty()

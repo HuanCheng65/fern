@@ -28,6 +28,8 @@ export function label(action: FixAction | undefined): string {
       return '去安装'
     case 'remove-mod':
       return '删除'
+    case 'use-java':
+      return `换用 Java ${action.major}`
     case 'restore-mods':
       return '恢复模组'
     default:
@@ -64,6 +66,8 @@ export function target(action: FixAction | undefined): string {
       return action.query
     case 'remove-mod':
       return action.file
+    case 'use-java':
+      return `Java ${action.major}`
     case 'restore-mods':
       return action.snapshot
     default:

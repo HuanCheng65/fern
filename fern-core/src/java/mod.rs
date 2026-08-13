@@ -111,9 +111,13 @@ pub struct JavaRequirement {
     pub maximum: Option<u16>,
     /// 装着的模组还要求的下界。
     ///
-    /// 它是**软的**，所以不并进 `minimum`：模组要 Java 25 而这台机器上最新的是
-    /// 21，该发生的事是「用 21 启动，并且预检查明说有模组要 25」，不是「启动器
+    /// **挑选时它是软的**，所以不并进 `minimum`：模组要 Java 25 而这台机器上最新
+    /// 的是 21，该发生的事是「用 21 启动，并且预检查明说有模组要 25」，不是「启动器
     /// 拒绝启动」。真正的硬下界只有一条——游戏自己跑不起来的那条。
+    ///
+    /// **补全时它会让我们去下载**（见
+    /// [`ensure_java`](super::runtime::ensure_java)）：手上只有 17 而这一屋子模组
+    /// 要 21，该发生的事是去下一份 21。区间容得下才去——容不下的仍然只是一句话。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred: Option<u16>,
     /// 大版本之内还要卡到 update 一级的那条线。

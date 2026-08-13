@@ -316,10 +316,26 @@ pub(crate) async fn prepare(
         .map(|version| version.component.as_str());
     let java_track = job.track(JobText::id("job.track.java-runtime"));
     let java_events = java_track.downloads();
-    let (files_outcome, java_outcome) = tokio::join!(
-        downloader.download_all(tasks, &files_events),
-        runtime::ensure_java(paths, component, &requirement, &java_events),
-    );
+    let java = async {
+        // 要下哪一份 Java，得先看一眼 mods 目录：装着按 Java 21 编译的模组时，
+        // 元数据说的那份 17 下回来也是白下。扫描是 CPU 活，所以让它和文件下载
+        // 一起跑；启动那边待会儿问的是同一个目录，那一遍命中扫描缓存。
+        let mods_directory = crate::instance::jar::directory(paths, instance_id);
+        let floor = tokio::task::spawn_blocking(move || {
+            super::preflight::java_floor(&crate::instance::jar::read_all(&mods_directory))
+        })
+        .await
+        .unwrap_or_default();
+        runtime::ensure_java(
+            paths,
+            component,
+            &requirement.preferring(floor),
+            &java_events,
+        )
+        .await
+    };
+    let (files_outcome, java_outcome) =
+        tokio::join!(downloader.download_all(tasks, &files_events), java);
     files_outcome?;
     java_outcome?;
     java_track.done();

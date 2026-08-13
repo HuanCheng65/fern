@@ -1652,6 +1652,30 @@ async fn install_java(
     result
 }
 
+/// 让某个实例改用这个大版本的 Java，缺了就顺手装上。
+///
+/// 诊断上那颗「换用 Java N」按的就是它。同样走作业：可能要下两百兆。
+#[tauri::command]
+async fn use_java(
+    app: tauri::AppHandle,
+    instance_id: String,
+    major: u16,
+    title: String,
+    subjects: Vec<String>,
+) -> Result<(), String> {
+    let paths = paths()?;
+    let events = launcher_events(&app);
+    let job = fern_core::Job::begin(&events, title, subjects);
+    job.expect(1);
+    job.step(format!("换用 Java {major}"));
+    let result = fern_core::use_java(&paths, &instance_id, major, &job.downloads())
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
+    result
+}
+
 /// 手动登记一个安装位置。可以指到可执行文件，也可以指到根目录。
 #[tauri::command]
 async fn add_java_path(path: String) -> Result<fern_core::JavaRuntime, String> {
@@ -1748,6 +1772,7 @@ pub fn run() {
             list_java_runtimes,
             java_overview,
             install_java,
+            use_java,
             add_java_path,
             forget_java_path,
             remove_java_runtime,

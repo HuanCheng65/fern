@@ -187,6 +187,12 @@ const backend = {
       '它声明的 Java 版本是 {range}，而这个实例会使用 Java {java}。加载器会因此拒绝启动。可以在实例设置中更换 Java。',
   },
 
+  'preflight.newer-classes': {
+    title: '{mod} 需要 Java {needed}',
+    detail:
+      '它的代码按 Java {needed} 编译，而这个实例会使用 Java {java}，加载时会立即失败。可以在实例设置中更换 Java。',
+  },
+
   'preflight.stale-jvm-argument': {
     title: '{argument} 在 Java {java} 上已不可用',
     detail:

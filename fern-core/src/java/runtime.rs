@@ -100,24 +100,92 @@ pub async fn install(
     ensure_java(paths, None, &requirement, events).await
 }
 
+/// 装上这个大版本，并且把这个实例钉在它上面。
+///
+/// 诊断给出的那颗「换用 Java N」按下去做的就是这两件事，而**钉住是必要的一半**：
+/// 自动挑选在区间内取最小的那个（见 [`java::select`] 里的理由），只把 N 装上去，
+/// 下一次点启动挑中的仍然是原来那份。
+///
+/// 会走到这颗按钮，说明自动那条路已经没认出来——按下它的人比我们更清楚，那就
+/// 照他说的记下来，而不是记一个下次又会被算掉的偏好。
+pub async fn use_java(
+    paths: &DataPaths,
+    instance_id: &str,
+    major: u16,
+    events: &UnboundedSender<DownloadEvent>,
+) -> Result<JavaRuntime> {
+    let runtime = install(paths, major, events).await?;
+    let mut profile = crate::read_instance(paths, instance_id)?;
+    profile.settings.java_path = Some(runtime.path.clone());
+    crate::update_instance_settings(paths, instance_id, profile.settings)?;
+    Ok(runtime)
+}
+
 /// 保证有一个满足要求的 Java，必要时下载。
 ///
 /// `component` 来自 version JSON 的 `javaVersion.component`——Mojang 自己指定了
 /// 用哪一份运行时，照做就是和官方启动器一致。老版本没有这个字段，按下限推。
+///
+/// **模组那条下界也会让它去下载。** 它在挑选时是软的（见
+/// [`JavaRequirement::preferred`]），但「手上只有 17，而这一屋子模组要 21」时该
+/// 发生的事是去下一份 21，不是拿 17 凑合然后崩在类加载上。够不着的那些例外：
+/// 区间容不下就当没说过——游戏的上限是「已知这个组合会坏」，一个模组推翻不了它。
 pub async fn ensure_java(
     paths: &DataPaths,
     component: Option<&str>,
     requirement: &JavaRequirement,
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<JavaRuntime> {
-    if let Some(runtime) = java::select(&java::discover(Some(paths)), requirement) {
-        return Ok(runtime);
+    let target = target_major(requirement);
+    let installed = java::select(&java::discover(Some(paths)), requirement);
+    if let Some(runtime) = installed.as_ref().filter(|runtime| runtime.major >= target) {
+        return Ok(runtime.clone());
     }
 
-    let component = component
-        .filter(|name| !name.is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| component_for(requirement.minimum).to_owned());
+    let component = if target > requirement.minimum {
+        // 要下的是模组那条下界，而 `component` 说的是游戏那条。
+        component_for(target).to_owned()
+    } else {
+        component
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| component_for(target).to_owned())
+    };
+    match download(paths, component, target, events).await {
+        Ok(runtime) => Ok(runtime),
+        // 手上这份跑得动游戏，只是跑不了某个模组。为它去下一份更新的没成功，
+        // 那就用它启动，该说的话留给预检查——总好过整个补全就此失败。
+        Err(error) => match installed {
+            Some(runtime) => {
+                let _ = paths.append_log(&format!("[java] 未能取得 Java {target}：{error:#}"));
+                Ok(runtime)
+            }
+            None => Err(error),
+        },
+    }
+}
+
+/// 这一趟至少要拿到哪个大版本。
+///
+/// 游戏那条下界永远算数；模组那条先抬到真拿得到的那一档（见 [`deliverable`]），
+/// 再看区间容不容得下——容不下就当没说过，游戏的上限是「已知这个组合会坏」，
+/// 一个模组想要更新的 Java 推翻不了它。
+fn target_major(requirement: &JavaRequirement) -> u16 {
+    requirement
+        .preferred
+        .map(deliverable)
+        .filter(|major| requirement.accepts(*major))
+        .unwrap_or(requirement.minimum)
+        .max(requirement.minimum)
+}
+
+/// 把某一份组件装到位。`target` 是它至少该给出的那个大版本。
+async fn download(
+    paths: &DataPaths,
+    component: String,
+    target: u16,
+    events: &UnboundedSender<DownloadEvent>,
+) -> Result<JavaRuntime> {
     // 这个名字来自版本 JSON，而它要同时变成安装目录名和缓存文件名。
     if !crate::launch::version::is_safe_id(&component) {
         return Err(anyhow!("运行时组件名无法作为目录名：{component}"));
@@ -153,8 +221,8 @@ pub async fn ensure_java(
     {
         Some(entry) => entry,
         None => {
-            let install_root = adoptium::install(paths, requirement.minimum, events).await?;
-            return finish(&install_root, requirement, "Temurin");
+            let install_root = adoptium::install(paths, target, events).await?;
+            return finish(&install_root, target, "Temurin");
         }
     };
 
@@ -217,11 +285,11 @@ pub async fn ensure_java(
         create_link(&path, &target).await?;
     }
 
-    finish(&install_root, requirement, &component)
+    finish(&install_root, target, &component)
 }
 
 /// 装完之后统一确认一遍：读得出来，而且真的够新。
-fn finish(install_root: &Path, requirement: &JavaRequirement, what: &str) -> Result<JavaRuntime> {
+fn finish(install_root: &Path, target: u16, what: &str) -> Result<JavaRuntime> {
     // 机器上多了一份 Java，发现缓存里那份名单已经过时。不作废的话，接下来
     // 的启动会「看不见」刚装好的运行时。
     java::invalidate_discovery();
@@ -229,14 +297,32 @@ fn finish(install_root: &Path, requirement: &JavaRequirement, what: &str) -> Res
         .with_context(|| format!("下载完成后仍无法识别 {} 中的 Java", install_root.display()))?;
     // 是我们下的，就该由我们管：设置页要能列出来、能删掉，选择时也优先。
     runtime.managed = true;
-    if runtime.major < requirement.minimum {
+    if runtime.major < target {
         return Err(anyhow!(
-            "{what} 安装的是 Java {}，低于此版本要求的 Java {}",
-            runtime.major,
-            requirement.minimum
+            "{what} 安装的是 Java {}，低于此版本要求的 Java {target}",
+            runtime.major
         ));
     }
     Ok(runtime)
+}
+
+/// 想要不低于 `floor` 的 Java，实际拿得到的是哪个大版本。
+///
+/// Mojang 只发那么几份运行时，中间那些大版本根本没有对应的组件：一个按 Java 18
+/// 编译的模组，`component_for(18)` 给的是 gamma，而 gamma 装出来是 **17**——照着
+/// 18 去装，装完一验就发现还是不够，白下一趟两百兆，而且每次启动都白下一趟。
+///
+/// 下界就是下界：Java 21 满足「不低于 18」。所以这里把它抬到真拿得到的那一档。
+pub(crate) fn deliverable(floor: u16) -> u16 {
+    match floor {
+        0..=8 => 8,
+        9..=16 => 16,
+        17 => 17,
+        18..=21 => 21,
+        22..=25 => 25,
+        // 比我们知道的最新那档还高：照它说的报出去，让上面那层去判断够不够得着。
+        other => other,
+    }
 }
 
 /// 元数据没说要哪一份时，按下限推一个。
@@ -387,6 +473,30 @@ fn installed_root(runtimes: &Path, binary: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 模组要的那份够得着就装它，够不着就当没说过。
+    #[test]
+    fn the_mods_floor_decides_what_gets_downloaded_when_the_interval_allows_it() {
+        // 1.20.1：区间 17–21，元数据说 17。
+        let requirement = JavaRequirement {
+            minimum: 17,
+            maximum: Some(21),
+            preferred: None,
+            ceiling: None,
+        };
+        assert_eq!(target_major(&requirement), 17);
+        // 一个按 21 编译的模组：该下的是 21，不是元数据那份 17。
+        assert_eq!(target_major(&requirement.preferring(Some(21))), 21);
+        // 要 25 的那条区间容不下：游戏的上限说了算，仍然装 17，剩下的话由预检查说。
+        assert_eq!(target_major(&requirement.preferring(Some(25))), 17);
+        // 比下限还低的一条不该把要装的那份往回拉。
+        assert_eq!(target_major(&requirement.preferring(Some(8))), 17);
+        // 18 没有对应的运行时，够得着它的是 21——照着 18 去装，装回来的是 17。
+        assert_eq!(target_major(&requirement.preferring(Some(18))), 21);
+        assert_eq!(deliverable(18), 21);
+        assert_eq!(deliverable(23), 25);
+        assert_eq!(deliverable(21), 21);
+    }
 
     #[test]
     fn a_broken_runtime_is_traced_back_to_the_installation_it_belongs_to() {

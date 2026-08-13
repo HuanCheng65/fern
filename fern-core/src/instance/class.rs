@@ -28,6 +28,26 @@ pub(crate) struct Referenced {
     pub(crate) strings: Vec<String>,
 }
 
+/// 认出一个大版本要读的字节数：魔数四个，minor 和 major 各两个。
+pub(crate) const VERSION_HEAD: usize = 8;
+
+/// 这份 class 是按哪个 Java 大版本编译的。不是 class 就是 `None`。
+///
+/// class 文件版本号和 Java 大版本之间差一个常数 44：45 是 Java 1.1，52 是 8，
+/// 61 是 17，65 是 21。这张对应关系此后再没变过，JVM 也正是照它拒绝加载的。
+///
+/// 只看 [`VERSION_HEAD`] 个字节，喂进来的可以只有这么多。
+pub(crate) fn compiled_for(head: &[u8]) -> Option<u16> {
+    let mut cursor = Cursor { bytes: head, at: 0 };
+    if cursor.u4() != Some(0xCAFE_BABE) {
+        return None;
+    }
+    cursor.u2()?;
+    let major = cursor.u2()?;
+    // 45 以下不是版本号，是我们读错了地方。
+    major.checked_sub(44).filter(|java| *java > 0)
+}
+
 /// 一份 class 字节里引用到的东西。不是 class 就是空的。
 pub(crate) fn referenced(bytes: &[u8]) -> Referenced {
     let mut cursor = Cursor { bytes, at: 0 };

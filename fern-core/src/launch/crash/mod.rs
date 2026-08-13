@@ -244,6 +244,22 @@ mod tests {
         );
     }
 
+    /// class 文件版本号要换算成人能按的那个数字：65 是 Java 21。
+    ///
+    /// 预检查读的是入口类，读不到别处；这句崩溃能走到眼前，说明这个类不在那几个
+    /// 里面。那时候这颗按钮就是唯一的一条路。
+    #[test]
+    fn a_class_from_the_future_offers_the_java_that_can_read_it() {
+        let found = diagnose(
+            "java.lang.UnsupportedClassVersionError: de/miraculixx/veinminer/Veinminer has been \
+             compiled by a more recent version of the Java Runtime (class file version 65.0), \
+             this version of the Java Runtime only recognizes class file versions up to 61.0",
+            context(LoaderKind::Fabric),
+        );
+        assert_eq!(found[0].args["needed"], "65");
+        assert_eq!(found[0].action, Some(Action::UseJava { major: 21 }));
+    }
+
     #[test]
     fn nothing_recognised_is_reported_as_nothing_recognised() {
         assert!(diagnose("一段谁也认不出来的话", context(LoaderKind::Fabric)).is_empty());

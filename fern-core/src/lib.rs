@@ -116,7 +116,7 @@ pub use instance::{
     Component, CoverSeed, GarbageCollector, InstanceId, InstanceProfile, InstanceSettings,
     LoaderKind, LoaderProfile, ProcessPriority, Resolution,
 };
-pub use java::runtime::{ensure_java, install as install_java, remove as remove_runtime};
+pub use java::runtime::{ensure_java, install as install_java, remove as remove_runtime, use_java};
 pub use java::{
     JavaGroup, JavaImage, JavaRequirement, JavaRuntime, add_path as add_java_path, detect_java,
     discover as discover_java, forget_path as forget_java_path, overview as java_overview,

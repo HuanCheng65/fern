@@ -105,6 +105,13 @@ pub struct ModJar {
     pub provides: Vec<String>,
     /// 顶层包，例如 `net.caffeinemc.mods.sodium`。崩溃归因按它匹配栈帧。
     pub packages: Vec<String>,
+    /// 入口类是按哪个 Java 大版本编译的（见 [`compiled_for`]）。读不出就是
+    /// `None`——那是「不知道」，不是「很老」。
+    ///
+    /// 它比清单里那句 `depends: { "java": ">=21" }` 诚实：清单是人手写的，编译
+    /// 产物不是。一个按 21 编译却按 17 声明的模组，加载器的依赖求解一路放行，
+    /// 然后在构造入口类的那一刻抛 `UnsupportedClassVersionError`。
+    pub compiled_for: Option<u16>,
 }
 
 impl ModJar {
@@ -147,6 +154,7 @@ pub fn read(path: &Path) -> ModJar {
         manifests: Vec::new(),
         provides: Vec::new(),
         packages: Vec::new(),
+        compiled_for: None,
     };
 
     let Ok(file) = std::fs::File::open(path) else {
@@ -156,8 +164,17 @@ pub fn read(path: &Path) -> ModJar {
         return jar;
     };
 
-    merge(&mut jar, describe(&mut archive));
+    let manifests = describe(&mut archive);
+    let entrypoints: Vec<String> = manifests
+        .iter()
+        .flat_map(|(described, _)| described.entrypoints.clone())
+        .collect();
+    merge(&mut jar, manifests);
+    jar.compiled_for = compiled_for(&mut archive, &entrypoints);
     let nested = nested(&mut archive, 0);
+    // 打包在里面的那些模块也是要被加载的代码，它们的下界一样算数：Fabric API
+    // 那种自己一行代码都没有的空壳，全部答案都在里面那四十个 jar 里。
+    jar.compiled_for = jar.compiled_for.max(nested.compiled_for);
     jar.provides.extend(nested.ids);
     jar.provides.sort();
     jar.provides.dedup();
@@ -231,6 +248,7 @@ fn describe<R: std::io::Read + std::io::Seek>(
 struct Nested {
     ids: Vec<String>,
     packages: Vec<String>,
+    compiled_for: Option<u16>,
 }
 
 fn nested<R: std::io::Read + std::io::Seek>(
@@ -263,14 +281,20 @@ fn nested<R: std::io::Read + std::io::Seek>(
         let Ok(mut module) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
             continue;
         };
+        let mut entrypoints = Vec::new();
         for (described, _) in describe(&mut module) {
             found.ids.extend(described.mod_id);
             found.ids.extend(described.provides);
+            entrypoints.extend(described.entrypoints);
         }
+        found.compiled_for = found
+            .compiled_for
+            .max(compiled_for(&mut module, &entrypoints));
         found.packages.extend(packages(&module));
         let deeper = nested(&mut module, depth + 1);
         found.ids.extend(deeper.ids);
         found.packages.extend(deeper.packages);
+        found.compiled_for = found.compiled_for.max(deeper.compiled_for);
     }
     // 四十个模块给出四十条 `net.fabricmc.fabric.impl.…`，留一条最短的就够——
     // 归因是按前缀匹配的。
@@ -278,6 +302,36 @@ fn nested<R: std::io::Read + std::io::Seek>(
     found.packages.dedup();
     found.packages = shortest_prefixes(&found.packages);
     found
+}
+
+/// 这些入口类里，编译得最新的那一个是按哪个 Java 大版本编的。
+///
+/// **只读点名的那几个类，每个只读头 8 个字节。** 条目名在开 zip 的那一刻就已经
+/// 在内存里，这里多花的是一次 seek 加一小段 inflate；上面那趟把每个内嵌 jar 整个
+/// 解压出来才是这个函数的大头，这一下和它比可以忽略。
+///
+/// 代价是它只看得见入口：一个入口类按 17 编译、而某个 mixin 类按 21 编译的模组，
+/// 这里读不出来。补上这个洞要把每个 jar 上千个条目全扫一遍，那会让整个扫描慢一
+/// 个数量级——而入口类恰恰是加载器第一个构造的东西，也就是这类崩溃现场本身。
+fn compiled_for<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    entrypoints: &[String],
+) -> Option<u16> {
+    // 一个模组通常写一两个入口。写了几十个的话，前几个已经足够说明它是按什么
+    // 编译的了——同一次构建出来的 class 版本号是同一个。
+    const MOST: usize = 8;
+    entrypoints
+        .iter()
+        .take(MOST)
+        .filter_map(|class| {
+            let mut entry = archive
+                .by_name(&format!("{}.class", class.replace('.', "/")))
+                .ok()?;
+            let mut head = [0u8; super::class::VERSION_HEAD];
+            entry.read_exact(&mut head).ok()?;
+            super::class::compiled_for(&head)
+        })
+        .max()
 }
 
 /// 一组包名里，去掉那些已经被更短的一条覆盖住的。
@@ -456,6 +510,8 @@ struct Described {
     /// 元数据里的 `provides`：这个 jar 声明自己顶替哪些 id。
     provides: Vec<String>,
     depends: Vec<Dependency>,
+    /// 清单点名的入口类，加载器会亲手把它们构造出来。
+    entrypoints: Vec<String>,
 }
 
 /// 把读到的几份清单并进一个 `ModJar`。
@@ -577,7 +633,34 @@ fn fabric(text: &str) -> Option<Described> {
         version: string_at(&value, "version"),
         provides: provided_ids(value.get("provides")),
         depends,
+        entrypoints: entrypoint_classes(value.get("entrypoints")),
     })
+}
+
+/// 入口表里点到的那些类。
+///
+/// 表是「一类入口对应一串入口」，串里可以是一个字符串，也可以是一个带
+/// `value` 的对象（Kotlin 那些用 `adapter` 指定语言适配器）。写法还允许
+/// `com.foo.Bar::method` 指到某个方法——要读的类仍然是 `Bar`。
+///
+/// Quilt 的 `quilt_loader.entrypoints` 是同一副样子，所以两家共用这一条。
+fn entrypoint_classes(value: Option<&serde_json::Value>) -> Vec<String> {
+    let Some(table) = value.and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+    table
+        .values()
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .filter_map(|item| match item {
+            serde_json::Value::String(class) => Some(class.clone()),
+            _ => string_at(item, "value"),
+        })
+        .filter_map(|class| {
+            let class = class.split("::").next()?.trim();
+            (!class.is_empty()).then(|| class.to_owned())
+        })
+        .collect()
 }
 
 /// Quilt 的 `depends` 和 `breaks` 是两个数组，写法一样，方向相反。
@@ -624,6 +707,7 @@ fn quilt(text: &str) -> Option<Described> {
         version: string_at(loader, "version"),
         provides: provided_ids(loader.get("provides")),
         depends,
+        entrypoints: entrypoint_classes(loader.get("entrypoints")),
     })
 }
 
@@ -717,6 +801,9 @@ fn forge(text: &str) -> Option<Described> {
             .filter_map(|entry| entry.mod_id.clone())
             .collect(),
         depends,
+        // mods.toml 不点名任何类：FML 靠扫 `@Mod` 注解找入口。没有一条能便宜
+        // 读到的线索，这边就交白卷——Forge 那一侧本来也被夹在 Java 8/17。
+        entrypoints: Vec::new(),
     })
 }
 
@@ -850,6 +937,15 @@ mod tests {
     use std::io::Write;
 
     fn jar(directory: &Path, file_name: &str, entries: &[(&str, &str)]) -> PathBuf {
+        let entries: Vec<(&str, Vec<u8>)> = entries
+            .iter()
+            .map(|(name, content)| (*name, content.as_bytes().to_vec()))
+            .collect();
+        jar_of(directory, file_name, &entries)
+    }
+
+    /// class 文件不是文本，所以这一条收字节。
+    fn jar_of(directory: &Path, file_name: &str, entries: &[(&str, Vec<u8>)]) -> PathBuf {
         std::fs::create_dir_all(directory).expect("create directory");
         let path = directory.join(file_name);
         let mut writer = zip::ZipWriter::new(std::fs::File::create(&path).expect("create jar"));
@@ -857,10 +953,18 @@ mod tests {
             writer
                 .start_file(*name, zip::write::SimpleFileOptions::default())
                 .expect("start entry");
-            writer.write_all(content.as_bytes()).expect("write entry");
+            writer.write_all(content).expect("write entry");
         }
         writer.finish().expect("finish jar");
         path
+    }
+
+    /// 一份 class 的开头：魔数、minor、major。后面那些字节读都不读。
+    fn class_of(major: u16) -> Vec<u8> {
+        let mut bytes = vec![0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00];
+        bytes.extend(major.to_be_bytes());
+        bytes.extend([0x00; 32]);
+        bytes
     }
 
     fn manifest(jar: &ModJar, loader: LoaderKind) -> &Manifest {
@@ -1132,6 +1236,91 @@ version = "1.6.5"
         // 外层一行代码都没有，崩在模块里的那一帧只能靠这些包认领。
         assert_eq!(read.packages, vec!["net.fabricmc.fabric.impl.blockview"]);
 
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 清单可以漏写 Java 版本，编译产物不会。
+    ///
+    /// 照着 1.20.1 上那个 VeinMiner 写：`fabric.mod.json` 一个字没提 Java，class
+    /// 却是按 21 编译的。加载器的依赖求解一路放行，然后在构造入口类的那一刻抛
+    /// `UnsupportedClassVersionError`——所以答案只能从 class 文件头里读。
+    #[test]
+    fn the_entrypoint_class_says_which_java_it_was_compiled_for() {
+        let root = temporary("compiled");
+        let path = jar_of(
+            &root,
+            "veinminer.jar",
+            &[
+                (
+                    "fabric.mod.json",
+                    br#"{"id":"veinminer","name":"VeinMiner","version":"1.0",
+                        "depends":{"minecraft":"1.20.1"},
+                        "entrypoints":{"main":["de.miraculixx.veinminer.Veinminer::init"],
+                                       "client":[{"adapter":"kotlin","value":"de.miraculixx.veinminer.Client"}]}}"#
+                        .to_vec(),
+                ),
+                ("de/miraculixx/veinminer/Veinminer.class", class_of(65)),
+                ("de/miraculixx/veinminer/Client.class", class_of(61)),
+            ],
+        );
+        let read = read(&path);
+        // 65 是 Java 21。两个入口取高的那个，`::init` 指的仍然是那个类。
+        assert_eq!(read.compiled_for, Some(21));
+        // 清单里一个字都没有，所以只有这条路答得出来。
+        assert!(
+            read.manifests[0]
+                .depends
+                .iter()
+                .all(|dependency| dependency.mod_id != "java")
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 点名的类不在 jar 里（改过名、被混淆了）就是不知道，不是「很老」。
+    #[test]
+    fn an_entrypoint_that_is_not_in_the_jar_answers_nothing() {
+        let root = temporary("compiled-missing");
+        let path = jar(
+            &root,
+            "ghost.jar",
+            &[(
+                "fabric.mod.json",
+                r#"{"id":"ghost","version":"1.0","entrypoints":{"main":["a.Ghost"]}}"#,
+            )],
+        );
+        assert_eq!(read(&path).compiled_for, None);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// 空壳的答案在它里面那些模块里。
+    #[test]
+    fn a_shell_takes_the_java_its_modules_were_compiled_for() {
+        let root = temporary("compiled-nested");
+        let module = jar_of(
+            &root,
+            "module.jar",
+            &[
+                (
+                    "fabric.mod.json",
+                    br#"{"id":"module","version":"1.0","entrypoints":{"main":["m.Entry"]}}"#
+                        .to_vec(),
+                ),
+                ("m/Entry.class", class_of(65)),
+            ],
+        );
+        let module_bytes = std::fs::read(&module).expect("read module");
+        let path = jar_of(
+            &root,
+            "shell.jar",
+            &[
+                (
+                    "fabric.mod.json",
+                    br#"{"id":"shell","version":"1.0"}"#.to_vec(),
+                ),
+                ("META-INF/jars/module.jar", module_bytes),
+            ],
+        );
+        assert_eq!(read(&path).compiled_for, Some(21));
         std::fs::remove_dir_all(root).ok();
     }
 

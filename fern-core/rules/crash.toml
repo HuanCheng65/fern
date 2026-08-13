@@ -24,13 +24,16 @@ match = '''java\.lang\.OutOfMemoryError: (?<kind>Java heap space|GC overhead lim
 
 # ── Java ───────────────────────────────────────────────────────────────────
 
-# class 文件版本到 Java 大版本是一张固定的表（55=11、61=17、65=21），但插值
-# 只做替换不做算术，所以这里只说事实，具体该换哪个版本由启动前预检查回答——
-# 它知道这个版本要求什么，比从崩溃里反推可靠。
+# 文案只说事实，按钮由 `use-java-for-class` 把 65 换算成 21——插值只做替换不做
+# 算术，那一步在代码里（见 rules.rs 的 `bind`）。
+#
+# 这条崩溃能走到用户眼前，说明预检查没拦住：它读的是入口类，而这个类不在那几个
+# 里（见 instance::jar 的 `compiled_for`）。所以这颗按钮不是多余的第二条路。
 [[rule]]
 id = "java-too-old"
 level = "named"
 match = '''java\.lang\.UnsupportedClassVersionError: (?<class>\S+) has been compiled by a more recent version of the Java Runtime \(class file version (?<needed>\d+)\.0\), this version of the Java Runtime only recognizes class file versions up to (?<current>\d+)\.0'''
+action = { kind = "use-java-for-class", class-version = "{needed}" }
 
 # 用户自己填的 JVM 参数写错时，JVM 连起都起不来，而原因就在我们的设置里。
 [[rule]]

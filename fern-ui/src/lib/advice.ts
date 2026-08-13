@@ -14,6 +14,7 @@ import { instances, inTauri } from './instances.svelte'
 import { nav } from './nav.svelte'
 import { supply } from './supply.svelte'
 import { restoreSnapshot } from './backup'
+import { preflight } from './preflight.svelte'
 
 // 枚举本身和按钮上的字都在 kit 里——官网要画同一条诊断，也得认识它们。
 export { label, type FixAction } from 'fern-kit/parts/advice'
@@ -33,6 +34,21 @@ export async function perform(action: FixAction, instanceId: string) {
       if (!inTauri()) return
       await invoke('remove_mod', { instanceId, fileName: action.file })
       await instances.load()
+      return
+    }
+    case 'use-java': {
+      // 装上它**并且**把这个实例钉在它上面。只装不钉的话，自动挑选下一次仍然
+      // 会挑回原来那个版本——按钮看起来生效了，游戏还是崩在同一句话上。
+      if (!inTauri()) return
+      await invoke('use_java', {
+        instanceId,
+        major: action.major,
+        title: `换用 Java ${action.major}`,
+        subjects: [instanceId],
+      })
+      await instances.load()
+      // 换 Java 会让预检查里那几句话过期：它们说的都是「这个实例会用 Java 17」。
+      preflight.refresh(instanceId)
       return
     }
     case 'restore-mods': {

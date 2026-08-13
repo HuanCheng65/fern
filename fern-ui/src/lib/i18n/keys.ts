@@ -69,6 +69,7 @@ export const BACKEND_MESSAGES = [
   'preflight.duplicate',
   'preflight.incompatible',
   'preflight.missing-dependency',
+  'preflight.newer-classes',
   'preflight.no-loader',
   'preflight.stale-jvm-argument',
   'preflight.wrong-game-version',

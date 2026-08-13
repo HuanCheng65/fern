@@ -155,12 +155,32 @@ struct RawRule {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum RawAction {
-    InstallMod { query: String },
-    RemoveMod { file: String },
-    UseJava { major: String },
-    SetMemory { mb: String },
-    OpenPath { path: String },
-    OpenUrl { url: String },
+    InstallMod {
+        query: String,
+    },
+    RemoveMod {
+        file: String,
+    },
+    UseJava {
+        major: String,
+    },
+    /// 换一个 Java，但手上的数字是 **class 文件版本号**：65 是 Java 21。
+    ///
+    /// 单独一种，而不是让 `use-java` 去猜：规则表只做替换不做算术，而这两个
+    /// 数字长得一模一样，靠数值范围去分辨等于埋一个只在某些版本上才现形的洞。
+    #[serde(rename_all = "kebab-case")]
+    UseJavaForClass {
+        class_version: String,
+    },
+    SetMemory {
+        mb: String,
+    },
+    OpenPath {
+        path: String,
+    },
+    OpenUrl {
+        url: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,7 +241,7 @@ pub fn apply(evidence: &Evidence<'_>, context: &Context) -> Vec<Diagnosis> {
                         .raw
                         .action
                         .as_ref()
-                        .and_then(|action| bind(action, &values)),
+                        .and_then(|action| bind(action, &values, context)),
                     args: values.into_iter().collect(),
                 },
             ));
@@ -302,7 +322,7 @@ fn fill(template: &str, values: &HashMap<String, String>) -> String {
 /// 动作里的占位符也要换掉，换完还得是个能用的值。
 ///
 /// 数字换完不是数字就整条丢掉：**宁可没有按钮，也不能有一个点了会出错的按钮。**
-fn bind(action: &RawAction, values: &HashMap<String, String>) -> Option<Action> {
+fn bind(action: &RawAction, values: &HashMap<String, String>, context: &Context) -> Option<Action> {
     Some(match action {
         // 日志里点的名可能是 Fabric API 的某个模块（`fabric-rendering-v1`），
         // 而那不是一个能在补给站搜到的东西。要装的是哪一个由 preflight 那条
@@ -313,9 +333,17 @@ fn bind(action: &RawAction, values: &HashMap<String, String>) -> Option<Action> 
         RawAction::RemoveMod { file } => Action::RemoveMod {
             file: fill(file, values),
         },
-        RawAction::UseJava { major } => Action::UseJava {
-            major: fill(major, values).parse().ok()?,
-        },
+        RawAction::UseJava { major } => use_java(fill(major, values).parse().ok()?, context)?,
+        // class 文件版本号和 Java 大版本差一个常数 44，这张对应关系此后再没变过
+        // （45 是 1.1，52 是 8，61 是 17，65 是 21），JVM 也正是照它拒绝加载的。
+        RawAction::UseJavaForClass { class_version } => use_java(
+            fill(class_version, values)
+                .parse::<u16>()
+                .ok()?
+                .checked_sub(44)
+                .filter(|major| *major > 0)?,
+            context,
+        )?,
         RawAction::SetMemory { mb } => Action::SetMemory {
             mb: fill(mb, values).parse().ok()?,
         },
@@ -326,6 +354,19 @@ fn bind(action: &RawAction, values: &HashMap<String, String>) -> Option<Action> 
             url: fill(url, values),
         },
     })
+}
+
+/// 「换用 Java N」这颗按钮，前提是这个游戏版本用得了 N。
+///
+/// 两道修正，和预检查那边是同一套：先抬到真装得到的那一档（没有哪份运行时是
+/// Java 18），再看这个版本的上限——1.16.5 换到 Java 17 之后崩的是另一件事，而
+/// 用户是照着我们的按钮做的。**宁可没有按钮，也不能有一颗把人带去别处的。**
+fn use_java(floor: u16, context: &Context) -> Option<Action> {
+    let major = crate::java::runtime::deliverable(floor);
+    let ceiling = crate::java::requirement(&context.minecraft, context.loader, None).maximum;
+    ceiling
+        .is_none_or(|maximum| major <= maximum)
+        .then_some(Action::UseJava { major })
 }
 
 #[cfg(test)]
@@ -383,6 +424,7 @@ mod tests {
                     RawAction::InstallMod { query } => query.clone(),
                     RawAction::RemoveMod { file } => file.clone(),
                     RawAction::UseJava { major } => major.clone(),
+                    RawAction::UseJavaForClass { class_version } => class_version.clone(),
                     RawAction::SetMemory { mb } => mb.clone(),
                     RawAction::OpenPath { path } => path.clone(),
                     RawAction::OpenUrl { url } => url.clone(),
@@ -416,15 +458,45 @@ mod tests {
     #[test]
     fn an_action_whose_number_did_not_survive_is_dropped() {
         // 宁可没有按钮，也不能有一个点了会出错的按钮。
+        let modern = Context {
+            loader: LoaderKind::Fabric,
+            minecraft: "1.21.1".to_owned(),
+        };
         let values = HashMap::from([("major".to_owned(), "不是数字".to_owned())]);
         assert!(
             bind(
                 &RawAction::UseJava {
                     major: "{major}".to_owned()
                 },
-                &values
+                &values,
+                &modern,
             )
             .is_none()
+        );
+    }
+
+    /// 换 Java 那颗按钮不许把人带出这个版本能用的范围。
+    #[test]
+    fn the_java_button_stays_inside_what_this_version_can_run() {
+        let values = HashMap::from([("needed".to_owned(), "61".to_owned())]);
+        let ancient = Context {
+            loader: LoaderKind::Fabric,
+            minecraft: "1.16.5".to_owned(),
+        };
+        let action = &RawAction::UseJavaForClass {
+            class_version: "{needed}".to_owned(),
+        };
+        // 1.16.5 只跑得了 Java 8：61 换算出来的 17 越界，那就不给按钮。
+        assert!(bind(action, &values, &ancient).is_none());
+        // 1.21.1 没有上限；66 是 Java 22，而没有哪份运行时是 22，装得到的是 25。
+        let modern = Context {
+            loader: LoaderKind::Fabric,
+            minecraft: "1.21.1".to_owned(),
+        };
+        let values = HashMap::from([("needed".to_owned(), "66".to_owned())]);
+        assert_eq!(
+            bind(action, &values, &modern),
+            Some(Action::UseJava { major: 25 })
         );
     }
 
