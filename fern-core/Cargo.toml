@@ -16,7 +16,6 @@ fern-meta.workspace = true
 getrandom.workspace = true
 keyring.workspace = true
 md-5.workspace = true
-pearl-core.workspace = true
 reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true

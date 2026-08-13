@@ -25,10 +25,6 @@ pub enum GcPath {
 }
 
 impl GcPath {
-    pub fn is_zgc(self) -> bool {
-        self == Self::Zgc
-    }
-
     /// 自适应层的系数走哪一档。
     ///
     /// 不干预路径按 ZGC 算：26.1+ 的默认收集器就是 ZGC。

@@ -18,7 +18,9 @@ base64 = "0.22.1"
 flate2 = "1.0"
 fern-download = { path = "fern-download" }
 fern-meta = { path = "fern-meta" }
-getrandom = "0.3"
+# `std` 不是默认开的，而少了它 `getrandom::Error` 就不实现 `std::error::Error`，
+# `anyhow` 的 `.context()` 接不住。以前是 pearl-core 顺手开的，删掉它之后才露出来。
+getrandom = { version = "0.3", features = ["std"] }
 libc = "0.2"
 # Java 运行时清单每个文件都发一份 lzma 变体，体积通常只有原文件的四分之一。
 # 纯 Rust 的解码器，和 `zip` 那条「不为压缩格式拖 C 依赖」的理由是同一条。

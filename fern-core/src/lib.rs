@@ -242,15 +242,6 @@ pub use supply::{
     search as search_modrinth, update_mod, versions as modrinth_versions,
 };
 
-/// Marker for the Pearl integration boundary.
-///
-/// Keeping the dependency in this crate makes Pearl a replaceable launcher
-/// capability while Fern's metadata and launch pipeline remain independent.
-pub fn pearl_dependency_present() -> bool {
-    let _ = std::any::TypeId::of::<pearl_core::identity::NodeId>();
-    true
-}
-
 #[cfg(test)]
 mod message_tests {
     /// 生成界面那边的 id 清单，并盯着它别过期。

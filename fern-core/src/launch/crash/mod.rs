@@ -46,13 +46,6 @@ pub struct CrashReport {
     pub excerpt: String,
 }
 
-impl CrashReport {
-    /// 最该说的那一条。
-    pub fn headline(&self) -> Option<&Diagnosis> {
-        self.diagnoses.first()
-    }
-}
-
 /// 这次崩溃发生在什么上下文里。
 pub struct Situation<'a> {
     pub instance_id: &'a str,
