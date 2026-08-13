@@ -31,7 +31,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+// `Deserialize` 只给 `forge` 里那几个就地定义的 TOML 结构用。这一层读出来的
+// 东西**不出 crate**——不给它们派生 `Serialize`，免得内部形状看起来像个契约。
+use serde::Deserialize;
 
 use crate::LoaderKind;
 
@@ -40,8 +42,7 @@ use crate::LoaderKind;
 /// **不是一个布尔量。** 三家都能声明「装了它反而起不来」，而那和「没装它起不来」
 /// 正好相反——把它当成一条必需依赖，说出口的就是「缺少 X，去装一个」，而用户照做
 /// 之后游戏才真的起不来。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Relation {
     /// 没有它就起不来。
     Required,
@@ -54,8 +55,7 @@ pub enum Relation {
 }
 
 /// 一条依赖声明。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dependency {
     pub mod_id: String,
     /// 版本区间，原样保留。看不懂的写法由 `launch::ranges` 兜底。
@@ -64,8 +64,7 @@ pub struct Dependency {
 }
 
 /// 一个 jar 里为某一家加载器写的那份清单。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     pub loader: LoaderKind,
     /// **这一份**清单声明的依赖。同一个 jar 的另一份可以完全不同。
@@ -89,25 +88,20 @@ impl Manifest {
 }
 
 /// 从一个 jar 里读到的东西。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModJar {
     pub file_name: String,
     /// 关掉的模组文件名带 `.disabled`，加载器不会读它。
     pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub mod_id: Option<String>,
     /// 展示名。读不到元数据时是文件名。
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     /// 这个 jar 里读到的所有清单，按 Fabric、Quilt、NeoForge、Forge 的顺序。
     /// 一份都读不到就是空——那是「不知道」，不是「原版」。
-    #[serde(default)]
     pub manifests: Vec<Manifest>,
     /// 除自己之外，这个 jar 还让哪些 id 算「装了」：元数据里的 `provides`，
     /// 加上打包在它里面的那些 jar（jar-in-jar，见 `nested`）。
-    #[serde(default)]
     pub provides: Vec<String>,
     /// 顶层包，例如 `net.caffeinemc.mods.sodium`。崩溃归因按它匹配栈帧。
     pub packages: Vec<String>,
@@ -337,6 +331,32 @@ pub fn directory(paths: &crate::DataPaths, instance_id: &str) -> PathBuf {
     paths.game_directory(instance_id).join("mods")
 }
 
+/// 一个 jar 拿来显示的那两样。
+pub(super) struct Label {
+    pub name: Option<String>,
+    pub version: Option<String>,
+}
+
+/// 只读显示用的那两样，不碰打包在里面的那些 jar。
+///
+/// 模组列表（`mods.rs`）要的就是名字和版本，而 [`read`] 会连 jar-in-jar 一起
+/// 展开——Fabric API 那四十个模块，为了一行显示名不值得。
+///
+/// 取第一份清单，理由和 [`merge`] 里那条一样：名字和版本三家写的是同一件事。
+/// 依赖不能这么取，所以这条路只给显示用。
+pub(super) fn label(path: &Path) -> Option<Label> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let (described, _) = describe(&mut archive).into_iter().next()?;
+    Some(Label {
+        // `mods.toml` 的 `displayName` 是可选的。缺了退回 modid，比退回文件名
+        // 近一步；[`merge`] 不这么做，是因为那条路上的 `name` 还要喂给预检查
+        // 的文案，一个 modid 读起来不像人话。
+        name: described.name.or(described.mod_id),
+        version: described.version,
+    })
+}
+
 #[derive(Default)]
 struct Described {
     mod_id: Option<String>,
@@ -397,10 +417,7 @@ fn provided_ids(value: Option<&serde_json::Value>) -> Vec<String> {
 ///
 /// 只在严格那一遍失败之后才走这条路：绝大多数清单是规规矩矩的 JSON，不必为了
 /// 一个别人家的手误让每一个 jar 都多走一趟。
-///
-/// `mods.rs` 为了列表另读一遍同样这几份文件，走的也是这里——不然同一个 jar
-/// 在预检查里认得出、在模组列表里只剩个文件名。
-pub(super) fn json(text: &str) -> Option<serde_json::Value> {
+fn json(text: &str) -> Option<serde_json::Value> {
     serde_json::from_str(text)
         .ok()
         .or_else(|| serde_json::from_str(&escape_control_characters(text)).ok())
@@ -729,7 +746,7 @@ fn string_at(value: &serde_json::Value, key: &str) -> Option<String> {
 }
 
 /// 元数据读不出来时的退路：去掉后缀，够认。
-fn display_name(file_name: &str) -> String {
+pub(super) fn display_name(file_name: &str) -> String {
     file_name
         .trim_end_matches(".disabled")
         .trim_end_matches(".jar")

@@ -11,11 +11,13 @@
 //! 展示名从 jar 里读。文件名（`jei-1.21.1-neoforge-19.21.0.247.jar`）认得出来
 //! 但读起来费劲，而每个加载器都在 jar 里放了一份正经的元数据。读不到就退回
 //! 文件名——列表里宁可显示一个丑名字，也不能少一行。
+//!
+//! **清单怎么读不写在这里**，走 [`jar::label`](super::jar::label)。这一层曾经
+//! 自己抄了一份 fabric/quilt/mods.toml 的解析，于是「按加载器的宽容度读」这类
+//! 修补补了预检查那份、忘了这份——同一个 jar 在预检查里认得出、在列表里只剩个
+//! 文件名。只留一份，就没有第二处可以漂移。
 
-use std::{
-    io::Read,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -60,13 +62,13 @@ pub fn list(paths: &DataPaths, instance_id: &str) -> Result<Vec<ModFile>> {
             // mods 目录里常有 README、配置残留之类的东西，不是模组。
             continue;
         }
-        let described = describe(&entry.path());
+        let label = super::jar::label(&entry.path());
         mods.push(ModFile {
-            name: described
+            name: label
                 .as_ref()
-                .and_then(|d| d.name.clone())
-                .unwrap_or_else(|| display_from_file_name(&file_name)),
-            version: described.and_then(|d| d.version),
+                .and_then(|it| it.name.clone())
+                .unwrap_or_else(|| super::jar::display_name(&file_name)),
+            version: label.and_then(|it| it.version),
             file_name,
             enabled,
             bytes: metadata.len(),
@@ -153,7 +155,7 @@ pub fn install(paths: &DataPaths, instance_id: &str, source: &Path) -> Result<Mo
     std::fs::copy(source, &destination)
         .with_context(|| format!("复制到 {}", destination.display()))?;
 
-    let described = describe(&destination);
+    let label = super::jar::label(&destination);
 
     if let Ok(sha1) = crate::backup::sha1_of(&destination) {
         crate::instance::origin::record(
@@ -162,18 +164,18 @@ pub fn install(paths: &DataPaths, instance_id: &str, source: &Path) -> Result<Mo
             vec![crate::instance::origin::Entry {
                 file: format!("mods/{file_name}"),
                 sha1,
-                version: described.as_ref().and_then(|it| it.version.clone()),
+                version: label.as_ref().and_then(|it| it.version.clone()),
                 origin: crate::instance::origin::Origin::Import,
             }],
         );
     }
 
     Ok(ModFile {
-        name: described
+        name: label
             .as_ref()
-            .and_then(|d| d.name.clone())
-            .unwrap_or_else(|| display_from_file_name(&file_name)),
-        version: described.and_then(|d| d.version),
+            .and_then(|it| it.name.clone())
+            .unwrap_or_else(|| super::jar::display_name(&file_name)),
+        version: label.and_then(|it| it.version),
         bytes: std::fs::metadata(&destination)
             .map(|m| m.len())
             .unwrap_or(0),
@@ -197,140 +199,12 @@ fn safe_entry(directory: &Path, file_name: &str) -> Result<PathBuf> {
     Ok(directory.join(file_name))
 }
 
-/// `jei-1.21.1-neoforge-19.21.0.247.jar` → `jei-1.21.1-neoforge-19.21.0.247`
-fn display_from_file_name(file_name: &str) -> String {
-    file_name
-        .trim_end_matches(DISABLED)
-        .trim_end_matches(".jar")
-        .to_owned()
-}
-
-#[derive(Debug, Default)]
-struct Described {
-    name: Option<String>,
-    version: Option<String>,
-}
-
 /// 模组在 jar 里自己声明的版本号。
 ///
 /// 对账要它：内容变了而这个版本号没变，和用户换了个版本，是两件完全不同的事
 /// （见 `integrity.rs`）。读不到就是 `None`——资源包和光影本来就没有。
 pub(crate) fn declared_version(path: &Path) -> Option<String> {
-    describe(path).and_then(|described| described.version)
-}
-
-/// 从 jar 里读元数据。三家的格式各不相同，都试一遍。
-fn describe(path: &Path) -> Option<Described> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
-
-    if let Some(described) = read_entry(&mut archive, "fabric.mod.json").and_then(|t| fabric(&t)) {
-        return Some(described);
-    }
-    if let Some(described) = read_entry(&mut archive, "quilt.mod.json").and_then(|t| quilt(&t)) {
-        return Some(described);
-    }
-    for name in ["META-INF/neoforge.mods.toml", "META-INF/mods.toml"] {
-        if let Some(text) = read_entry(&mut archive, name) {
-            let mut described = forge(&text)?;
-            // Forge 常把版本写成 `${file.jarVersion}`，真值在 MANIFEST 里。
-            if described
-                .version
-                .as_deref()
-                .is_some_and(|version| version.contains("${"))
-            {
-                described.version = read_entry(&mut archive, "META-INF/MANIFEST.MF")
-                    .and_then(|manifest| manifest_value(&manifest, "Implementation-Version"));
-            }
-            return Some(described);
-        }
-    }
-    None
-}
-
-fn read_entry<R: std::io::Read + std::io::Seek>(
-    archive: &mut zip::ZipArchive<R>,
-    name: &str,
-) -> Option<String> {
-    let mut entry = archive.by_name(name).ok()?;
-    let mut text = String::new();
-    entry.read_to_string(&mut text).ok()?;
-    Some(text)
-}
-
-fn fabric(text: &str) -> Option<Described> {
-    let value = super::jar::json(text)?;
-    Some(Described {
-        name: string_at(&value, "name").or_else(|| string_at(&value, "id")),
-        version: string_at(&value, "version"),
-    })
-}
-
-fn quilt(text: &str) -> Option<Described> {
-    let value = super::jar::json(text)?;
-    let loader = value.get("quilt_loader")?;
-    Some(Described {
-        name: loader
-            .get("metadata")
-            .and_then(|metadata| string_at(metadata, "name"))
-            .or_else(|| string_at(loader, "id")),
-        version: string_at(loader, "version"),
-    })
-}
-
-/// `mods.toml` 只需要 `[[mods]]` 第一段里的两个字段。
-///
-/// 不引 TOML 解析器：这份文件里我们要的两个键都是简单的 `key = "value"`，而
-/// 引一个解析器要连它的错误处理、版本策略一起背上。真出现引不到的写法，退回
-/// 文件名即可，不是灾难。
-fn forge(text: &str) -> Option<Described> {
-    let mods = text.find("[[mods]]")?;
-    let section = &text[mods..];
-    // 到下一个表头为止，免得把别的 `[[mods]]` 段的值混进来。
-    let section = section[8..]
-        .find("[[")
-        .map(|end| &section[..end + 8])
-        .unwrap_or(section);
-    Some(Described {
-        name: toml_string(section, "displayName").or_else(|| toml_string(section, "modId")),
-        version: toml_string(section, "version"),
-    })
-}
-
-fn toml_string(section: &str, key: &str) -> Option<String> {
-    section.lines().find_map(|line| {
-        let line = line.trim();
-        let rest = line.strip_prefix(key)?;
-        let rest = rest.trim_start().strip_prefix('=')?.trim();
-        let value = rest.strip_prefix('"')?;
-        let end = value.find('"')?;
-        Some(value[..end].to_owned())
-    })
-}
-
-/// MANIFEST 的续行以空格开头，长值一定会折行。
-fn manifest_value(text: &str, key: &str) -> Option<String> {
-    let mut value: Option<String> = None;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix(key).and_then(|r| r.strip_prefix(':')) {
-            value = Some(rest.trim().to_owned());
-        } else if let Some(continuation) = line.strip_prefix(' ') {
-            if let Some(current) = value.as_mut() {
-                current.push_str(continuation.trim_end_matches(['\r', '\n']));
-            }
-        } else if value.is_some() {
-            break;
-        }
-    }
-    value.filter(|value| !value.is_empty())
-}
-
-fn string_at(value: &serde_json::Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
+    super::jar::label(path).and_then(|label| label.version)
 }
 
 #[cfg(test)]
