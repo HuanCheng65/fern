@@ -24,6 +24,7 @@
   import { exportWorld, fileStem } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
   import Dialog from 'fern-kit/ui/Dialog.svelte'
+  import SectionHead from 'fern-kit/ui/SectionHead.svelte'
 
   interface SaveEntry {
     name: string
@@ -127,15 +128,16 @@
 </script>
 
 <section class="saves">
-  <div class="head">
-    <span class="label">
-      存档
+  <SectionHead title="存档">
+    {#snippet note()}
       {#if saves.length > 0}<small class="t-quiet">{saves.length} 个世界</small>{/if}
-    </span>
-    <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'saves' })}>
-      <FolderOpen size={13} strokeWidth={1.9} />存档目录
-    </Button>
-  </div>
+    {/snippet}
+    {#snippet actions()}
+      <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'saves' })}>
+        <FolderOpen size={13} strokeWidth={1.9} />存档目录
+      </Button>
+    {/snippet}
+  </SectionHead>
 
   {#if loading}
     <Loading note="读取存档" />
@@ -187,24 +189,6 @@
 {/if}
 
 <style>
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s3);
-  }
-
-  .label {
-    color: var(--ink);
-    font-size: var(--t-body);
-    font-weight: 500;
-  }
-
-  .label small {
-    margin-left: var(--s2);
-    font-weight: 400;
-  }
-
   .empty {
     margin: var(--s3) 0 0;
   }

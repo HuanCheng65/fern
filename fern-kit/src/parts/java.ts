@@ -9,6 +9,8 @@
  * 一份」。** 前者是库存与维护，后者是一次选择——而绝大多数人不该做这个选择。
  */
 
+import { megabytes } from '../ui/units'
+
 export interface JavaRuntime {
   path: string
   home: string
@@ -40,9 +42,6 @@ export interface JavaGroup {
   /** 会被选中的那一份的 home。这一组一份都没装时是 null。 */
   preferred: string | null
 }
-
-export const megabytes = (bytes: number) =>
-  bytes > 0 ? `${Math.round(bytes / (1024 * 1024))} MB` : ''
 
 /**
  * 一份安装的自我介绍。

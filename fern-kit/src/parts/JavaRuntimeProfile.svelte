@@ -9,7 +9,8 @@
    *
    * 名单因此可以安静下来：一行只说「Java 21 · Adoptium · 180 MB ›」。
    */
-  import { javaLabel, megabytes, type JavaGroup, type JavaRuntime } from './java'
+  import { javaLabel, type JavaGroup, type JavaRuntime } from './java'
+  import { megabytes } from '../ui/units'
   import Button from '../ui/Button.svelte'
 
   interface Props {

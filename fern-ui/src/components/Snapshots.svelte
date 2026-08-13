@@ -22,6 +22,7 @@
   import { notices } from '../lib/notices.svelte'
   import { backupUsage, listSnapshots, pinned, takeSnapshot, why, type Snapshot } from '../lib/backup'
   import Button from 'fern-kit/ui/Button.svelte'
+  import SectionHead from 'fern-kit/ui/SectionHead.svelte'
   import SnapshotList from 'fern-kit/parts/SnapshotList.svelte'
   import type { SnapshotRow } from 'fern-kit/parts/snapshots'
 
@@ -111,9 +112,8 @@
 </script>
 
 <section class="snapshots">
-  <div class="head">
-    <span class="label">
-      {ui.snapshots.head}
+  <SectionHead title={ui.snapshots.head}>
+    {#snippet note()}
       {#if snapshots.length > 0}
         <small class="t-quiet">
           {format(ui.snapshots.count, { count: String(snapshots.length) })} · {formatBytes(
@@ -121,12 +121,14 @@
           )}
         </small>
       {/if}
-    </span>
-    <Button variant="ghost" loading={taking} disabled={running} onclick={() => void take()}>
-      {#snippet icon()}<Camera size={14} strokeWidth={1.9} />{/snippet}
-      {ui.snapshots.take}
-    </Button>
-  </div>
+    {/snippet}
+    {#snippet actions()}
+      <Button variant="ghost" loading={taking} disabled={running} onclick={() => void take()}>
+        {#snippet icon()}<Camera size={14} strokeWidth={1.9} />{/snippet}
+        {ui.snapshots.take}
+      </Button>
+    {/snippet}
+  </SectionHead>
 
   <p class="t-quiet note">
     {#if running}
@@ -161,24 +163,6 @@
 {/if}
 
 <style>
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s3);
-  }
-
-  .label {
-    color: var(--ink);
-    font-size: var(--t-body);
-    font-weight: 500;
-  }
-
-  .label small {
-    margin-left: var(--s2);
-    font-weight: 400;
-  }
-
   .note {
     margin: var(--s2) 0 var(--s5);
     max-width: 62ch;

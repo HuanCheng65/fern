@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from './Button.svelte'
+  import { gigabytes } from './units'
   /**
    * 一条尺。
    *
@@ -133,12 +134,6 @@
     event.preventDefault()
   }
 
-  const gigabytes = (mb: number) => {
-    const value = mb / 1024
-    return Math.abs(value - Math.round(value)) < 0.05
-      ? `${Math.round(value)} GB`
-      : `${value.toFixed(1)} GB`
-  }
 </script>
 
 <div class="meter" class:live={onchange !== undefined}>

@@ -36,7 +36,8 @@
   import Slider from 'fern-kit/ui/Slider.svelte'
   import SettingRow from '../components/SettingRow.svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
-  import { javaLabel, megabytes, type JavaGroup } from 'fern-kit/parts/java'
+  import { javaLabel, type JavaGroup } from 'fern-kit/parts/java'
+  import { megabytes } from 'fern-kit/ui/units'
   import Form from '../layouts/Form.svelte'
   import { ACCENT_PRESETS, theme } from '../lib/theme.svelte'
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
@@ -241,9 +242,14 @@
   const GIGABYTE = 1024
   /** 一 GB 有多少字节。内存那边按 MB 算，磁盘这边按字节。 */
   const GIGABYTE_BYTES = 1024 * 1024 * 1024
-  /** 滑杆读的是 GB：内存这件事上没人以 MB 为单位思考。 */
-  const gigabytes = (mb: number) => Math.round((mb / GIGABYTE) * 10) / 10
-  const ceilingGb = $derived(gigabytes(prefs.game.memoryCeilingMb ?? budget.ceilingMb))
+  /**
+   * 滑杆读的是 GB：内存这件事上没人以 MB 为单位思考。
+   *
+   * 和 `parts/java` 里那个 `gigabytes` 不是一回事——那个出一句话给人看，这个
+   * 出一个数给滑杆用。名字分开，免得下次有人以为它们能互相替换。
+   */
+  const asGb = (mb: number) => Math.round((mb / GIGABYTE) * 10) / 10
+  const ceilingGb = $derived(asGb(prefs.game.memoryCeilingMb ?? budget.ceilingMb))
 
   /** 同时下载数。没设过就是内置默认值，尺上要停在那个数上而不是最左端。 */
   const DEFAULT_CONCURRENCY = 64

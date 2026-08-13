@@ -17,6 +17,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { instances, inTauri } from './instances.svelte'
 import { contributes, PRIORITY, type Presence } from './island.svelte'
 import { commands } from 'fern-kit/parts/palette'
+import { gigabytes } from 'fern-kit/ui/units'
 import { jobs } from './jobs.svelte'
 import { nav } from './nav.svelte'
 import { prefs } from './prefs.svelte'
@@ -480,14 +481,6 @@ function whereabouts(activity: Activity | undefined): string | undefined {
   if (activity.place === 'menu') return place
   const which = activity.name || activity.id
   return which ? `${place} · ${which}` : place
-}
-
-/** MB 变成一句话。和实例设置那一屏用的是同一条规则。 */
-function gigabytes(mb: number) {
-  const value = mb / 1024
-  return Math.abs(value - Math.round(value)) < 0.05
-    ? `${Math.round(value)} GB`
-    : `${value.toFixed(1)} GB`
 }
 
 

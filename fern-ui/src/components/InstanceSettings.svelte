@@ -22,6 +22,7 @@
   import { accounts, originOf } from '../lib/accounts.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
   import { javaLabel, javaMismatch, type JavaRuntime } from 'fern-kit/parts/java'
+  import { gigabytes } from 'fern-kit/ui/units'
   import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -145,14 +146,6 @@
    */
   const pinned = $derived(instances.list.find((item) => item.id === instanceId)?.accountId ?? null)
 
-
-  /** MB 变成一句话。整数不带小数点——`8 GB` 比 `8.0 GB` 更像一个决定。 */
-  const gigabytes = (mb: number) => {
-    const value = mb / 1024
-    return Math.abs(value - Math.round(value)) < 0.05
-      ? `${Math.round(value)} GB`
-      : `${value.toFixed(1)} GB`
-  }
 
   /**
    * 解释按 topic 各自落位，不再串成一长条。
