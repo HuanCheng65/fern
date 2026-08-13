@@ -107,9 +107,10 @@
     // 无边框时顶栏要给右上角的窗口按钮让出位置，用一个变量统一控制。
     document.body.classList.toggle('frameless', frameless())
     const disconnectNav = nav.connect()
-    // 检查更新排在最后启动，而且自己还要再等三十秒——启动那一刻的网络该留给
-    // 补全和元数据。用户等的是游戏，不是更新提示。
-    const stopUpdateChecks = updates.watch()
+    // 更新检查要等读盘：立刻就查的前提是知道用户有没有关掉自动更新，
+    // 而那个开关的意思是「一个请求都别发」。所以它挂在下面的 hydrate 之后。
+    let stopUpdateChecks = () => {}
+    let unmounted = false
     void hydrate().then(async (doc) => {
       theme.hydrate()
       prefs.hydrate()
@@ -120,6 +121,10 @@
       } catch {
         updates.hydrate({ version: '', selfUpdate: true })
       }
+      stopUpdateChecks = updates.watch()
+      // 读盘慢过一次关窗时，下面的清理已经跑过了——那时候要立刻把它停掉，
+      // 否则留下的是一个没人再收得回的定时器。
+      if (unmounted) stopUpdateChecks()
       setupOpen = !prefs.setupDone
       ready = true
       // 0.1.0 的玩家名住在 localStorage 里，hydrate 才刚把它搬进 settings.json
@@ -145,6 +150,7 @@
     window.addEventListener('pagehide', saveNow)
     document.addEventListener('visibilitychange', resync)
     return () => {
+      unmounted = true
       disconnectNav()
       stopUpdateChecks()
       document.removeEventListener('visibilitychange', resync)

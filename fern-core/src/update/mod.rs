@@ -20,6 +20,18 @@ use serde::{Deserialize, Serialize};
 /// 测试用的，有可变速率限制、带宽也会被限，而且没有缓存和 Workers 的能力。
 pub const DEFAULT_ENDPOINT: &str = "https://dl.fern.huanchengfly.top";
 
+/// 取更新时表明身份。
+///
+/// 不设这一项的话 reqwest 一个 `User-Agent` 都不发，而一个没有 UA 的请求在任何
+/// 一层机器人防护面前都是最先被拦的那种——被拦下来的症状恰好是**什么都不发生**
+/// （见 [`check`] 的失败纪律），所以它值得一个名字。
+///
+/// 版本号从参数来，不用 `CARGO_PKG_VERSION`：那是 fern-core 的版本号，被钉在
+/// `0.0.0`（见根 `Cargo.toml`）。
+pub fn user_agent(current: &str) -> String {
+    format!("Fern/{current} (+https://github.com/HuanCheng65/fern)")
+}
+
 /// 更新通道。
 ///
 /// 只有两条。第三条（nightly）不该有自更新——每天变的东西自动装到用户机器上，
@@ -231,7 +243,11 @@ pub async fn check(
     bucket: u8,
 ) -> Result<Decision> {
     let url = channel.manifest_url(endpoint);
-    let response = reqwest::Client::new()
+    let response = reqwest::Client::builder()
+        .user_agent(user_agent(&current.to_string()))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("build the update client")?
         .get(&url)
         .timeout(std::time::Duration::from_secs(15))
         .send()
@@ -584,6 +600,16 @@ mod tests {
             Channel::Stable.manifest_url("https://dl.fern.huanchengfly.top/"),
             "https://dl.fern.huanchengfly.top/stable/manifest.json"
         );
+    }
+
+    /// 更新请求要认得出是谁发的——防护规则要放行的正是这一串。
+    #[test]
+    fn the_update_request_says_who_it_is() {
+        let agent = user_agent("0.1.1-beta.7");
+        assert!(agent.starts_with("Fern/"));
+        assert!(agent.contains("0.1.1-beta.7"));
+        // fern-core 自己的版本号钉在 0.0.0，混进 UA 里就等于没有版本号。
+        assert!(!agent.contains("0.0.0"));
     }
 
     /// 一个只回一次固定响应就关掉的 HTTP 服务器。

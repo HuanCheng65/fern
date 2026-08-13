@@ -207,9 +207,9 @@ export const SETTINGS_ROWS: SettingsRow[] = [
   },
   {
     id: 'about/automatic',
-    label: '自动检查更新',
-    note: '关闭后不会发出任何检查更新的请求。',
-    keywords: 'automatic auto update 自动 检查 更新',
+    label: '自动更新',
+    note: '在后台下载新版本并安装，下次启动生效。关闭后不会发出任何检查更新的请求。',
+    keywords: 'automatic auto update 自动 检查 下载 更新',
   },
   {
     id: 'about/channel',

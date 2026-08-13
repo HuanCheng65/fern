@@ -372,7 +372,16 @@ const ui = {
       aheadOfChannel: '当前版本高于该通道的最新版本，将保持不变，直至该通道发布更高版本。',
       needsFullDownload: '该版本无法从当前版本直接更新，请下载完整安装包。',
       noBuild: '当前平台暂无可用版本。',
-      automatic: '自动检查',
+      // 后端只发 id（`update.*`），句子在这里。没有 id 的那些是插件自己的错误链，
+      // 走 `failed` 那一条把原文带出来。
+      errors: {
+        notWritable: 'Fern 所在的目录无法写入，请将其移动到有写入权限的位置后重试。',
+        badEndpoint: '更新地址无效，请稍后重试。',
+        nothingToInstall: '没有可以安装的更新。',
+        failed: '更新失败：{detail}',
+      },
+      // 这个开关管的是「自动装好，等下次启动生效」，不只是检查。
+      automatic: '自动更新',
       automaticOn: '开启',
       automaticOff: '关闭',
       channel: '更新通道',

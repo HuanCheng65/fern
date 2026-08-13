@@ -235,6 +235,9 @@ async fn check_update(app: tauri::AppHandle) -> Result<fern_core::UpdateDecision
 /// 因为 `download` 在返回字节之前就验完签了；落盘只有 Windows 是我们自己做的，
 /// 因为它在 Windows 上只认安装器，会把便携 exe 当安装器从临时目录跑起来，
 /// 磁盘上什么都不会变。
+///
+/// 出错时返回的是**文案 id**（`update.*`），不是句子——句子在
+/// `fern-ui/src/lib/i18n/`。插件自己的错误没有 id，原样带回去当细节显示。
 #[tauri::command]
 async fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -242,12 +245,16 @@ async fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
     let install = fern_core::update_install();
     if install == fern_core::UpdateInstall::SystemPackage {
         // 界面本来就不该给出这个按钮。真到了这里，说清楚为什么而不是去弹提权框。
-        return Err("这份 Fern 由系统包管理器安装，请通过包管理器更新。".to_owned());
+        return Err("update.system-package".to_owned());
     }
     // 便携版可能被放在只读目录、U 盘、网络盘里。**先试写再下载**：下了几十兆
     // 才发现写不进去，比一开始就说清楚糟得多。
     if install == fern_core::UpdateInstall::PortableExecutable {
-        fern_core::writable_beside_executable().map_err(|error| format!("{error:#}"))?;
+        fern_core::writable_beside_executable().map_err(|error| {
+            // 界面上只说「装不进去，换个位置」，具体是哪个目录、系统怎么说的进日志。
+            tracing::warn!("the update cannot be written beside the executable: {error:#}");
+            "update.not-writable".to_owned()
+        })?;
     }
 
     let version = app.package_info().version.to_string();
@@ -255,20 +262,28 @@ async fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
     let endpoint = channel
         .manifest_url(fern_core::UPDATE_ENDPOINT)
         .parse()
-        .map_err(|error| format!("更新地址无效：{error}"))?;
+        .map_err(|error| {
+            tracing::warn!("the update endpoint is not a URL: {error}");
+            "update.bad-endpoint".to_owned()
+        })?;
 
     // 端点在运行时给，不写死在 tauri.conf.json 里——通道是用户设置，
     // 而配置文件是编译期的。用 `app.updater_builder()` 而不是直接构造
     // `UpdaterBuilder`：后者在 Windows 上会因为 current_exe_args 为空而 panic。
+    //
+    // UA 和检查那一边用同一个（`fern_core::update_user_agent`）：下载和检查走的是
+    // 同一个域名，防护规则上放行的也该是同一串，否则会出现「查得到、下不动」。
     let updater = app
         .updater_builder()
         .endpoints(vec![endpoint])
+        .map_err(|error| format!("{error}"))?
+        .header("User-Agent", fern_core::update_user_agent(&version))
         .map_err(|error| format!("{error}"))?
         .build()
         .map_err(|error| format!("{error}"))?;
 
     let Some(update) = updater.check().await.map_err(|error| format!("{error}"))? else {
-        return Err("没有可以安装的更新。".to_owned());
+        return Err("update.nothing-to-install".to_owned());
     };
 
     let progress = app.clone();
@@ -287,20 +302,29 @@ async fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
         .await
         .map_err(|error| format!("{error}"))?;
 
+    // 下面全是几十兆的磁盘动作，一律离开异步线程——这个进程的运行时同时在
+    // 跑下载和游戏进程的监视，卡住它就是卡住整个界面。
     match install {
         fern_core::UpdateInstall::PortableExecutable => {
-            // 先落到临时文件：self_replace 要一个磁盘上的路径，而它在 Windows 上
-            // 做的是「把当前 exe 挪开腾出文件名，再把新文件放到原路径」。
-            let staged = std::env::temp_dir().join(format!("fern-{version}-update.tmp"));
-            std::fs::write(&staged, &bytes)
-                .map_err(|error| format!("写入临时文件失败：{error}"))?;
-            let replaced = self_replace::self_replace(&staged).map_err(|error| error.to_string());
-            // 无论成败都清掉临时文件；失败时原来的可执行文件还在原地。
-            let _ = std::fs::remove_file(&staged);
-            replaced?;
+            off_thread(move || {
+                // 先落到临时文件：self_replace 要一个磁盘上的路径，而它在 Windows 上
+                // 做的是「把当前 exe 挪开腾出文件名，再把新文件放到原路径」。
+                let staged = std::env::temp_dir().join(format!("fern-{version}-update.tmp"));
+                std::fs::write(&staged, &bytes).map_err(|error| {
+                    tracing::warn!("staging the update failed: {error}");
+                    "update.not-writable".to_owned()
+                })?;
+                let replaced =
+                    self_replace::self_replace(&staged).map_err(|error| error.to_string());
+                // 无论成败都清掉临时文件；失败时原来的可执行文件还在原地。
+                let _ = std::fs::remove_file(&staged);
+                replaced
+            })
+            .await??;
         }
         fern_core::UpdateInstall::Bundle => {
-            update.install(bytes).map_err(|error| format!("{error}"))?;
+            off_thread(move || update.install(bytes).map_err(|error| format!("{error}")))
+                .await??;
         }
         fern_core::UpdateInstall::SystemPackage => unreachable!("上面已经挡掉了"),
     }

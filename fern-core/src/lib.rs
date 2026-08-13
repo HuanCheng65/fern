@@ -132,7 +132,7 @@ pub use update::{
     Channel as UpdateChannel, DEFAULT_ENDPOINT as UPDATE_ENDPOINT, Decision as UpdateDecision,
     Install as UpdateInstall, Manifest as UpdateManifest, check_now as check_for_update,
     effective_channel as update_channel, install as update_install, target as update_target,
-    writable_beside_executable,
+    user_agent as update_user_agent, writable_beside_executable,
 };
 
 /// 这台机器是什么。反馈问题时的第一句话。
