@@ -41,7 +41,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use fern_meta::{Library, RuleContext, VersionMetadata, release_ordinal};
+use fern_meta::{RuleContext, VersionMetadata, release_ordinal};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 
@@ -170,42 +170,142 @@ pub struct LaunchResult {
     pub launch_log: PathBuf,
 }
 
-/// Build the vanilla launch command from the metadata already prepared on disk.
-/// Authentication stays fully local: the offline UUID matches Minecraft's
-/// canonical OfflinePlayer algorithm, so the same name remains stable across runs.
-pub async fn launch_instance(
+/// 一次点击：先把这个实例补齐，再把游戏拉起来。
+///
+/// 两段之间有几件事是**哪一段都不依赖的**：刷新登录是一次网络往返（外置登录
+/// 第一次还得取一份 injector），挑 Java 之前要把这台机器上的 Java 探一遍（每个
+/// 候选起一次进程）。它们和「下载游戏文件」之间没有任何数据依赖，却在上一版里
+/// 排在它后面老实等着。所以在这里就放出去，用得着的时候再收。
+pub async fn start_instance(
     paths: &DataPaths,
     instance_id: &str,
     quick_play: Option<crate::QuickPlay>,
     events: &UnboundedSender<LauncherEvent>,
     job: &crate::Job,
 ) -> Result<LaunchResult> {
+    // 启动是这次点击的最后一步，补全自己报它那两步。
+    job.expect(1);
+    let prelude = Prelude::start(paths, instance_id, job);
+    // 启动这条路不重读磁盘：几百兆的资源目录每次点启动都完整过一遍，换成
+    // 机械硬盘或者带实时扫描的 Windows 就是用户等的那几十秒。想真读一遍的
+    // 入口是实例详情里的「校验」。
+    let prepared = prepare::prepare(paths, instance_id, false, job).await?;
+    launch(paths, prepared, quick_play, events, job, prelude).await
+}
+
+/// 点击那一刻就能开始、而补全那一段又用不上的两件事。
+///
+/// 两件都在后台跑着，补全在前台跑着，谁都不等谁。失败留在把手里，到收的时候
+/// 才抛——顺序不变：账户出问题仍然是补全走完之后才说的话，而不是半路把正在
+/// 下的东西掐掉。
+///
+/// 没人收就在 `Drop` 里掐掉（收过之后两格都是 `None`）。这条路上从点击到收
+/// 把手之间有好几处会失败——补全失败、游戏目录被别人占着、建不出 natives
+/// 目录——漏掉任何一处，刷新登录都会继续跑在一个界面上已经没有了的作业上。
+struct Prelude {
+    account: Option<tokio::task::JoinHandle<Result<(Account, Credentials)>>>,
+    /// 把这台机器上的 Java 探一遍，结果落在 `java` 那个短缓存里。挑运行时排在
+    /// 扫模组之后（它要模组声明的那条下界），但真正花时间的探测和模组无关。
+    java: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Prelude {
+    fn start(paths: &DataPaths, instance_id: &str, job: &crate::Job) -> Self {
+        let track = job.track(JobText::id("job.track.account"));
+        let account_paths = paths.clone();
+        let account_instance = instance_id.to_owned();
+        let account = tokio::spawn(async move {
+            let profile = crate::read_instance(&account_paths, &account_instance)?;
+            let scoped = crate::instance::paths_for(&account_paths, &profile);
+            // 这个实例钉住的那一个，没钉就跟当前账户走（见 account/roster.rs）。
+            //
+            // 启动**不写回**这个字段。曾经写过：第一次启动之后实例就被永久钉在
+            // 了当时的账户上，此后在设置里换当前账户对它再无作用，而界面上没有
+            // 任何地方说过这件事。钉住是一次表态，该由人自己做。
+            let record = crate::account_for_instance(&scoped, &profile)
+                .ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
+            let mut account = Account::load(&record)?;
+            account.ensure_fresh(&scoped, &track.downloads()).await?;
+            let credentials = account.launch_credentials()?;
+            Ok((account, credentials))
+        });
+        let java_paths = paths.clone();
+        let java = tokio::task::spawn_blocking(move || {
+            java::discover(Some(&java_paths));
+        });
+        Self {
+            account: Some(account),
+            java: Some(java),
+        }
+    }
+
+    /// 收。两件事都已经跑完的话这里不等任何东西。
+    async fn join(mut self) -> Result<(Account, Credentials)> {
+        let account = self.account.take();
+        if let Some(java) = self.java.take() {
+            let _ = java.await;
+        }
+        match account {
+            Some(account) => account.await?,
+            // 走不到：`join` 消耗掉整个把手，收不了第二次。
+            None => Err(anyhow!("登录状态没有被取回")),
+        }
+    }
+}
+
+impl Drop for Prelude {
+    fn drop(&mut self) {
+        if let Some(account) = &self.account {
+            account.abort();
+        }
+        if let Some(java) = &self.java {
+            java.abort();
+        }
+    }
+}
+
+/// Build the vanilla launch command from the metadata already prepared on disk.
+/// Authentication stays fully local: the offline UUID matches Minecraft's
+/// canonical OfflinePlayer algorithm, so the same name remains stable across runs.
+async fn launch(
+    launcher_paths: &DataPaths,
+    prepared: prepare::Prepared,
+    quick_play: Option<crate::QuickPlay>,
+    events: &UnboundedSender<LauncherEvent>,
+    job: &crate::Job,
+    prelude: Prelude,
+) -> Result<LaunchResult> {
+    let instance_id = prepared.result.instance_id.as_str();
     let stage = |stage: LaunchStage| {
         let _ = events.send(LauncherEvent::LaunchStage {
             instance_id: instance_id.to_owned(),
             stage,
         });
     };
-    // 补全之后还剩这一步：刷新登录、组装命令、把进程拉起来。它自己没有几个
-    // 字节可下（外置登录第一次要取一份 injector），但它是这次点击的最后一段，
-    // 该算进「共几步」里。这一步内部的几件事（快照、解压、扫模组）都是注脚，
-    // 不是步——上一版把快照当成一步，步数就成了「第 6 步 / 共 5 步」。
+    // 补全之后还剩这一步：拍快照、解压 natives、扫模组、组装命令、把进程拉
+    // 起来。它自己几乎没有字节可下，但它是这次点击的最后一段，该算进「共几步」
+    // 里。这一步内部那几件事各是一条支线，不是步——上一版把快照当成一步，
+    // 步数就成了「第 6 步 / 共 5 步」。
     job.step(JobText::id("job.stage.prepare-launch"));
     stage(LaunchStage::ResolvingVersion);
-    paths.ensure_exists()?;
-    let profile = crate::read_instance(paths, instance_id)?;
-    // 装了加载器时，要启动的是加载器生成的那份 JSON，它用 inheritsFrom 指回
-    // 原版。合并在 version 模块里做一次，补全和启动用的必须是同一份——两边
-    // 各算各的，就会出现「文件明明下好了却说缺」这种最难查的问题。
-    let version_id = version::effective_id(&profile);
-    // 快照写在 Fern 自己的数据根下，所以要留一份没被实例作用域改写过的路径。
-    let launcher_paths = paths;
+    // 实例配置、合并后的版本描述、客户端 jar 的去处，全都由补全那一段交过来，
+    // 不再自己读一遍。**必须是它交的那一份**：装完加载器之后实例配置被改写过
+    // （记下了上游给的版本 id），拿点击那一刻的旧配置去启动，加载器那一层的
+    // id 还是空的，`effective_id` 退回原版——游戏照样起得来，只是一个模组都不
+    // 加载（见 prepare::Prepared）。
+    let prepare::Prepared {
+        profile,
+        paths: scoped,
+        metadata,
+        client_jar,
+        ..
+    } = &prepared;
+    let version_id = version::effective_id(profile);
     // 外部实例的版本、库、游戏目录都在它自己的目录树里。这一句之后的每一个
-    // `paths` 都是这个实例的那一套。
-    let scoped = crate::instance::paths_for(paths, &profile);
-    let paths = &scoped;
-    // 同一份游戏目录跑两个进程，两边写同一批存档，而且没有任何报错。挡在最
-    // 前面：后面那几步可能要几分钟，让人等完再说「不能启动」是最差的顺序。
+    // `paths` 都是这个实例的那一套；快照写在 Fern 自己的数据根下，那一份路径
+    // 叫 `launcher_paths`。
+    let paths = scoped;
+    // 同一份游戏目录跑两个进程，两边写同一批存档，而且没有任何报错。
     if let Some(occupant) = running::occupant(&paths.game_directory(instance_id)) {
         return Err(if occupant == instance_id {
             anyhow!("这个实例已经在运行")
@@ -218,13 +318,6 @@ pub async fn launch_instance(
             )
         });
     }
-    // 整摞层按顺序合并，不是只读最外面那一份——别的启动器建的实例是一摞互不
-    // 相干的 patch，没有 inheritsFrom 可跟（见 version::resolve_profile）。
-    let metadata = version::resolve_profile(paths, &profile)
-        .with_context(|| format!("读取 {version_id} 的版本描述"))?;
-    // 客户端 jar 始终属于原版：加载器改的是启动方式，不是游戏本体。哪一份是
-    // 原版由继承链说了算，见 version::client_jar。
-    let client_jar = version::client_jar(paths, &profile);
     let main_class = metadata
         .main_class
         .clone()
@@ -241,7 +334,7 @@ pub async fn launch_instance(
     // 已知会坏的那些组合，以及该怎么绕开（见 launch::compat）。这一轮还没挑
     // Java，所以只拿得到不依赖 Java 的那几条——它们正是要用来**决定**挑哪个
     // Java 的。挑完之后还会再问一次。
-    let environment = compat::Environment::of(&profile);
+    let environment = compat::Environment::of(profile);
     let advice = compat::apply(&environment);
     let patches = compat::patches(&advice);
 
@@ -258,17 +351,10 @@ pub async fn launch_instance(
     let natives_directory = paths.game_directory(instance_id).join("natives");
     tokio::fs::create_dir_all(&natives_directory).await?;
 
-    // 这个实例钉住的那一个，没钉就跟当前账户走（见 account/roster.rs）。
-    //
-    // 启动**不写回**这个字段。曾经写过：第一次启动之后实例就被永久钉在了当时
-    // 的账户上，此后在设置里换当前账户对它再无作用，而界面上没有任何地方说过
-    // 这件事。钉住是一次表态，该由人自己做，不该是启动的副产品。
-    let record = crate::account_for_instance(paths, &profile)
-        .ok_or_else(|| anyhow!("尚未添加账户，请在设置中添加"))?;
-
     // 启动前剩下的重活分两条线并排跑：磁盘线（快照、解压、扫模组）和网络线
-    // （刷新登录）。碰磁盘的几件事**互相之间**保持串行——机械硬盘上两件事抢
-    // 磁头比排队还慢；和网络往返并行才是白捡的时间。
+    // （刷新登录，它在点击那一刻就放出去了，见 Prelude）。碰磁盘的几件事
+    // **互相之间**保持串行——机械硬盘上两件事抢磁头比排队还慢；和网络往返
+    // 并行才是白捡的时间。
     //
     // 快照是尽力而为（backup::quietly 自己把失败降成通知，绝不拦启动）；
     // 这条线上其余的事失败即启动失败。
@@ -295,7 +381,7 @@ pub async fn launch_instance(
             let _track = job.track(JobText::id("job.track.natives"));
             collect_classpath_and_extract_natives(
                 paths,
-                &metadata,
+                metadata,
                 &context,
                 &natives_directory,
                 &patches,
@@ -319,16 +405,10 @@ pub async fn launch_instance(
         };
         Ok((classpath, mods_floor))
     };
-    let account_line = async {
-        // 一次网络往返，慢网络上能到几秒；外置登录第一次还要取一份 injector。
-        let track = job.track(JobText::id("job.track.account"));
-        let mut account = Account::load(&record)?;
-        account.ensure_fresh(paths, &track.downloads()).await?;
-        let credentials = account.launch_credentials()?;
-        Ok((account, credentials))
-    };
+    // 用 join 而不是 try_join：账户出了问题仍然是这一段走完之后才说的话，
+    // 不半路把正在解压的东西掐掉。
     let (disk_outcome, account_outcome): (Result<_>, Result<_>) =
-        tokio::join!(disk_line, account_line);
+        tokio::join!(disk_line, prelude.join());
     let (classpath, mods_floor) = disk_outcome?;
     let (account, credentials) = account_outcome?;
     let mut variables = LaunchVariables::new().with_credentials(&credentials);
@@ -452,7 +532,7 @@ pub async fn launch_instance(
     let requirement = java::requirement(&profile.game_version, profile.loader, required_java_major)
         .preferring(mods_floor)
         .capped(compat::runtime_ceiling(&advice));
-    let runtime = resolve_java_runtime(paths, &profile, &requirement)?;
+    let runtime = resolve_java_runtime(paths, profile, &requirement)?;
     if runtime.major < requirement.minimum {
         return Err(anyhow!(
             "Java {} 无法运行 Minecraft {version_id}，此版本至少需要 Java {}（当前 {}）",
@@ -499,7 +579,7 @@ pub async fn launch_instance(
     };
     let allocation = memory::plan(
         paths,
-        &profile,
+        profile,
         &game_directory,
         java_major,
         effective.max_memory_mb,
@@ -529,9 +609,7 @@ pub async fn launch_instance(
         classpath: classpath
             .into_iter()
             .chain(std::iter::once(patch::with_jar_mods(
-                paths,
-                &profile,
-                &client_jar,
+                paths, profile, client_jar,
             )?))
             .collect(),
         main_class,
@@ -1138,6 +1216,7 @@ async fn collect_classpath_and_extract_natives(
     patches: &[&str],
 ) -> Result<Vec<PathBuf>> {
     let mut classpath = Vec::new();
+    let mut natives = Vec::new();
     // rules 与坐标冲突都在这一步解决：同一个库只留一份，否则加载器会因为
     // classpath 上有两份同名类而拒绝启动（见 effective_libraries）。
     for library in metadata.effective_libraries(context) {
@@ -1151,53 +1230,142 @@ async fn collect_classpath_and_extract_natives(
         // 数据不再这么写，native jar 就是一条普通库（坐标带 classifier），直接
         // 进 classpath——那个年代的 LWJGL 自己会从 classpath 上把 .dll 掏出来。
         if file.native {
-            extract_native_jar(&path, natives_directory, library).await?;
+            natives.push(NativeJar {
+                path,
+                excludes: library
+                    .extract
+                    .as_ref()
+                    .map(|rule| rule.exclude.clone())
+                    .unwrap_or_default(),
+            });
             continue;
         }
         // 兼容规则点名要打补丁的库，进 classpath 的是产物，不是原件。补全时
         // 已经做过一遍，这里拿到的通常就是缓存里那一份（见 patch 模块）。
         classpath.push(patch::applied(paths, &library.name, &path, patches)?);
     }
+    let destination = natives_directory.to_owned();
+    tokio::task::spawn_blocking(move || extract_natives(&natives, &destination)).await??;
     Ok(classpath)
 }
 
-async fn extract_native_jar(path: &Path, destination: &Path, library: &Library) -> Result<()> {
-    let path = path.to_owned();
-    let destination = destination.to_owned();
-    let excludes = library
-        .extract
-        .as_ref()
-        .map(|rule| rule.exclude.clone())
-        .unwrap_or_default();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let file =
-            File::open(&path).with_context(|| format!("open native jar {}", path.display()))?;
-        let mut archive = zip::ZipArchive::new(file).context("read native jar archive")?;
-        for index in 0..archive.len() {
-            let mut entry = archive.by_index(index)?;
-            let name = entry.name().to_owned();
-            if excludes.iter().any(|prefix| name.starts_with(prefix)) || name.ends_with('/') {
-                continue;
-            }
-            let relative = Path::new(&name);
-            if relative.is_absolute()
-                || relative
-                    .components()
-                    .any(|component| matches!(component, std::path::Component::ParentDir))
-            {
-                continue;
-            }
-            let output = destination.join(relative);
-            if let Some(parent) = output.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let mut target = File::create(output)?;
-            io::copy(&mut entry, &mut target)?;
-        }
-        Ok(())
-    })
-    .await??;
+/// 一个要解压的 native jar。排除表来自版本描述，不在 jar 上，所以要跟着走。
+struct NativeJar {
+    path: PathBuf,
+    excludes: Vec<String>,
+}
+
+/// 上一次解压留下的戳。
+///
+/// 戳住的是**输入和输出两头**：输入变了（换了版本、库更新了、排除表改了）要
+/// 重解压，输出被人删了一个也要重解压。
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct NativesStamp {
+    sources: Vec<NativeSource>,
+    /// 解出来的文件，相对 natives 目录。
+    extracted: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct NativeSource {
+    jar: String,
+    size: u64,
+    modified: u64,
+    excludes: Vec<String>,
+}
+
+/// 戳文件的名字。放在 natives 目录里：目录被删掉，戳跟着没了。
+const NATIVES_STAMP: &str = ".fern-natives.json";
+
+/// 把 native 载荷解到 `-Djava.library.path` 指着的那个目录里。
+///
+/// 上一次解出来的那份还完好就整段跳过。几十个 zip 在机械硬盘上要一两秒，而
+/// 每次启动解出来的都是同一批字节——它只在库清单真的变了的时候才需要重做。
+fn extract_natives(sources: &[NativeJar], destination: &Path) -> Result<()> {
+    let wanted: Vec<NativeSource> = sources.iter().map(NativeSource::of).collect();
+    let stamp_path = destination.join(NATIVES_STAMP);
+    if let Ok(bytes) = std::fs::read(&stamp_path)
+        && let Ok(stamp) = serde_json::from_slice::<NativesStamp>(&bytes)
+        && stamp.sources == wanted
+        && stamp
+            .extracted
+            .iter()
+            .all(|name| destination.join(name).exists())
+    {
+        return Ok(());
+    }
+    // 重做之前先把旧戳去掉：解到一半崩了的话，留着的那张戳会说「已经解好了」。
+    let _ = std::fs::remove_file(&stamp_path);
+    let mut extracted = Vec::new();
+    for native in sources {
+        extracted.extend(extract_native_jar(native, destination)?);
+    }
+    extracted.sort();
+    let stamp = NativesStamp {
+        sources: wanted,
+        extracted,
+    };
+    // 写不进去不算失败：下一次重解压一遍而已，比让启动停在这里好。
+    if let Ok(bytes) = serde_json::to_vec(&stamp) {
+        let _ = std::fs::write(&stamp_path, bytes);
+    }
     Ok(())
+}
+
+impl NativeSource {
+    /// 读不到的 jar 记成零。解压那一步会为它报出真正的错，这里不必先说一遍。
+    fn of(native: &NativeJar) -> Self {
+        let metadata = std::fs::metadata(&native.path).ok();
+        Self {
+            jar: native.path.to_string_lossy().into_owned(),
+            size: metadata.as_ref().map(|meta| meta.len()).unwrap_or_default(),
+            modified: metadata
+                .as_ref()
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|since| since.as_millis() as u64)
+                .unwrap_or_default(),
+            excludes: native.excludes.clone(),
+        }
+    }
+}
+
+/// 解一个 native jar，返回解出来的那些文件（相对 `destination`）。
+fn extract_native_jar(native: &NativeJar, destination: &Path) -> Result<Vec<String>> {
+    let file = File::open(&native.path)
+        .with_context(|| format!("open native jar {}", native.path.display()))?;
+    let mut archive = zip::ZipArchive::new(file).context("read native jar archive")?;
+    let mut extracted = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index)?;
+        let name = entry.name().to_owned();
+        if native
+            .excludes
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+            || name.ends_with('/')
+        {
+            continue;
+        }
+        let relative = Path::new(&name);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            continue;
+        }
+        let output = destination.join(relative);
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut target = File::create(output)?;
+        io::copy(&mut entry, &mut target)?;
+        extracted.push(name);
+    }
+    Ok(extracted)
 }
 
 impl LaunchPlan {
@@ -1394,8 +1562,8 @@ mod tests {
 
     /// natives 解压此前没有任何覆盖，而它同时负责两件容易出事的事：按
     /// `extract.exclude` 排除 META-INF，以及挡住 jar 里指向外面的路径。
-    #[tokio::test]
-    async fn native_extraction_honours_excludes_and_refuses_to_escape() {
+    #[test]
+    fn native_extraction_honours_excludes_and_refuses_to_escape() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;
 
@@ -1417,20 +1585,33 @@ mod tests {
         writer.finish().expect("finish jar");
 
         let destination = root.join("natives");
-        let library = Library {
-            name: "org.lwjgl:lwjgl-platform:2.9.4".to_owned(),
-            extract: Some(fern_meta::ExtractRule {
-                exclude: vec!["META-INF/".to_owned()],
-            }),
-            ..Library::default()
-        };
-        extract_native_jar(&jar_path, &destination, &library)
-            .await
-            .expect("extract natives");
+        std::fs::create_dir_all(&destination).expect("create natives directory");
+        let sources = vec![NativeJar {
+            path: jar_path,
+            excludes: vec!["META-INF/".to_owned()],
+        }];
+        extract_natives(&sources, &destination).expect("extract natives");
 
         assert!(destination.join("liblwjgl.so").is_file());
         assert!(!destination.join("META-INF/MANIFEST.MF").exists());
         assert!(!root.join("escaped.so").exists());
+
+        // 第二次不该再解一遍：戳对得上就整段跳过。
+        std::fs::write(destination.join("liblwjgl.so"), b"touched by hand")
+            .expect("overwrite the extracted file");
+        extract_natives(&sources, &destination).expect("extract natives again");
+        assert_eq!(
+            std::fs::read(destination.join("liblwjgl.so")).expect("read back"),
+            b"touched by hand"
+        );
+
+        // 解出来的东西被删掉一个，就得重解一遍——戳记的是输入和输出两头。
+        std::fs::remove_file(destination.join("liblwjgl.so")).expect("remove the extracted file");
+        extract_natives(&sources, &destination).expect("extract natives once more");
+        assert_eq!(
+            std::fs::read(destination.join("liblwjgl.so")).expect("read back"),
+            b"native code"
+        );
 
         std::fs::remove_dir_all(root).expect("remove test root");
     }

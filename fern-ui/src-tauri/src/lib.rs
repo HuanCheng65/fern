@@ -323,8 +323,7 @@ async fn update_apply(app: tauri::AppHandle) -> Result<(), String> {
             .await??;
         }
         fern_core::UpdateInstall::Bundle => {
-            off_thread(move || update.install(bytes).map_err(|error| format!("{error}")))
-                .await??;
+            off_thread(move || update.install(bytes).map_err(|error| format!("{error}"))).await??;
         }
         fern_core::UpdateInstall::SystemPackage => unreachable!("上面已经挡掉了"),
     }
@@ -1062,28 +1061,14 @@ async fn launch_instance(
     let events = launcher_events(&app);
     // 一次点击一个作业：补全和启动是同一件事的两段，各自往总步数里添自己那份。
     let job = fern_core::Job::begin(&events, title, subjects);
-    job.expect(1);
-    // 启动这条路不重读磁盘：几百兆的资源目录每次点启动都完整过一遍，换成
-    // 机械硬盘或者带实时扫描的 Windows 就是用户等的那几十秒。想真读一遍的
-    // 入口是实例详情里的「校验」。
-    let prepared = fern_core::prepare_instance(&paths, &instance_id, false, &job)
+    let quick = match (world, server) {
+        (Some(name), _) if !name.is_empty() => Some(fern_core::QuickPlay::World(name)),
+        (_, Some(address)) if !address.is_empty() => Some(fern_core::QuickPlay::Server(address)),
+        _ => None,
+    };
+    let result = fern_core::start_instance(&paths, &instance_id, quick, &events, &job)
         .await
         .map_err(|error| format!("{error:#}"));
-    let result = match prepared {
-        Ok(_) => {
-            let quick = match (world, server) {
-                (Some(name), _) if !name.is_empty() => Some(fern_core::QuickPlay::World(name)),
-                (_, Some(address)) if !address.is_empty() => {
-                    Some(fern_core::QuickPlay::Server(address))
-                }
-                _ => None,
-            };
-            fern_core::launch_instance(&paths, &instance_id, quick, &events, &job)
-                .await
-                .map_err(|error| format!("{error:#}"))
-        }
-        Err(error) => Err(error),
-    };
     job.finish(&result);
     if let Err(error) = &result {
         let _ = paths.append_log(&format!("[launch] instance={instance_id} error={error}"));

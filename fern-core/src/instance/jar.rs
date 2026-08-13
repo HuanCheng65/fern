@@ -309,19 +309,110 @@ fn raw_entry<R: std::io::Read + std::io::Seek>(
 }
 
 /// 一个目录里的所有 jar，禁用的也算——「它被关掉了」本身就是预检查要说的话。
+///
+/// 大整合包这里要开几百个 zip，而一次点击启动会完整走两遍：预检查一遍，启动
+/// 时算 Java 下界又一遍。所以两件事——分线程读，以及记住上一次的结果。
+///
+/// 记忆的键是目录里每个文件的 `(文件名, 大小, 修改时刻)`。加一个模组、换一个
+/// 版本、把某个 jar 停用，键就跟着变，读到的绝不会是旧的那一份；而拿这把键去
+/// 问一次只是几百次 stat，比重开几百个 zip 便宜三个数量级。
 pub fn read_all(directory: &Path) -> Vec<ModJar> {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return Vec::new();
     };
-    let mut jars: Vec<ModJar> = entries
+    let mut present: Vec<(PathBuf, Stamp)> = entries
         .flatten()
-        .filter(|entry| entry.path().is_file())
         .filter(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             name.ends_with(".jar") || name.ends_with(".jar.disabled")
         })
-        .map(|entry| read(&entry.path()))
+        .filter_map(|entry| {
+            // 跟着软链走：`DirEntry::metadata` 不跟，而把整个 mods 目录软链到
+            // 别处是常见摆法，那样每一条都会被判成「不是文件」。
+            let metadata = std::fs::metadata(entry.path()).ok()?;
+            metadata.is_file().then(|| {
+                (
+                    entry.path(),
+                    Stamp {
+                        file_name: entry.file_name().to_string_lossy().into_owned(),
+                        size: metadata.len(),
+                        modified: metadata
+                            .modified()
+                            .ok()
+                            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|since| since.as_millis() as u64)
+                            .unwrap_or_default(),
+                    },
+                )
+            })
+        })
         .collect();
+    present.sort_by(|left, right| left.1.file_name.cmp(&right.1.file_name));
+    let stamps: Vec<Stamp> = present.iter().map(|(_, stamp)| stamp.clone()).collect();
+
+    if let Ok(cache) = SCAN_CACHE.lock()
+        && let Some(scan) = cache.as_ref()
+        && scan.directory == directory
+        && scan.stamps == stamps
+    {
+        return scan.jars.clone();
+    }
+
+    let paths: Vec<PathBuf> = present.into_iter().map(|(path, _)| path).collect();
+    let jars = read_each(&paths);
+    if let Ok(mut cache) = SCAN_CACHE.lock() {
+        *cache = Some(Scan {
+            directory: directory.to_owned(),
+            stamps,
+            jars: jars.clone(),
+        });
+    }
+    jars
+}
+
+/// 一个 jar 在记忆里的身份。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Stamp {
+    file_name: String,
+    size: u64,
+    modified: u64,
+}
+
+struct Scan {
+    directory: PathBuf,
+    stamps: Vec<Stamp>,
+    jars: Vec<ModJar>,
+}
+
+/// 上一次扫描。只留一份：一次点击来回问的是同一个目录。
+static SCAN_CACHE: std::sync::Mutex<Option<Scan>> = std::sync::Mutex::new(None);
+
+/// 逐个读，分几条线。
+///
+/// 开 zip、解 jar-in-jar 全是 CPU 活，单线程排队读四百个文件是此前「卡住没
+/// 反馈」的那一段。按文件名切块，各块自己读自己的，回来再排序。
+fn read_each(paths: &[PathBuf]) -> Vec<ModJar> {
+    let lanes = std::thread::available_parallelism()
+        .map(|count| count.get().min(8))
+        .unwrap_or(1);
+    if lanes <= 1 || paths.len() <= 1 {
+        return paths.iter().map(|path| read(path)).collect();
+    }
+    let mut jars = Vec::with_capacity(paths.len());
+    std::thread::scope(|scope| {
+        let lanes: Vec<_> = paths
+            .chunks(paths.len().div_ceil(lanes))
+            .map(|chunk| scope.spawn(|| chunk.iter().map(|path| read(path)).collect::<Vec<_>>()))
+            .collect();
+        for lane in lanes {
+            // 读一个 jar 从不失败（读不懂就退回文件名），所以走到这里只可能是
+            // 我们自己的 bug。吞掉它等于让整合包里凭空少几个模组。
+            match lane.join() {
+                Ok(chunk) => jars.extend(chunk),
+                Err(panic) => std::panic::resume_unwind(panic),
+            }
+        }
+    });
     jars.sort_by(|left, right| left.file_name.cmp(&right.file_name));
     jars
 }

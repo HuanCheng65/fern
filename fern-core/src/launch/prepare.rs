@@ -6,7 +6,8 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use fern_download::{DownloadClient, DownloadEvent, DownloadTask};
 use fern_meta::{
-    DownloadInfo, Library, RuleContext, VersionManifest, VersionManifestEntry, VersionMetadata,
+    AssetIndex, DownloadInfo, Library, RuleContext, VersionManifest, VersionManifestEntry,
+    VersionMetadata,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
@@ -47,13 +48,44 @@ struct AssetObject {
     size: u64,
 }
 
-/// 把这个实例补齐到能启动的状态。
+/// 补全做完之后手上有的东西。
 ///
-/// 分四步说，而不是笼统地叫「检查文件」：装加载器和下载文件是性质完全不同的
-/// 两件事——下载幂等、可并发、失败重试即可；装 Forge 要在本地跑一个第三方
-/// 安装器，它拆开 client jar 重打，有副作用、不能并发、失败会留下半成品，而且
-/// 必须排在下载之前（它决定了后面要补哪些库）。混成一步的代价是进度条撒谎：
-/// 显示「检查游戏文件」的时候实际卡在 Forge 安装器上，一动不动一分钟。
+/// 启动那一段接着用这几样，不重新读一遍。**实例配置必须是这一份**：装完加载器
+/// 之后它被改写过（记下了上游给的版本 id），拿点击那一刻读到的那份去启动，
+/// 加载器那一层的 id 还是空的，`effective_id` 退回原版——游戏照样起得来，只是
+/// 一个模组都不加载，而界面上没有任何地方说过这件事。
+pub(crate) struct Prepared {
+    pub result: PrepareResult,
+    pub profile: crate::InstanceProfile,
+    /// 这个实例作用域下的那套路径（外部实例的文件在它自己的目录树里）。
+    pub paths: DataPaths,
+    pub metadata: VersionMetadata,
+    pub client_jar: PathBuf,
+}
+
+/// 把这个实例补齐到能启动的状态。
+pub async fn prepare_instance(
+    paths: &DataPaths,
+    instance_id: &str,
+    recheck: bool,
+    job: &Job,
+) -> Result<PrepareResult> {
+    prepare(paths, instance_id, recheck, job)
+        .await
+        .map(|prepared| prepared.result)
+}
+
+/// 补全，并把启动那一段要接着用的东西一并带回来。
+///
+/// 分两步说，而不是笼统地叫「检查文件」：先读出这个实例到底要什么，再把缺的
+/// 补上。补的那一步里同时有几件事在跑——装加载器、下载游戏文件、准备 Java
+/// ——它们各是一条有名字的支线，而不是各占一步：装 Forge 和下载资源是**同时**
+/// 发生的，一个进度条不可能同时停在第 2 步和第 3 步。
+///
+/// 上一版把装加载器拆成独立的一步，理由是「混成一步会让进度条撒谎：显示着
+/// 检查游戏文件，实际卡在 Forge 安装器上一动不动一分钟」。那条理由现在由支线
+/// 承担，而且承担得更好——安装器那一条自己有名字、有它此刻在做什么，旁边还
+/// 摆着另外两条一起在跑的线。
 ///
 /// 加载器那一步没有百分比可言，所以进度分两轴——纵轴是第几步，横轴才是这一步
 /// 内部的字节数。硬把它们压成一个百分比就只能靠编。
@@ -61,12 +93,12 @@ struct AssetObject {
 /// `recheck` 决定要不要把每个文件都真读一遍。平常那一遍认「大小和修改时间都
 /// 没变就是没变」，几百兆的资源目录才不至于每次启动都过一次磁盘；用户在实例
 /// 详情里点「校验」，说的正是「我不信磁盘上那份」，那一遍就得实打实地读。
-pub async fn prepare_instance(
+pub(crate) async fn prepare(
     paths: &DataPaths,
     instance_id: &str,
     recheck: bool,
     job: &Job,
-) -> Result<PrepareResult> {
+) -> Result<Prepared> {
     paths.ensure_exists()?;
     let mut profile = crate::read_instance(paths, instance_id)?;
     // 外部实例的文件补到它自己的目录里去。这一句要在最前面：它之后的每一个
@@ -94,9 +126,7 @@ pub async fn prepare_instance(
         .filter(|component| !(profile.external.is_some() && already_on_disk(component)))
         .cloned()
         .collect();
-    // 原版没有加载器要装，那一步就不该出现在分母里。装 Java 不再单占一步：
-    // 它和下载游戏文件是「补全文件」这一步里并排的两条支线。
-    job.expect(if pending.is_empty() { 2 } else { 3 });
+    job.expect(2);
 
     let version_id = profile.game_version.clone();
     let version_id = version_id.as_str();
@@ -116,19 +146,23 @@ pub async fn prepare_instance(
     // 原版那一份先解出来：装 NeoForge 之前要拿它里面的 client jar 地址。
     let vanilla = vanilla_metadata(paths, &downloader, &profile, version_id).await?;
 
+    job.step(JobText::id("job.stage.download-files"));
+    // 一条支线从头管到尾：预取那一批和正式那一批记在同一页账上，合计不回跳。
+    let files_track = job.track(JobText::id("job.track.download"));
+    let files_events = files_track.downloads();
+    // 预取跑完的是哪一份资源索引。见下面那句「同一批东西不列两遍」。
+    let mut prefetched: Option<String> = None;
+
     // 加载器的 profile 也要先落盘，它才是启动时真正读的那一份；原版那份是
     // 它的父。装完之后，下面所有的判断都基于合并结果——补全按一份、启动按
     // 另一份，会出现「文件明明下好了却说缺」这种最难查的问题。
     if !pending.is_empty() {
-        job.step(
-            JobText::id("job.stage.install-loader")
-                .arg("loader", crate::loader_display_name(profile.loader))
-                .arg("version", &pending[0].version),
-        );
-        let events = &job.downloads();
         // NeoForge / Forge 的 processors 要把原版 client jar 拆开重打，
         // 所以它必须先在磁盘上。Fabric 不需要，但多验一次已经存在的文件
         // 只是一次 sha1，不值得为它分叉。
+        //
+        // 这一件要排在下面那个 join 之前：临时文件按目的地命名（见
+        // fern-download 的 part_path），两路同时下同一个文件就会互相踩。
         if let Some(client) = vanilla
             .downloads
             .as_ref()
@@ -141,34 +175,68 @@ pub async fn prepare_instance(
             })
         {
             let jar = task_from_info(client_jar.clone(), client)?;
-            downloader.download_all(vec![jar], events).await?;
+            downloader.download_all(vec![jar], &files_events).await?;
         }
-        let mut changed = false;
-        for component in pending {
-            let installed = loader::install(
-                paths,
-                component.kind,
-                version_id,
-                &component.version,
-                events,
-            )
-            .await?;
-            // 建实例时还不知道上游会给哪个 id，装完才知道；记回实例文件，
-            // 之后启动就不必再猜命名规则。改的是那一层，不是整份实例。
-            if component.version_id != installed {
-                for slot in &mut profile.components {
-                    if slot.kind == component.kind && slot.version == component.version {
-                        slot.version_id = installed.clone();
-                    }
-                }
-                changed = true;
+        let loader_track = job.track(
+            JobText::id("job.track.install-loader")
+                .arg("loader", crate::loader_display_name(profile.loader))
+                .arg("version", &pending[0].version),
+        );
+        let loader_events = loader_track.downloads();
+        let install = async {
+            let mut installed = Vec::new();
+            for component in &pending {
+                let id = loader::install(
+                    paths,
+                    component.kind,
+                    version_id,
+                    &component.version,
+                    &loader_events,
+                )
+                .await?;
+                installed.push(id);
             }
+            Ok::<_, anyhow::Error>(installed)
+        };
+        // 只有真要装点什么的时候才值得并排下资源。加载器已经在磁盘上时
+        // `install` 立刻就返回，而资源预取要把整个资源目录过一遍（几千次
+        // stat）——那时候它比它想省下的时间还长。
+        let installed = if pending.iter().all(already_on_disk) {
+            install.await?
+        } else {
+            let (installed, outcome) = tokio::join!(
+                install,
+                prefetch_assets(paths, &downloader, &vanilla, &files_events)
+            );
+            match outcome {
+                Ok(index_id) => prefetched = index_id,
+                // 预取失败不算失败：正式那一遍会把还缺的补上，该报错的是那一遍。
+                Err(error) => {
+                    let _ =
+                        paths.append_log(&format!("[prepare] asset prefetch stopped: {error:#}"));
+                }
+            }
+            installed?
+        };
+        loader_track.done();
+        // 建实例时还不知道上游会给哪个 id，装完才知道；记回实例文件，
+        // 之后启动就不必再猜命名规则。改的是那一层，不是整份实例。
+        let mut changed = false;
+        for (component, id) in pending.iter().zip(installed) {
+            if component.version_id == id {
+                continue;
+            }
+            for slot in &mut profile.components {
+                if slot.kind == component.kind && slot.version == component.version {
+                    slot.version_id = id.clone();
+                }
+            }
+            changed = true;
         }
         if changed {
             crate::write_instance_profile(paths, &profile)?;
         }
     }
-    job.step(JobText::id("job.stage.download-files"));
     let effective_id = crate::effective_version_id(&profile);
     // 补全和启动读的必须是同一份合并结果，所以这里也走层表那条路。
     let metadata: VersionMetadata = version::resolve_profile(paths, &profile)
@@ -211,41 +279,13 @@ pub async fn prepare_instance(
         // 只是此刻的细节：下载一开始，桥会用「检查并下载 N 个文件」换掉它。
         // 上一版这句话被当成阶段名顶上去、再也没人撤，整批下载的几分钟里
         // 界面一直写着「读取资源索引」。
-        job.note(JobText::id("job.note.asset-index"));
-        // 索引 id 来自版本 JSON，也就是来自网络，而它要直接变成文件名。
-        if !version::is_safe_id(&index.id) {
-            return Err(anyhow!("资源索引名无法作为文件名：{}", index.id));
-        }
-        // 索引带 sha1 和大小，是不可变的：本地那份对得上就不必再拉一遍。
-        let index_bytes = metacache::immutable(
-            &downloader,
-            &paths
-                .assets
-                .join("indexes")
-                .join(format!("{}.json", index.id)),
-            &index.url,
-            Some(&index.sha1),
-            Some(index.size),
-        )
-        .await
-        .with_context(|| format!("读取资源索引 {}", index.id))?;
-        let asset_index: AssetObjectIndex =
-            serde_json::from_slice(&index_bytes).context("parse asset index")?;
-        for object in asset_index.objects.values() {
-            if object.hash.len() < 2 {
-                continue;
-            }
-            let prefix = &object.hash[..2];
-            let url = format!(
-                "https://resources.download.minecraft.net/{prefix}/{}",
-                object.hash
-            );
-            tasks.push(DownloadTask::new(
-                paths.assets.join("objects").join(prefix).join(&object.hash),
-                &url,
-                &object.hash,
-                object.size,
-            )?);
+        files_track.note(JobText::id("job.note.asset-index"));
+        let (objects, asset_index) = asset_tasks(paths, &downloader, index).await?;
+        // 预取那一趟已经把这份索引下完了，这里就不再列一遍——`TaskStarted`
+        // 报的分母是过账**之前**算的整批大小，列两遍等于把这几百兆算两遍，
+        // 界面上会显示一个比真要下的多一倍的数。
+        if prefetched.as_deref() != Some(index.id.as_str()) {
+            tasks.extend(objects);
         }
         legacy_assets = Some((index.id.clone(), asset_index));
     }
@@ -274,12 +314,10 @@ pub async fn prepare_instance(
         .java_version
         .as_ref()
         .map(|version| version.component.as_str());
-    let files_track = job.track(JobText::id("job.track.download"));
     let java_track = job.track(JobText::id("job.track.java-runtime"));
-    let events = &files_track.downloads();
     let java_events = java_track.downloads();
     let (files_outcome, java_outcome) = tokio::join!(
-        downloader.download_all(tasks, events),
+        downloader.download_all(tasks, &files_events),
         runtime::ensure_java(paths, component, &requirement, &java_events),
     );
     files_outcome?;
@@ -287,7 +325,7 @@ pub async fn prepare_instance(
     java_track.done();
 
     if let Some((index_id, index)) = legacy_assets {
-        materialize_legacy_assets(paths, instance_id, &index_id, &index, events).await?;
+        materialize_legacy_assets(paths, instance_id, &index_id, &index, &files_events).await?;
     }
     // 有些库要改过才能跑（老 FML 在 Java 8u20 之后必崩的那一句）。放在这里
     // 而不是启动那一刻：几百毫秒的重打 jar 该发生在「正在补全文件」里，改写
@@ -317,7 +355,89 @@ pub async fn prepare_instance(
     }
     files_track.done();
 
-    Ok(result)
+    Ok(Prepared {
+        result,
+        profile,
+        paths: paths.clone(),
+        metadata,
+        client_jar,
+    })
+}
+
+/// 装加载器的同时把资源下了。
+///
+/// 加载器必须先装完，最终那份文件清单才算得出来——它决定要补哪些**库**。但
+/// 资源不在其中：`assetIndex` 是原版那份描述定死的，加载器不动它。而资源正是
+/// 首次安装里最大的一坨（几百兆的 objects，库加起来才几十兆），让它干等着一个
+/// 本地跑的安装器，等于把两段时间白白相加。
+///
+/// 只下资源，不下库：临时文件按目的地命名（见 fern-download 的 `part_path`），
+/// 两路同时下同一个文件会互相踩，而 Forge 安装器要的库和原版的库坐标是会重的。
+/// 资源在 `assets/objects/`，安装器碰的是 `libraries/` 和 `versions/`，两边
+/// 没有一个文件重叠。
+///
+/// 失败不往上抛：正式那一遍会把还缺的补上，那时候才是该报错的地方。
+///
+/// 跑完了就把那份索引的 id 交回去——正式那一遍据此把同一批资源从清单里划掉，
+/// 否则分母会把这几百兆算两遍。
+async fn prefetch_assets(
+    paths: &DataPaths,
+    downloader: &DownloadClient,
+    vanilla: &VersionMetadata,
+    events: &UnboundedSender<DownloadEvent>,
+) -> Result<Option<String>> {
+    let Some(index) = &vanilla.asset_index else {
+        return Ok(None);
+    };
+    let (tasks, _) = asset_tasks(paths, downloader, index).await?;
+    downloader.download_all(tasks, events).await?;
+    Ok(Some(index.id.clone()))
+}
+
+/// 这份资源索引里的每一个对象各是一个下载任务，外加索引本身——远古版本下完
+/// 还要按原名摆一份出来（见 [`materialize_legacy_assets`]）。
+async fn asset_tasks(
+    paths: &DataPaths,
+    downloader: &DownloadClient,
+    index: &AssetIndex,
+) -> Result<(Vec<DownloadTask>, AssetObjectIndex)> {
+    // 索引 id 来自版本 JSON，也就是来自网络，而它要直接变成文件名。
+    if !version::is_safe_id(&index.id) {
+        return Err(anyhow!("资源索引名无法作为文件名：{}", index.id));
+    }
+    // 索引带 sha1 和大小，是不可变的：本地那份对得上就不必再拉一遍。
+    let bytes = metacache::immutable(
+        downloader,
+        &paths
+            .assets
+            .join("indexes")
+            .join(format!("{}.json", index.id)),
+        &index.url,
+        Some(&index.sha1),
+        Some(index.size),
+    )
+    .await
+    .with_context(|| format!("读取资源索引 {}", index.id))?;
+    let asset_index: AssetObjectIndex =
+        serde_json::from_slice(&bytes).context("parse asset index")?;
+    let mut tasks = Vec::with_capacity(asset_index.objects.len());
+    for object in asset_index.objects.values() {
+        if object.hash.len() < 2 {
+            continue;
+        }
+        let prefix = &object.hash[..2];
+        let url = format!(
+            "https://resources.download.minecraft.net/{prefix}/{}",
+            object.hash
+        );
+        tasks.push(DownloadTask::new(
+            paths.assets.join("objects").join(prefix).join(&object.hash),
+            &url,
+            &object.hash,
+            object.size,
+        )?);
+    }
+    Ok((tasks, asset_index))
 }
 
 /// 原版那份版本 JSON。

@@ -7,9 +7,9 @@
 //! 作业解决的就是身份问题。每件事有一个 id，从头到尾贴在它自己的每一条事件
 //! 上；界面据此把它们分开，也据此知道某个实例、某个项目上现在有什么在跑。
 //!
-//! **进度分两轴，不压成一个百分比。** 一次补全里，装 Forge 那一步要在本地跑
-//! 一个第三方安装器，它根本没有百分比可言；硬给它编一个就是骗人。所以纵轴是
-//! 「第几步 / 共几步」，横轴才是字节数——没有字节数的步骤就老实说不知道。
+//! **进度分两轴，不压成一个百分比。** 一次补全里，装 Forge 那一条支线要在本地
+//! 跑一个第三方安装器，它根本没有百分比可言；硬给它编一个就是骗人。所以纵轴是
+//! 「第几步 / 共几步」，横轴才是字节数——没有字节数的那些就老实说不知道。
 //!
 //! **步是阶段，细节是注脚。** 上一版把下载器的每一句话（「读取资源索引」）都
 //! 当成阶段名顶上去，而且顶上去就不撤——整批下载的几分钟里界面一直写着一件
@@ -113,11 +113,11 @@ pub(crate) const TEXT_IDS: &[&str] = &[
     "job.note.retry",
     "job.stage.adopt",
     "job.stage.download-files",
-    "job.stage.install-loader",
     "job.stage.prepare-launch",
     "job.stage.resolve-version",
     "job.track.account",
     "job.track.download",
+    "job.track.install-loader",
     "job.track.java-runtime",
     "job.track.mods",
     "job.track.natives",
@@ -164,14 +164,29 @@ pub enum JobEvent {
     TrackDone { id: String, track: u32 },
     /// 字节账本的合计：这次作业到现在一共下了多少、还知道要下多少。
     /// `total` 为 0 表示不定量。
+    ///
+    /// `tracks` 是账本上有名字的那几页，界面据此给每条支线画自己的进度——
+    /// 只有合计的话，三条并排的支线在界面上就是三行没有长度的字。匿名支线
+    /// （下载器的那些桥）不在里面：它们在界面上本来就不占一行。
     Bytes {
         id: String,
         done: u64,
         total: u64,
         speed: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tracks: Vec<TrackBytes>,
     },
     /// 收工。`error` 有值就是失败了——失败的作业不会自己消失。
     Done { id: String, error: Option<String> },
+}
+
+/// 一条有名字的支线在账本上那一页。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackBytes {
+    pub track: u32,
+    pub done: u64,
+    pub total: u64,
 }
 
 /// 作业 id 只要在这一次运行里唯一：界面重载就全忘了，作业也活不过进程。
@@ -187,14 +202,22 @@ const BYTES_INTERVAL_MS: u64 = 100;
 struct Shared {
     id: String,
     events: UnboundedSender<LauncherEvent>,
-    /// 每条支线在账本上的一页：(已下载, 已知总量)。支线完成后这一页留着，
-    /// 所以合计在整个作业里单调向上，不会因为一批下完就往回跳。
-    ledger: Mutex<Vec<(u64, u64)>>,
+    /// 每条支线在账本上的一页。支线完成后这一页留着，所以合计在整个作业里
+    /// 单调向上，不会因为一批下完就往回跳。
+    ledger: Mutex<Vec<Page>>,
     started: Instant,
     last_emit_ms: AtomicU64,
     last_done: AtomicU64,
     speed: AtomicU64,
     next_track: AtomicU32,
+}
+
+/// 账本上的一页。`named` 决定它要不要单独报出去——匿名支线在界面上不占一行。
+#[derive(Debug, Clone, Copy, Default)]
+struct Page {
+    done: u64,
+    total: u64,
+    named: bool,
 }
 
 impl Shared {
@@ -216,8 +239,9 @@ impl Shared {
             let Ok(mut ledger) = self.ledger.lock() else {
                 return;
             };
-            if let Some(slot) = ledger.get_mut(track as usize) {
-                *slot = (done, total);
+            if let Some(page) = ledger.get_mut(track as usize) {
+                page.done = done;
+                page.total = total;
             }
         }
         self.emit_bytes(force);
@@ -241,20 +265,37 @@ impl Shared {
             self.last_emit_ms.store(now, Ordering::Relaxed);
         }
 
-        let (done, total) = {
+        let (done, total, tracks) = {
             let Ok(ledger) = self.ledger.lock() else {
                 return;
             };
-            ledger.iter().fold((0u64, 0u64), |(done, total), page| {
-                (done + page.0, total + page.1)
-            })
+            let mut tracks = Vec::new();
+            let mut done = 0u64;
+            let mut total = 0u64;
+            for (index, page) in ledger.iter().enumerate() {
+                done += page.done;
+                total += page.total;
+                if page.named && page.total > 0 {
+                    tracks.push(TrackBytes {
+                        track: index as u32,
+                        done: page.done,
+                        total: page.total,
+                    });
+                }
+            }
+            (done, total, tracks)
         };
 
         // 速度从合计的增量算，平滑一下。全程平均不行：开头一批本地命中的
         // 文件会把速度顶到几 GB/s。回退（重试退账）不是速度，跳过那一窗。
         let elapsed = now.saturating_sub(previous);
         let last = self.last_done.swap(done, Ordering::Relaxed);
-        if done >= last && elapsed >= BYTES_INTERVAL_MS {
+        if force && done == last {
+            // 一批下完了，而这一刻没有任何字节在动。留着上一个读数的话，界面
+            // 上会挂着一行永远不变的「12 MB/s」——那正是「卡住没反馈」的样子，
+            // 而这时候真正在干活的是别的支线，该由它们说话。
+            self.speed.store(0, Ordering::Relaxed);
+        } else if done >= last && elapsed >= BYTES_INTERVAL_MS {
             let instant = (done - last).saturating_mul(1000) / elapsed.max(1);
             let previous_speed = self.speed.load(Ordering::Relaxed);
             let smoothed = if previous_speed == 0 {
@@ -270,6 +311,7 @@ impl Shared {
             done,
             total,
             speed: self.speed.load(Ordering::Relaxed),
+            tracks,
         });
     }
 }
@@ -358,13 +400,14 @@ impl Job {
 
     fn open_track(&self, label: Option<JobText>) -> Track {
         let index = self.shared.next_track.fetch_add(1, Ordering::Relaxed);
+        let announced = label.is_some();
         if let Ok(mut ledger) = self.shared.ledger.lock() {
             // 并行开线时拿号和拿锁的先后可能错开，只许把账本变长。
             if ledger.len() <= index as usize {
-                ledger.resize((index as usize) + 1, (0, 0));
+                ledger.resize((index as usize) + 1, Page::default());
             }
+            ledger[index as usize].named = announced;
         }
-        let announced = label.is_some();
         if let Some(label) = label {
             self.shared.send(JobEvent::Track {
                 id: self.shared.id.clone(),
@@ -591,11 +634,19 @@ mod tests {
             done: 41,
             total: 50,
             speed: 900,
+            tracks: vec![TrackBytes {
+                track: 2,
+                done: 41,
+                total: 50,
+            }],
         }))
         .expect("serialize");
         assert_eq!(value["type"], "job");
         assert_eq!(value["payload"]["type"], "bytes");
         assert_eq!(value["payload"]["payload"]["done"], 41);
+        // 支线那几页也走 camelCase，和别的字段同一条规则。
+        assert_eq!(value["payload"]["payload"]["tracks"][0]["track"], 2);
+        assert_eq!(value["payload"]["payload"]["tracks"][0]["total"], 50);
 
         let started = serde_json::to_value(LauncherEvent::Job(JobEvent::Started {
             id: "job-2".to_owned(),
@@ -775,6 +826,76 @@ mod tests {
             .next_back()
             .expect("bytes were reported");
         assert_eq!(last, (600 + 40 + 50, 600 + 100 + 50));
+    }
+
+    /// 并排的几条支线在界面上各占一行，各自要有自己的进度——只有合计的话，
+    /// 三行字里没有一行说得出自己走到哪了。匿名支线不报：它们不占那一行。
+    #[tokio::test]
+    async fn named_tracks_report_their_own_page_and_anonymous_ones_do_not() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let job = Job::begin(&sender, "准备 Sundial", Vec::new());
+        let files = job.track(JobText::id("job.track.download"));
+        let anonymous = job.downloads();
+        let file_events = files.downloads();
+        let _ = file_events.send(DownloadEvent::TaskStarted {
+            total_files: 1,
+            total_bytes: 800,
+        });
+        let _ = file_events.send(DownloadEvent::Progress {
+            done_bytes: 200,
+            total_bytes: 800,
+            speed_bps: 0,
+        });
+        let _ = anonymous.send(DownloadEvent::TaskStarted {
+            total_files: 1,
+            total_bytes: 50,
+        });
+        tokio::task::yield_now().await;
+
+        let events = drain(&mut receiver);
+        let tracks = events
+            .iter()
+            .filter_map(|event| match event {
+                JobEvent::Bytes { tracks, .. } if !tracks.is_empty() => Some(tracks.clone()),
+                _ => None,
+            })
+            .next_back()
+            .expect("named pages are reported");
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].total, 800);
+    }
+
+    /// 一批下完之后速度要归零。
+    ///
+    /// 速度只在有事件的时候重算，而下完之后就没有事件了——留着最后那个读数，
+    /// 界面上会挂着一行永远不变的「12 MB/s」，那正是「卡住没反馈」的样子。
+    #[tokio::test]
+    async fn the_speed_drops_to_zero_when_a_batch_is_done() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let job = Job::begin(&sender, "准备 Sundial", Vec::new());
+        let downloads = job.downloads();
+        let _ = downloads.send(DownloadEvent::TaskStarted {
+            total_files: 1,
+            total_bytes: 900,
+        });
+        let _ = downloads.send(DownloadEvent::Progress {
+            done_bytes: 900,
+            total_bytes: 900,
+            speed_bps: 1_000_000,
+        });
+        let _ = downloads.send(DownloadEvent::TaskFinished { failed: Vec::new() });
+        tokio::task::yield_now().await;
+
+        let events = drain(&mut receiver);
+        let speed = events
+            .iter()
+            .filter_map(|event| match event {
+                JobEvent::Bytes { speed, .. } => Some(*speed),
+                _ => None,
+            })
+            .next_back()
+            .expect("bytes were reported");
+        assert_eq!(speed, 0);
     }
 
     #[tokio::test]

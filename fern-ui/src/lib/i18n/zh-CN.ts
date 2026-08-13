@@ -302,9 +302,9 @@ const backend = {
   // note 是随做随换的注脚——都不需要 detail：进度不解释自己，说完这一刻
   // 就翻篇。
   'job.stage.resolve-version': { title: '读取版本信息', detail: '' },
-  'job.stage.install-loader': { title: '安装 {loader} {version}', detail: '' },
   'job.stage.download-files': { title: '补全游戏文件', detail: '' },
   'job.stage.prepare-launch': { title: '准备启动', detail: '' },
+  'job.track.install-loader': { title: '安装 {loader} {version}', detail: '' },
   'job.track.download': { title: '下载游戏文件', detail: '' },
   'job.track.java-runtime': { title: '准备 Java', detail: '' },
   'job.track.snapshot': { title: '拍摄快照', detail: '' },

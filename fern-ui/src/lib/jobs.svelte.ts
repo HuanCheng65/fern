@@ -30,6 +30,9 @@ export interface JobTrack {
   track: number
   label: string
   note: string
+  /** 这条支线自己那本账。`total` 为 0 表示它没有字节可报（装加载器那种）。 */
+  done: number
+  total: number
 }
 
 export interface Job {
@@ -66,7 +69,16 @@ type JobEvent =
   | { type: 'track'; payload: { id: string; track: number; label: JobText } }
   | { type: 'note'; payload: { id: string; track: number; message: JobText } }
   | { type: 'track_done'; payload: { id: string; track: number } }
-  | { type: 'bytes'; payload: { id: string; done: number; total: number; speed: number } }
+  | {
+      type: 'bytes'
+      payload: {
+        id: string
+        done: number
+        total: number
+        speed: number
+        tracks?: { track: number; done: number; total: number }[]
+      }
+    }
   | { type: 'done'; payload: { id: string; error: string | null } }
 
 type LauncherEvent = { type: 'job'; payload: JobEvent } | { type: string; payload: unknown }
@@ -107,20 +119,30 @@ export function measure(job: Job): string {
 }
 
 /**
- * 阶段名旁边那一小行该说什么：这一步有字节在动就报数，没有就报正在跑的
+ * 阶段名旁边那一小行该说什么：**这一刻真有字节在动**就报数，否则报正在跑的
  * 支线，再没有才轮到注脚或一行不动的合计。
  *
- * 下载时字节比「检查并下载 N 个文件」有信息量；下载完之后字节停住了，还挂
- * 着一行不动的数字，等于把「卡住没反馈」又演一遍——那时该说话的是「拍摄
- * 快照 · 刷新账户凭据」这些还在干活的支线。
+ * 看的是速度，不是「这一步下过东西」。下载时字节比「检查并下载 N 个文件」有
+ * 信息量；而下完之后字节就停住了，还挂着一行不动的数字，等于把「卡住没反馈」
+ * 又演一遍——那时该说话的是「拍摄快照 · 刷新账户凭据」这些还在干活的支线。
+ * 后端在一批下完时把速度归零，正是为了让这里问得出这个问题。
  */
 export function aside(job: Job): string {
-  if (job.done > job.stageDone) return measure(job)
+  if (job.speed > 0 && job.done > job.stageDone) return measure(job)
   const tracks = job.tracks.map((track) => track.label).join(' · ')
   return tracks || job.note || measure(job)
 }
 
 let rehearsals = 0
+
+/**
+ * 支线露面之前先等这么久。
+ *
+ * 并行之后会有一闪而过的支线：natives 命中上一次的戳、模组扫描命中缓存，
+ * 几十毫秒就收工。让它们进界面，看到的只是抽搐——而那几十毫秒里本来也没有
+ * 什么可看的。等不到这个时长的支线，用户从头到尾不会知道它存在，这正是对的。
+ */
+const TRACK_REVEAL_MS = 400
 
 class JobStore {
   live = $state<Job[]>([])
@@ -128,6 +150,8 @@ class JobStore {
   failed = $state<Job[]>([])
 
   #unlisten: UnlistenFn | undefined
+  /** 还没露面的支线：`作业·支线` → 那个定时器。 */
+  #reveals = new Map<string, ReturnType<typeof setTimeout>>()
 
   async connect() {
     if (!inTauri() || this.#unlisten) return
@@ -196,6 +220,13 @@ class JobStore {
     })
   }
 
+  #cancelReveal(key: string) {
+    const timer = this.#reveals.get(key)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    this.#reveals.delete(key)
+  }
+
   #patch(id: string, change: Partial<Job>) {
     const index = this.live.findIndex((job) => job.id === id)
     if (index < 0) return
@@ -236,14 +267,19 @@ class JobStore {
         break
       }
       case 'track': {
-        const job = this.live.find((item) => item.id === event.payload.id)
-        if (!job) break
-        this.#patch(event.payload.id, {
-          tracks: [
-            ...job.tracks,
-            { track: event.payload.track, label: textOf(event.payload.label), note: '' },
-          ],
-        })
+        const { id, track } = event.payload
+        const label = textOf(event.payload.label)
+        this.#reveals.set(
+          `${id}·${track}`,
+          setTimeout(() => {
+            this.#reveals.delete(`${id}·${track}`)
+            const job = this.live.find((item) => item.id === id)
+            if (!job) return
+            this.#patch(id, {
+              tracks: [...job.tracks, { track, label, note: '', done: 0, total: 0 }],
+            })
+          }, TRACK_REVEAL_MS),
+        )
         break
       }
       case 'note': {
@@ -259,6 +295,8 @@ class JobStore {
         break
       }
       case 'track_done': {
+        // 还没露面就收工了：撤掉那个定时器，它从头到尾不会出现。
+        this.#cancelReveal(`${event.payload.id}·${event.payload.track}`)
         const job = this.live.find((item) => item.id === event.payload.id)
         if (!job) break
         // 完成的支线消失，和「成功的作业直接消失」同一条纪律。
@@ -267,15 +305,27 @@ class JobStore {
         })
         break
       }
-      case 'bytes':
+      case 'bytes': {
+        const job = this.live.find((item) => item.id === event.payload.id)
+        if (!job) break
+        const pages = new Map(event.payload.tracks?.map((page) => [page.track, page]))
         this.#patch(event.payload.id, {
           done: event.payload.done,
           total: event.payload.total,
           speed: event.payload.speed,
+          // 账本上没有这一页的支线保持原样：装加载器那种本来就没有字节可报。
+          tracks: job.tracks.map((track) => {
+            const page = pages.get(track.track)
+            return page ? { ...track, done: page.done, total: page.total } : track
+          }),
         })
         break
+      }
       case 'done': {
         const job = this.live.find((item) => item.id === event.payload.id)
+        for (const key of this.#reveals.keys()) {
+          if (key.startsWith(`${event.payload.id}·`)) this.#cancelReveal(key)
+        }
         this.live = this.live.filter((item) => item.id !== event.payload.id)
         // 成功了就没什么可说的：结果自己会出现在该出现的地方。
         if (job && event.payload.error) {
@@ -311,11 +361,14 @@ const rows = (job: Job) => [
     meta: measure(job),
     fraction: fraction(job),
   },
-  // 并行的支线各占一行：谁在跑、各自到哪一步，一眼看得清。
+  // 并行的支线各占一行：谁在跑、各自到哪一步，一眼看得清。有字节可报的还带
+  // 自己那条进度——三条同时在跑的线共用一个合计，等于三行都说不出自己走到哪。
   ...job.tracks.map((track) => ({
     id: `${job.id}·${track.track}`,
     label: track.label,
     detail: track.note,
+    meta: track.total > 0 ? `${formatBytes(track.done)} / ${formatBytes(track.total)}` : '',
+    fraction: track.total > 0 ? Math.min(1, track.done / track.total) : undefined,
   })),
 ]
 
