@@ -5,6 +5,7 @@
 /fern-kit/node_modules/
 /fern-site/node_modules/
 /fern-ui/dist/
+/fern-ui/.svelte-kit/
 /fern-ui/src-tauri/gen/
 *.log
 corpus/
