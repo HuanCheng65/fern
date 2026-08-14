@@ -24,6 +24,17 @@ pub struct LogLine {
     pub message: String,
 }
 
+/// 一条 XML 事件最多攒这么多字节。
+///
+/// 没有这条线，一行以 `<log4j:Event` 开头却永远等不到 `</log4j:Event>`，此后
+/// 每一行都会追加到同一个 `String` 上——内存没有上限，而日志查看器从那一刻起
+/// 一行都不再显示。等不到闭合标签不是假想：好几个线程往同一个 stdout 上写，
+/// 交错出半行就够了。
+///
+/// 64 KB 远大于任何一条真实的日志事件（崩溃栈也就几 KB），所以正常输出碰不到
+/// 它；碰到了就说明这个流已经不是我们认得的格式，那就退回逐行。
+const PENDING_LIMIT: usize = 64 * 1024;
+
 /// 逐行喂进来，攒够一条就吐出来。
 ///
 /// XML 事件跨多行，所以这里必须是个有状态的东西，不能是纯函数。
@@ -42,11 +53,16 @@ impl LogParser {
         if let Some(buffer) = &mut self.pending {
             buffer.push('\n');
             buffer.push_str(line);
-            if !line.contains("</log4j:Event>") {
+            if line.contains("</log4j:Event>") {
+                let complete = self.pending.take()?;
+                return parse_xml_event(&complete);
+            }
+            if buffer.len() <= PENDING_LIMIT {
                 return None;
             }
-            let complete = self.pending.take()?;
-            return parse_xml_event(&complete);
+            // 攒够这么多还等不到闭合标签，就当它永远等不到了。
+            let overflowed = self.pending.take()?;
+            return Some(parse_plain(&overflowed, stderr));
         }
 
         let trimmed = line.trim_start();
@@ -214,6 +230,33 @@ mod tests {
             .expect("a complete event");
         assert_eq!(line.level, LogLevel::Error);
         assert_eq!(line.message, "炸了");
+    }
+
+    /// 一条永远等不到闭合标签的 XML，不能把此后的日志全部吞进一个越长越大的
+    /// 缓冲里——那既是没有上限的内存，也是一个从此不再更新的日志窗口。
+    #[test]
+    fn an_event_that_never_closes_does_not_swallow_the_rest_of_the_log() {
+        let mut parser = LogParser::new();
+        assert!(
+            parser
+                .push(r#"<log4j:Event level="WARN">"#, false)
+                .is_none()
+        );
+        let filler = "x".repeat(4096);
+        let mut escaped = None;
+        for _ in 0..64 {
+            if let Some(line) = parser.push(&filler, false) {
+                escaped = Some(line);
+                break;
+            }
+        }
+        let escaped = escaped.expect("攒到上限就该把它吐出来");
+        assert!(escaped.message.contains("log4j:Event"));
+        // 吐完就回到逐行，下一行照常出来。
+        let next = parser
+            .push("[12:34:56] [Render thread/INFO]: 又能看见了", false)
+            .expect("a line");
+        assert_eq!(next.level, LogLevel::Info);
     }
 
     #[test]

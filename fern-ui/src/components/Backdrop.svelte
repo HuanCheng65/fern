@@ -266,14 +266,55 @@
     }
   }
 
+  /**
+   * 没人在看的时候，把 GL 上下文交回去。
+   *
+   * 一个 WebGL 上下文的代价几乎全在驱动那边：实测（Linux/WebKitGTK）背景醒着的
+   * WebProcess 是 344 MB，睡着之后 174 MB——驱动的那几十兆 anon 全部还给了系统，
+   * 只剩下几个 `.so` 的只读代码页还映射着。而游戏跑着的那段时间，这些内存恰恰
+   * 是最该让出去的：玩家在看游戏，不在看背景。
+   *
+   * **睡之前先把最后一帧拓到一张 2D 画布上。** 失焦时背景本来就停着
+   * （`paused`），拓下来的那一帧和醒着时看到的一模一样——省内存不该让画面变。
+   * 少了这一步，一个「窗口还看得见但我们以为它看不见」的平台就会露出一块纯色，
+   * 而 `document.hidden` 在各平台上到底什么时候为真并不由我们说了算（实测
+   * Xvfb 里窗口 IsViewable，它照样报 hidden）。
+   *
+   * 画布连同上下文一起从 DOM 上摘掉：一张画布只能有一个上下文，丢掉之后
+   * `getContext` 拿回来的还是那个丢掉的，只能换一张新的。
+   */
+  const SLEEP_AFTER_MS = 10_000
+  let asleep = $state(false)
+  let stillCanvas = $state<HTMLCanvasElement>()
+  let sleepTimer: ReturnType<typeof setTimeout> | undefined
+
+  function startGl() {
+    if (!base || gl) return
+    gl = createBackdropGl(base)
+    if (!gl) return
+    mode = 'gl'
+    gl.resize(scaledW(), scaledH())
+  }
+
+  function sleepGl() {
+    if (mode !== 'gl' || !gl || !base || !stillCanvas) return
+    stillCanvas.width = base.width
+    stillCanvas.height = base.height
+    stillCanvas.getContext('2d')?.drawImage(base, 0, 0)
+    gl.dispose()
+    gl = null
+    asleep = true
+  }
+
+  function wakeGl() {
+    clearTimeout(sleepTimer)
+    if (asleep) asleep = false
+  }
+
   onMount(() => {
     grain = grainDataUrl()
-    if (base) gl = createBackdropGl(base)
-    if (gl) {
-      mode = 'gl'
-      gl.resize(scaledW(), scaledH())
-      raf = requestAnimationFrame(frame)
-    }
+    startGl()
+    if (gl) raf = requestAnimationFrame(frame)
     apply()
 
     let resizeTimer: ReturnType<typeof setTimeout>
@@ -301,6 +342,8 @@
 
     // 视差：背景反向漂移几像素，产生纵深。前景漂得更少，这里只管背景。
     const onPointer = (e: PointerEvent) => {
+      // 有人在动鼠标，那这个窗口显然醒着——不管平台把 `hidden` 报成什么。
+      if (asleep) wakeGl()
       if (!parallax || !move || paused) return
       const dx = (e.clientX / window.innerWidth - 0.5) * -14
       const dy = (e.clientY / window.innerHeight - 0.5) * -10
@@ -308,10 +351,17 @@
     }
     window.addEventListener('pointermove', onPointer)
 
-    // 性能红线：窗口失焦立刻暂停。
+    // 性能红线：窗口失焦立刻暂停。停久了连上下文一起交出去。
     const onVisibility = () => {
       paused = document.hidden || !document.hasFocus()
       document.body.classList.toggle('paused', paused)
+      clearTimeout(sleepTimer)
+      if (paused) {
+        // 等十秒：切出去看一眼就回来的那种，不值得为它拆一次上下文再建一次。
+        sleepTimer = setTimeout(sleepGl, SLEEP_AFTER_MS)
+      } else {
+        wakeGl()
+      }
     }
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('blur', onVisibility)
@@ -320,6 +370,7 @@
     const stopParticles = startParticles()
     return () => {
       cancelAnimationFrame(raf)
+      clearTimeout(sleepTimer)
       window.removeEventListener('resize', onResize)
       window.removeEventListener('pointermove', onPointer)
       document.removeEventListener('visibilitychange', onVisibility)
@@ -333,6 +384,13 @@
     }
   })
 
+  // 画布重新挂回来之后，把上下文建回去。`from`/`to` 一直留着，所以下一帧就接
+  // 着画，不必重新算一遍构图。
+  $effect(() => {
+    if (asleep || !base) return
+    startGl()
+  })
+
   // 种子或人数变了就是另一张画。GL 路径滑过去，CPU 路径重画。
   $effect(() => {
     void seed
@@ -344,7 +402,11 @@
 <div id="bg" class:away>
   <div id="bgMove" bind:this={move}>
     <div id="bgDrift">
-      <canvas bind:this={base}></canvas>
+      {#if !asleep}
+        <canvas bind:this={base}></canvas>
+      {/if}
+      <!-- 睡着期间显示的那一帧。醒着时它是空的，也不参与合成。 -->
+      <canvas id="bgStill" bind:this={stillCanvas} class:hidden={!asleep}></canvas>
       <!-- 仅 CPU 兜底路径使用：呼吸靠这张相位图交叉淡入。GL 路径的呼吸在
            着色器里连续推进，这一层整个不画。 -->
       <canvas id="bgPhase" bind:this={phaseCanvas} class:hidden={mode === 'gl'}></canvas>
@@ -390,6 +452,10 @@
   }
 
   #bgPhase.hidden {
+    display: none;
+  }
+
+  #bgStill.hidden {
     display: none;
   }
 

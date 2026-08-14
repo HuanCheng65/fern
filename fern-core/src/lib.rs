@@ -29,6 +29,7 @@ mod java;
 mod job;
 mod launch;
 mod process;
+mod reclaim;
 mod storage;
 mod supply;
 mod update;

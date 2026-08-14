@@ -17,7 +17,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 
 use segment::{MIN_SEGMENT, PIECE, Plan, Slot};
@@ -961,15 +961,17 @@ impl DownloadClient {
                 match self.client.get(rewritten.clone()).send().await {
                     Ok(response) if response.status().is_success() => {
                         match response.bytes().await {
+                            // 先验再转成 `Vec`：`to_vec()` 是一次整份复制，而这
+                            // 条路上最大的一份是资源索引（1.21 约 4 MB）。校验
+                            // 不过的时候那份复制更是白做的。
                             Ok(bytes) => {
-                                let bytes = bytes.to_vec();
                                 let size_ok =
                                     expected_size.is_none_or(|size| bytes.len() as u64 == size);
                                 let sha1_ok =
                                     expected_sha1.is_none_or(|sha1| sha1_matches(&bytes, sha1));
                                 if size_ok && sha1_ok {
                                     self.health.record(&host, true);
-                                    return Ok(bytes);
+                                    return Ok(bytes.into());
                                 }
                                 self.health.record(&host, false);
                                 last_error =
@@ -1683,7 +1685,17 @@ impl DownloadClient {
         let resuming = resume_from > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
         let mut hasher = Sha1::new();
         let file = if resuming {
-            hasher.update(&tokio::fs::read(&landing).await?);
+            // 分块喂，不要 `read()` 整份：续传的前提就是这个文件大，断在 200 MB
+            // 处就是 200 MB 一次性进内存，而这里要的只是把它过一遍哈希。
+            let mut existing = tokio::fs::File::open(&landing).await?;
+            let mut buffer = vec![0u8; STREAM_BUFFER];
+            loop {
+                let read = existing.read(&mut buffer).await?;
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+            }
             tokio::fs::OpenOptions::new()
                 .append(true)
                 .open(&landing)
@@ -1871,7 +1883,11 @@ fn expanders() -> &'static Semaphore {
         Semaphore::new(
             std::thread::available_parallelism()
                 .map(std::num::NonZeroUsize::get)
-                .unwrap_or(4),
+                .unwrap_or(4)
+                // 每一路解压握着一读一写两个 `STREAM_BUFFER`，也就是 1 MB。核数
+                // 上不封顶的话，一台几十核的机器光缓冲就是几百兆，而解压这件事
+                // 的瓶颈早在磁盘上了，再多路也不会更快。
+                .min(8),
         )
     })
 }

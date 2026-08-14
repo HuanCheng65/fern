@@ -24,10 +24,15 @@ use crate::DataPaths;
 ///
 /// 找不到数据目录就退回一本关着的空账：那时候连缓存目录都无从谈起，而下载
 /// 本身不该因此失败，只是回到每次都重算的老样子。
+///
+/// 用 `resolve()` 而不是 `for_current_user()`：后者不认便携目录，也不认用户
+/// 改过的数据位置。落错了地方不只是文件放错——那本账**在数据目录之外**，
+/// 「清理缓存」清不到它，存储报告也算不到它，于是它一路长到二十万条的上限，
+/// 而便携安装拷走整个文件夹时它留在原地。
 fn ledger() -> Arc<Verified> {
     static LEDGER: OnceLock<Arc<Verified>> = OnceLock::new();
     LEDGER
-        .get_or_init(|| match DataPaths::for_current_user() {
+        .get_or_init(|| match DataPaths::resolve() {
             Ok(paths) => Verified::at(paths.cache.join("verified.json")),
             Err(_) => Arc::new(Verified::default()),
         })
@@ -39,7 +44,8 @@ fn ledger() -> Arc<Verified> {
 /// 「下载很慢」这句报告，光看进度条分不出慢在对账、传输还是一路重试。这一行
 /// 就是为了让下一次「慢」有据可查——它是诊断，写不进去不该影响任何事。
 fn log_sink() -> LogSink {
-    match DataPaths::for_current_user() {
+    // 同 `ledger()`：便携安装的日志该留在它自己的目录里。
+    match DataPaths::resolve() {
         Ok(paths) => Arc::new(move |line: &str| {
             let _ = paths.append_log(line);
         }),

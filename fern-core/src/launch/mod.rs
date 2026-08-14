@@ -1131,6 +1131,9 @@ fn announce_running(
     if running.swap(true, Ordering::SeqCst) {
         return;
     }
+    // 游戏窗口出来了，从这一刻起内存是它的。启动那一路（读元数据、算参数、对
+    // 账）攒下的空闲页现在还回去。
+    crate::reclaim::give_back();
     running::mark_ready(instance_id);
     let _ = events.send(LauncherEvent::LaunchStage {
         instance_id: instance_id.to_owned(),

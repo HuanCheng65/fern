@@ -70,9 +70,13 @@ pub async fn prepare_instance(
     recheck: bool,
     job: &Job,
 ) -> Result<PrepareResult> {
-    prepare(paths, instance_id, recheck, job)
+    let result = prepare(paths, instance_id, recheck, job)
         .await
-        .map(|prepared| prepared.result)
+        .map(|prepared| prepared.result);
+    // 刚下完几百兆，分配器手上攒了一堆空闲页。紧接着起来的是一个要吃几个 G 的
+    // JVM——实测这一趟能交回去 27 MB。
+    crate::reclaim::give_back();
+    result
 }
 
 /// 补全，并把启动那一段要接着用的东西一并带回来。

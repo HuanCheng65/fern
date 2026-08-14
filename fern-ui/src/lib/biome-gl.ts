@@ -369,6 +369,11 @@ export function createBackdropGl(canvas: HTMLCanvasElement): BackdropGl | null {
     },
     dispose() {
       gl.deleteProgram(program)
+      // 删掉程序不等于交还上下文。**一个 WebGL 上下文的代价几乎全在驱动那边**
+      // ——实测（Linux/WebKitGTK）开着背景的 WebProcess 是 344 MB,不建这个
+      // 上下文是 273 MB,而着色器程序本身连一 MB 都不到。所以要把上下文本身
+      // 丢掉,驱动才会把那七十多兆还回去。
+      gl.getExtension('WEBGL_lose_context')?.loseContext()
     },
   }
 }

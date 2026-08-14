@@ -107,6 +107,14 @@ type LauncherEvent =
 const LOG_LIMIT = 800
 
 /**
+ * 超过上限之后一次砍掉这么多，而不是每来一行砍一行。
+ *
+ * `slice(-800)` 每次都新建一个 800 条的数组。整合包启动那阵日志是成千上万行地
+ * 涌进来的，逐行复制等于在最卡的那几秒里额外造几百万次元素拷贝。
+ */
+const LOG_SLACK = 200
+
+/**
  * 作业的标题要给人看，而调用方手里只有 id。
  *
  * 名字在这里查而不是让每个调用点传进来：调用点已经有 id 了，再多要一个名字
@@ -297,7 +305,8 @@ class LaunchStore {
   #onLog(instanceId: string, line: GameLogLine) {
     const lines = this.#logs[instanceId] ?? []
     lines.push({ level: line.level, message: line.message })
-    this.#logs[instanceId] = lines.length > LOG_LIMIT ? lines.slice(-LOG_LIMIT) : lines
+    if (lines.length > LOG_LIMIT + LOG_SLACK) lines.splice(0, lines.length - LOG_LIMIT)
+    this.#logs[instanceId] = lines
   }
 
   #begin(instanceId: string) {
