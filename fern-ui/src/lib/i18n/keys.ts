@@ -68,6 +68,7 @@ export const BACKEND_MESSAGES = [
   'preflight.disabled-dependency',
   'preflight.duplicate',
   'preflight.incompatible',
+  'preflight.low-memory',
   'preflight.missing-dependency',
   'preflight.newer-classes',
   'preflight.no-loader',

@@ -40,7 +40,6 @@
     gc: 'untouched' | 'zgc' | 'g1'
     explanation: ExplanationItem[]
     arguments: string[]
-    tight: boolean
   }
 
   /** 真跑出来的那几个数。尺上的刻度要的是数，不是句子。 */

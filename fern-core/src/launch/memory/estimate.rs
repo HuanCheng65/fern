@@ -131,34 +131,32 @@ fn fill(budget: f64, anchors: &Anchors) -> f64 {
     heap
 }
 
-/// 两条上限（§5.4）。
+/// 上限（§5.4）。
 ///
-/// 静态上限管长期合理性——最多敢要多少；实时约束管当下——现在实际能给多少。
-/// 只看总量的方案会在用户开着浏览器和 IDE 时把系统压进 swap，那种卡顿比堆小
-/// 一点难受得多。
+/// **只有静态的一条。** 曾经这里还有一条「实时约束」，拿此刻可用内存去夹
+/// `-Xmx`，那是量错了东西：`-Xmx` 从进程起来到退出都不变，而「此刻可用」秒级
+/// 在变——采样那一刻的机器状态被固化成了这一局的上限。一台开着浏览器和 IDE
+/// 的 16 G 机器，因此会把一个历史上跑到过 6 G 的整合包发成 2 G。
+///
+/// 时不变的参数只用时不变的量去定：总内存、锚点、历史实测。而「机器此刻腾不
+/// 出这么多」是个当下的判断，它属于启动前的预检查（见 `launch::preflight`）
+/// ——那里说得出口，也让用户能去关掉点别的；在这里它只能变成一次无声的降配，
+/// 而把堆调小并不能让一台只剩 3 G 的机器跑得动。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bounds {
     pub floor_mb: u32,
     pub static_cap_mb: u32,
-    pub live_cap_mb: u32,
     pub hard_cap_mb: u32,
-    /// 实时约束已经压到地板以下：这台机器此刻腾不出该给的量。
-    pub tight: bool,
 }
 
-pub fn bounds(anchors: &Anchors, machine: &Machine, ceiling_mb: u32, zgc: bool) -> Bounds {
+pub fn bounds(anchors: &Anchors, ceiling_mb: u32) -> Bounds {
     let floor_mb = gigabytes_to_mb(anchors.min);
-    let reserve_mb = gigabytes_to_mb(reserve_gb(machine.graphics, zgc));
-    let live_cap_mb = machine.available_mb().saturating_sub(reserve_mb);
-    let hard_cap_mb = ceiling_mb.min(live_cap_mb);
     Bounds {
         floor_mb,
         static_cap_mb: ceiling_mb,
-        live_cap_mb,
-        // 地板高于实时约束时仍按地板给：低于它游戏根本起不来，给一个起不来的
-        // 数不叫保守，叫失败。这种情况由 `tight` 说出来，界面提示一次。
-        hard_cap_mb: hard_cap_mb.max(floor_mb),
-        tight: live_cap_mb < floor_mb,
+        // 地板高于上限时仍按地板给：低于它游戏根本起不来，给一个起不来的数
+        // 不叫保守，叫失败。
+        hard_cap_mb: ceiling_mb.max(floor_mb),
     }
 }
 
@@ -172,9 +170,11 @@ pub struct Estimate {
 
 pub fn estimate(workload: &Workload, machine: &Machine, ceiling_mb: u32, zgc: bool) -> Estimate {
     let anchors = anchors(workload);
-    let bounds = bounds(&anchors, machine, ceiling_mb, zgc);
+    let bounds = bounds(&anchors, ceiling_mb);
     let reserve = reserve_gb(machine.graphics, zgc);
-    let budget = f64::from(machine.available_mb()) / 1024.0 - reserve;
+    // 预算按**总内存**算。挡住「机器空就乱发」的是 `fill` 里的 t3，不是可用
+    // 内存——见 `fill` 自己的注释，它到 t3 为止，多出来的预算一个字节也用不掉。
+    let budget = f64::from(machine.total_mb()) / 1024.0 - reserve;
     let filled = gigabytes_to_mb(fill(budget, &anchors));
     Estimate {
         xmx_mb: round_to_step(filled.clamp(bounds.floor_mb, bounds.hard_cap_mb)),
@@ -185,6 +185,11 @@ pub fn estimate(workload: &Workload, machine: &Machine, ceiling_mb: u32, zgc: bo
 
 fn gigabytes_to_mb(value: f64) -> u32 {
     (value.max(0.0) * 1024.0).round() as u32
+}
+
+/// 堆之外那笔账，MB。预检查要拿它和此刻可用内存比，用的必须是同一笔。
+pub fn reserve_mb(graphics: Graphics, zgc: bool) -> u32 {
+    gigabytes_to_mb(reserve_gb(graphics, zgc))
 }
 
 /// 分配值取 256 M 的整数倍。
@@ -234,9 +239,7 @@ mod tests {
 
     /// 这一组是拿设计文档 §2.3 那张社区经验值表当验收标准的。
     ///
-    /// 机器配置取**正在被使用的**那种（16 G 装着系统和浏览器，剩下 8 G），
-    /// 不是刚开机的理想状态：算法本来就是按此刻可用量填的，拿一台空机器去量
-    /// 它，量到的是上限而不是常态。
+    /// 机器按**总内存**取。此刻可用多少不参与分配——那是预检查的事。
     #[test]
     fn a_modern_vanilla_instance_lands_near_the_four_gig_baseline() {
         // 社区经验值：现代原版 4 G。
@@ -285,20 +288,25 @@ mod tests {
         }
     }
 
+    /// 此刻可用内存**不**参与分配。
+    ///
+    /// 这条钉的正是上一版的错：那时候同一台机器、同一个实例，开着浏览器按启动
+    /// 和刚开机按启动会拿到两个不同的堆，而 `-Xmx` 是这一局都不会变的数。挡住
+    /// 「机器空就乱发」的是锚点，不是可用内存。
     #[test]
-    fn what_the_machine_can_spare_right_now_wins_over_what_it_owns() {
-        // 32 G 的机器，但此刻只剩 4 G 可用——分配必须跟着可用量走，否则
-        // 一按启动整个系统开始换页。
+    fn what_the_machine_happens_to_be_doing_does_not_change_the_heap() {
         let busy = estimate(&modded(200), &machine(32, 4), 16384, false);
         let idle = estimate(&modded(200), &machine(32, 28), 16384, false);
-        assert!(busy.xmx_mb < idle.xmx_mb);
-        assert!(busy.xmx_mb <= busy.bounds.live_cap_mb.max(busy.bounds.floor_mb));
+        assert_eq!(busy.xmx_mb, idle.xmx_mb);
     }
 
     #[test]
-    fn the_floor_holds_even_when_the_machine_has_nothing_left() {
-        let cramped = estimate(&modded(200), &machine(4, 1), 4096, false);
-        assert!(cramped.bounds.tight, "this machine really is out of memory");
+    fn the_floor_holds_on_a_machine_too_small_for_the_pack() {
+        // 2 G 的机器装 200 个 Mod：地板已经高过这台机器能给的一切，那就按地板
+        // 发——低于它游戏根本起不来，发一个起不来的数不叫保守。这台机器带不动
+        // 这件事由 preflight 去说。
+        let cramped = estimate(&modded(200), &machine(2, 1), 2048, false);
+        assert!(cramped.bounds.floor_mb > cramped.bounds.static_cap_mb);
         assert_eq!(cramped.xmx_mb, round_to_step(cramped.bounds.floor_mb));
     }
 

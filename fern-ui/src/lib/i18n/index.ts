@@ -70,6 +70,20 @@ export function format(template: string, args: Record<string, string> = {}) {
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => args[name] ?? whole)
 }
 
+/**
+ * `3277` → 「3.2 GB」。
+ *
+ * 整数不带小数点：`8 GB` 比 `8.0 GB` 更像一个结论。与 Rust 那边 `gigabytes()`
+ * 的规矩一致，同一个数在两处显示成同一个样子。
+ */
+function memorySize(megabytes: string): string {
+  const value = Number(megabytes)
+  if (!Number.isFinite(value)) return megabytes
+  const gigabytes = value / 1024
+  const rounded = Math.round(gigabytes)
+  return `${Math.abs(gigabytes - rounded) < 0.05 ? rounded : gigabytes.toFixed(1)} GB`
+}
+
 /** 后端那条 id 对应的一句话。 */
 export function describe(id: string, args: Record<string, string> = {}): Message {
   const message = catalog.backend[id as BackendMessage]
@@ -84,6 +98,10 @@ export function describe(id: string, args: Record<string, string> = {}): Message
     if (resolved[key]) resolved[key] = loaderNames(resolved[key])
   }
   if (resolved.capability) resolved.capability = capabilityNames(resolved.capability)
+  // 以 Mb 结尾的参数是个数，不是一句话。后端只给数，单位怎么写是这一层的事。
+  for (const key of Object.keys(resolved)) {
+    if (key.endsWith('Mb')) resolved[key] = memorySize(resolved[key]!)
+  }
   return {
     title: format(message.title, resolved),
     detail: format(message.detail, resolved),

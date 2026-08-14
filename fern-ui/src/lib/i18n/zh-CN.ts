@@ -199,6 +199,12 @@ const backend = {
       '这个参数从 Java {removedIn} 起被移除，带着它启动虚拟机会直接失败。启动时会自动忽略它；可以在实例设置的额外 JVM 参数中删除。',
   },
 
+  'preflight.low-memory': {
+    title: '可用内存低于这个实例的需求',
+    detail:
+      '这个实例需要约 {neededMb}：游戏堆 {heapMb}，其余供虚拟机与显存使用。系统当前可用 {availableMb}，内存不足会导致卡顿或中途退出，关闭其他程序可释放内存。',
+  },
+
   // 事前兼容规则拦下来的。能自己处理掉的那些不出现在界面上，只有确实无法
   // 启动、需要用户做决定的才在这里说话。
   'preflight.compat.a-headless-java-cannot-open-a-window': {

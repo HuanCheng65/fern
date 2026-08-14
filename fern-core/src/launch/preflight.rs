@@ -70,9 +70,11 @@ pub mod kind {
     pub const NEWER_CLASSES: &str = "newer-classes";
     /// 设置里写着一个这个 Java 已经不认的参数。
     pub const STALE_JVM_ARGUMENT: &str = "stale-jvm-argument";
+    /// 这台机器此刻腾不出这个实例要的内存。
+    pub const LOW_MEMORY: &str = "low-memory";
 
     /// 全部取值。界面那边的文案表按它对齐。
-    pub const ALL: [&str; 10] = [
+    pub const ALL: [&str; 11] = [
         NO_LOADER,
         DUPLICATE,
         WRONG_LOADER,
@@ -83,6 +85,7 @@ pub mod kind {
         WRONG_JAVA,
         NEWER_CLASSES,
         STALE_JVM_ARGUMENT,
+        LOW_MEMORY,
     ];
 }
 
@@ -170,8 +173,60 @@ pub fn check(paths: &DataPaths, profile: &InstanceProfile) -> Vec<Finding> {
             super::memory::physical_memory_bytes(),
         );
         findings.extend(stale_arguments(&effective.jvm_arguments, java));
+        let allocation = super::memory::plan(
+            paths,
+            profile,
+            &scoped.game_directory(profile.id.as_str()),
+            java,
+            effective.max_memory_mb,
+            effective.memory_ceiling_mb,
+            effective.garbage_collector,
+            &effective.jvm_arguments,
+            None,
+        );
+        findings.extend(cramped(&allocation));
     }
     findings
+}
+
+/// 这台机器**此刻**腾不出这个实例要的量。
+///
+/// 这一条是「分配不看此刻可用内存」的另一半（见
+/// [`memory::estimate::Bounds`](super::memory::estimate::Bounds)）。堆按总内存
+/// 定，因为 `-Xmx` 这一局都不会变；而「现在到底够不够」是个当下的判断，它只能
+/// 出现在这里，而且只能说给人听——**把堆调小并不能让一台只剩 3 G 的机器跑得
+/// 动**，能解决问题的只有「关掉点别的」，而那件事只有用户做得到。
+///
+/// 读不到可用内存就什么都不说。macOS 上这个数本来就偏保守（内核压缩器手里那
+/// 部分不算在内），所以这里是 `Warning` 不是 `Blocking`：它是一句提醒，不是
+/// 一个判决。
+fn cramped(allocation: &super::memory::AllocationDecision) -> Option<Finding> {
+    // 用户自己写了 -Xmx 的那种情况 `xmx_mb` 是 0，我们不知道他要多少，也就
+    // 无从判断够不够。
+    if allocation.xmx_mb == 0 {
+        return None;
+    }
+    let machine = super::memory::Machine::probe();
+    // 读不到就什么都不说，不拿 `available_mb()` 的兜底值（总量的一半）去报警。
+    machine.available_bytes?;
+    let available_mb = machine.available_mb();
+    // 堆之外还要跑 JVM 自己、原生库和显存，和分配那边用的是同一笔账。
+    let needed_mb = allocation.xmx_mb
+        + super::memory::estimate::reserve_mb(machine.graphics, allocation.gc.behaves_like_zgc());
+    if available_mb >= needed_mb {
+        return None;
+    }
+    Some(Finding {
+        id: "low-memory".to_owned(),
+        kind: kind::LOW_MEMORY.to_owned(),
+        severity: Severity::Warning,
+        args: args([
+            ("availableMb", available_mb.to_string()),
+            ("neededMb", needed_mb.to_string()),
+            ("heapMb", allocation.xmx_mb.to_string()),
+        ]),
+        action: None,
+    })
 }
 
 /// 设置里那串 JVM 参数里，这个 Java 已经不认的那些。

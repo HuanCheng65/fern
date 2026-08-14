@@ -147,6 +147,25 @@ pub fn arguments(path: GcPath, java_major: u16) -> Vec<String> {
         // 「只设 Xmx 不设 Xms」是同一套哲学——堆保持弹性。
         arguments.push("-XX:MinHeapFreeRatio=25".to_owned());
         arguments.push("-XX:MaxHeapFreeRatio=40".to_owned());
+        // 上面那两条只在一次 GC 结束时才有机会生效，而**不做 GC 就不会有那个
+        // 时刻**：玩家切出去挂机的时候堆里没有分配，也就没有回收，于是那两个
+        // 比例一直等不到自己该起作用的一刻，内存就那么占着。实测 4 G 堆撑到
+        // 1.5 G 再全丢掉，闲置两分钟 RSS 一个字节都没还；加上这一行之后一分钟
+        // 内落到 351 MB（JEP 346 设计的正是这一对）。
+        //
+        // 它不会打扰游戏：触发条件是「距上一次 GC 已经超过这个间隔」，而游戏
+        // 跑着的时候 young GC 几秒一次，这个条件永远不成立。实测真触发时的停顿
+        // 是 1–5 ms，比游戏本来就有的 young GC（13–40 ms）还短一截。
+        //
+        // 60 秒而不是更短：挂机和切出去都是分钟级的场景，而每次触发都是一次
+        // 唤醒，笔记本上没必要每 15 秒醒一回。
+        arguments.push("-XX:G1PeriodicGCInterval=60000".to_owned());
+        // 不设 `G1PeriodicGCSystemLoadThreshold`：它的语义是「系统负载低于阈值
+        // 才回收」，那是给服务器合租场景准备的。我们要的恰好相反——玩家切出去
+        // 开浏览器、剪视频的时候机器正忙，而那正是最该把内存交回去的时刻。
+        //
+        // 也不碰 `G1PeriodicGCInvokesConcurrent`：它默认为 true，周期回收走并发
+        // 周期；设成 false 会变成 Full GC，秒级 STW，在客户端上是灾难。
     }
     if path != GcPath::Untouched && java_major >= 24 {
         // 对象头从 12/16 字节压到 8，堆里省下的是实打实的。24 起可用。
@@ -238,6 +257,50 @@ mod tests {
             zgc_supported: false,
         };
         assert_eq!(choose(Era::Modern, true, 21, old_windows, &[]), GcPath::G1);
+    }
+
+    /// Java 8 上给不认识的 `-XX:` 参数，JVM 直接拒绝启动——不是忽略，是
+    /// 「Could not create the Java Virtual Machine」，游戏一次都起不来。而 G1
+    /// 这条路径上 Java 8 的用户正是最多的那批（1.12.2 那些整合包）。
+    #[test]
+    fn the_shrink_flags_never_reach_a_jvm_that_would_refuse_them() {
+        const NEEDS_TWELVE: [&str; 3] = [
+            "-XX:MinHeapFreeRatio",
+            "-XX:MaxHeapFreeRatio",
+            "-XX:G1PeriodicGCInterval",
+        ];
+        for java in [8, 11] {
+            let arguments = arguments(GcPath::G1, java);
+            for flag in NEEDS_TWELVE {
+                assert!(
+                    !arguments.iter().any(|argument| argument.starts_with(flag)),
+                    "Java {java} 认不得 {flag}，给了它就起不来"
+                );
+            }
+        }
+        let modern = arguments(GcPath::G1, 17);
+        for flag in NEEDS_TWELVE {
+            assert!(
+                modern.iter().any(|argument| argument.starts_with(flag)),
+                "{flag} 在 Java 17 上该给"
+            );
+        }
+    }
+
+    /// 周期回收必须走并发周期。设成 false 会变成 Full GC——秒级 STW，在游戏里
+    /// 就是卡死。默认已经是 true，所以正确的做法是**一个字都不提它**。
+    #[test]
+    fn the_periodic_collection_is_never_turned_into_a_full_gc() {
+        for java in [12, 17, 21, 25] {
+            for path in [GcPath::G1, GcPath::Zgc] {
+                assert!(
+                    !arguments(path, java)
+                        .iter()
+                        .any(|argument| argument.contains("G1PeriodicGCInvokesConcurrent")),
+                    "别碰这个开关，默认的 true 才是对的"
+                );
+            }
+        }
     }
 
     #[test]

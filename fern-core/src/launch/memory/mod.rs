@@ -91,8 +91,6 @@ pub struct AllocationDecision {
     pub explanation: Vec<ExplanationItem>,
     /// 要加到命令行上的参数，按顺序。
     pub arguments: Vec<String>,
-    /// 这台机器此刻腾不出该给的量，只能按地板发。界面提示一次，不阻塞启动。
-    pub tight: bool,
 }
 
 /// 算一次分配要知道的全部东西。全部是值，不做任何 IO——IO 在 `plan()` 里。
@@ -145,7 +143,7 @@ pub fn resolve(request: &Request<'_>) -> AllocationDecision {
     let static_estimate =
         estimate::estimate(&request.workload, &request.machine, request.ceiling_mb, zgc);
 
-    let (xmx_mb, source, mut explanation) = if jvm_args::heap_is_pinned(request.existing) {
+    let (xmx_mb, source, explanation) = if jvm_args::heap_is_pinned(request.existing) {
         // 用户自己写了 -Xmx。不注入，也不假装我们决定了什么。
         (
             0,
@@ -166,6 +164,9 @@ pub fn resolve(request: &Request<'_>) -> AllocationDecision {
         .history
         .and_then(|window| adaptive::learn(window, zgc))
     {
+        // 实测值只受用户那条线和地板约束。它的全部意义就是「这个包在这台机器
+        // 上真的用到过这么多，而且跑完了」——再拿一个此刻的读数去否决它，等于
+        // 把学到的东西扔掉。
         let bounds = static_estimate.bounds;
         let value = learned
             .xmx_mb
@@ -180,16 +181,13 @@ pub fn resolve(request: &Request<'_>) -> AllocationDecision {
         )];
         explanation.push(item(Topic::History, adjustment_text(&learned)));
         if value != learned.xmx_mb {
-            explanation.push(item(Topic::Limit, limit_text(&static_estimate, value)));
+            explanation.push(item(Topic::Limit, limit_text(&static_estimate)));
         }
         (value, AllocationSource::Adaptive, explanation)
     } else {
         let mut explanation = basis_of(&request.workload);
         if static_estimate.xmx_mb >= static_estimate.bounds.hard_cap_mb {
-            explanation.push(item(
-                Topic::Limit,
-                limit_text(&static_estimate, static_estimate.xmx_mb),
-            ));
+            explanation.push(item(Topic::Limit, limit_text(&static_estimate)));
         }
         (
             static_estimate.xmx_mb,
@@ -197,16 +195,6 @@ pub fn resolve(request: &Request<'_>) -> AllocationDecision {
             explanation,
         )
     };
-
-    if static_estimate.bounds.tight && source != AllocationSource::UserJvmArgs {
-        explanation.push(item(
-            Topic::Limit,
-            format!(
-                "此刻可用内存只有 {}，已经按最低需求发放",
-                gigabytes(request.machine.available_mb())
-            ),
-        ));
-    }
 
     let mut arguments = Vec::new();
     if source != AllocationSource::UserJvmArgs {
@@ -227,7 +215,6 @@ pub fn resolve(request: &Request<'_>) -> AllocationDecision {
         gc,
         explanation,
         arguments,
-        tight: static_estimate.bounds.tight,
     }
 }
 
@@ -265,15 +252,8 @@ fn adjustment_text(learned: &adaptive::Learned) -> String {
     }
 }
 
-fn limit_text(estimate: &estimate::Estimate, value: u32) -> String {
-    if estimate.bounds.live_cap_mb < estimate.bounds.static_cap_mb {
-        format!(
-            "受此刻可用内存约束，最多 {}",
-            gigabytes(estimate.bounds.live_cap_mb.max(value))
-        )
-    } else {
-        format!("受上限 {} 约束", gigabytes(estimate.bounds.static_cap_mb))
-    }
+fn limit_text(estimate: &estimate::Estimate) -> String {
+    format!("受上限 {} 约束", gigabytes(estimate.bounds.static_cap_mb))
 }
 
 /// MB 变成一句人话。整数不带小数点——`8 GB` 比 `8.0 GB` 更像一个决定。
