@@ -32,6 +32,7 @@
     type Env,
     type RGB,
   } from 'fern-kit/ui/biome'
+  import { clampAccent } from 'fern-kit/ui/accent'
   import { renderBiome, supportsBiomeWorker } from '../lib/biome-client'
   import { scopeRoot } from 'fern-kit/scope'
   import { createBackdropGl, layerOf, type BackdropGl, type GlLayer } from '../lib/biome-gl'
@@ -84,8 +85,14 @@
   // 写在挂着 .fern-dark 的那个元素上。写 :root 不生效，原因见 fern-kit/src/scope.ts。
   const root = scopeRoot
 
-  /** 色板写进 token 根，界面其余部分全部向它取色。 */
-  function setPalette(palette: RGB[]) {
+  /**
+   * 色板写进 token 根，界面其余部分全部向它取色。
+   *
+   * 最后一格是强调色，先夹进可读带（fern-kit/ui/accent.ts）：深色群系和深夜
+   * 交出来的是一块泥色。夹在插值之后，过渡途中的每一帧也都在带里。
+   */
+  function setPalette(raw: RGB[]) {
+    const palette = [...raw.slice(0, 4), clampAccent(raw[4]!)]
     palette.forEach((c, i) =>
       root().style.setProperty(`--c${i}`, `rgb(${c.map(Math.round).join(',')})`),
     )

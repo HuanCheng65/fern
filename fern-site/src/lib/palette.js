@@ -1,3 +1,4 @@
+import { clampAccent } from 'fern-kit/ui/accent';
 import { BIOMES, paletteOf, resolve, stopsOf } from 'fern-kit/ui/biome';
 
 /**
@@ -15,7 +16,9 @@ function stopsFor(scene) {
   return paletteOf(stopsOf(r.bk), r.env, r.tMax);
 }
 
-function varsOf(palette) {
+function varsOf(raw) {
+  // 强调色和产品一样先夹进可读带（见 Backdrop 的 setPalette）。
+  const palette = [...raw.slice(0, 4), clampAccent(raw[4])];
   const rgb = (c) => `rgb(${c.map(Math.round).join(',')})`;
   const [cr, cg, cb] = palette[4];
   const luminance = (0.2126 * cr + 0.7152 * cg + 0.0722 * cb) / 255;
