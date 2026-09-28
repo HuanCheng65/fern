@@ -162,6 +162,7 @@
 
   .tabs {
     display: flex;
+    align-self: stretch;
     align-items: center;
     gap: var(--s5);
     min-width: 0;
@@ -185,22 +186,46 @@
     pointer-events: auto;
   }
 
-  /* 第二级重量：比场景词小一档，状态语言照抄顶栏。 */
+  /*
+   * 第二级重量，状态语言照抄顶栏。
+   *
+   * 选中的那一个压一道实线在这条栏的发丝线上。光靠透明度分不出来——截图里
+   * 六个词看上去一样淡，说不出现在在哪一页。线落在栏的底边上，是这条栏自己的
+   * 边，不是另起一根网页式的下划线。
+   */
   .tabs button {
+    position: relative;
+    align-self: stretch;
     padding: 0;
     color: var(--ink);
-    font-size: var(--t-small);
+    font-size: var(--t-body);
     font-weight: 500;
-    opacity: 0.4;
+    opacity: 0.6;
     transition: opacity var(--t-base) var(--ease);
   }
 
+  /* ::after 已经是最小点击区（elements.css），指示线用 ::before。 */
+  .tabs button::before {
+    content: '';
+    position: absolute;
+    inset: auto 0 0;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--ink);
+    transform: scaleX(0);
+    transition: transform var(--t-base) var(--ease);
+  }
+
   .tabs button:hover {
-    opacity: 0.75;
+    opacity: 0.85;
   }
 
   .tabs button.on {
     opacity: 1;
+  }
+
+  .tabs button.on::before {
+    transform: none;
   }
 
   .body {

@@ -862,7 +862,7 @@
             <div class="code-row">
               <Input mono class="selectable" aria-label="主题码" bind:value={themeCode} spellcheck="false" />
               <Button variant="icon" aria-label="复制" title="复制" onclick={() => void copyCode()}>
-                {#if copied}<Check size={15} />{:else}<Copy size={14} />{/if}
+                {#if copied}<Check size={16} />{:else}<Copy size={16} />{/if}
               </Button>
               <Button variant="ghost" onclick={applyCode}>应用</Button>
             </div>
@@ -1262,7 +1262,7 @@
                   title="打开数据目录"
                   onclick={() => void openDirectory('root')}
                 >
-                  <FolderOpen size={14} strokeWidth={1.8} />
+                  <FolderOpen size={16} strokeWidth={1.8} />
                 </Button>
               </div>
               {#if paths.portable}
@@ -1280,7 +1280,7 @@
                   title="打开游戏目录"
                   onclick={() => void openDirectory('game')}
                 >
-                  <FolderOpen size={14} strokeWidth={1.8} />
+                  <FolderOpen size={16} strokeWidth={1.8} />
                 </Button>
               </div>
               <div class="path-line">
@@ -1293,7 +1293,7 @@
                   title="打开日志目录"
                   onclick={() => void openDirectory('logs')}
                 >
-                  <FolderOpen size={14} strokeWidth={1.8} />
+                  <FolderOpen size={16} strokeWidth={1.8} />
                 </Button>
               </div>
 

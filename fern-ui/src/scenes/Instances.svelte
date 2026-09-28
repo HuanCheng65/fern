@@ -97,9 +97,9 @@
       <h1 class="t-h1">暂无实例</h1>
       <p class="note">创建一个实例之后，它的封面会出现在这里。已经有游戏目录的话，也可以直接添加——官方启动器和 Prism / MultiMC 的都认得。</p>
       <div class="ways">
-        <Button variant="ghost" onclick={oncreate}><Plus size={15} />新建实例</Button>
-        <Button variant="link" onclick={onadopt}>
-          <FolderOpen size={14} strokeWidth={1.8} />添加现有游戏
+        <Button variant="primary" onclick={oncreate}><Plus size={16} />新建实例</Button>
+        <Button onclick={onadopt}>
+          <FolderOpen size={16} strokeWidth={1.8} />添加现有游戏
         </Button>
       </div>
     {/if}
@@ -124,13 +124,13 @@
       </div>
       <div class="acts">
         <button class="find" onclick={onfind}>
-          <Search size={13} strokeWidth={1.9} />
+          <Search size={16} strokeWidth={1.8} />
           <span>搜索实例</span>
           <kbd>{findKeys}</kbd>
         </button>
-        <Button variant="link" onclick={oncreate}><Plus size={14} />新建实例</Button>
-        <Button variant="link" onclick={onadopt}>
-          <FolderOpen size={14} strokeWidth={1.8} />添加现有游戏
+        <Button onclick={oncreate}><Plus size={16} />新建实例</Button>
+        <Button onclick={onadopt}>
+          <FolderOpen size={16} strokeWidth={1.8} />添加现有游戏
         </Button>
       </div>
     {/snippet}
@@ -171,7 +171,7 @@
   .ways {
     display: flex;
     align-items: center;
-    gap: var(--s4);
+    gap: var(--s2);
   }
 
   .status {
@@ -189,7 +189,7 @@
   .acts {
     display: flex;
     align-items: center;
-    gap: var(--s4);
+    gap: var(--s2);
   }
 
   /* 长得像一格搜索框，做的是「打开面板」——所以它不收键盘输入，也不留光标。 */
@@ -197,18 +197,19 @@
     display: flex;
     align-items: center;
     gap: var(--s2);
-    height: 28px;
+    /* 和旁边两颗按钮并排，所以同高。 */
+    height: var(--control);
     padding: 0 var(--s2) 0 var(--s3);
     border-radius: var(--r1);
-    background: var(--tint-1);
+    background: var(--well);
     box-shadow: inset 0 0 0 1px var(--hairline-2);
-    color: var(--ink-4);
-    font-size: var(--t-micro);
+    color: var(--ink-2);
+    font-size: var(--t-small);
     transition: color var(--t-fast) var(--ease);
   }
 
   .find:hover {
-    color: var(--ink-2);
+    color: var(--ink);
   }
 
   .find span {
@@ -219,14 +220,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 18px;
-    padding: 0 5px;
+    height: 20px;
+    padding: 0 6px;
     border-radius: 5px;
     background: var(--tint-1);
     box-shadow: inset 0 0 0 1px var(--hairline-2);
-    color: var(--ink-4);
+    color: var(--ink-3);
     font-family: var(--mono);
-    font-size: 10px;
+    font-size: var(--t-micro);
   }
 
   .blank {

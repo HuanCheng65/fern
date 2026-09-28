@@ -154,7 +154,7 @@
   <div class="alert error">
     <span>{error}</span>
     <Button variant="icon" aria-label="关闭" onclick={() => ondismiss?.()}>
-      <X size={14} />
+      <X size={16} />
     </Button>
   </div>
 {/if}

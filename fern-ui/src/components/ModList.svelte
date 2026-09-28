@@ -233,19 +233,19 @@
     {#snippet actions()}
       <span class="acts">
         {#if mods.length > 0}
-          <Button variant="link" loading={checking} disabled={busy !== ''} onclick={() => void check()}>
-            <RefreshCw size={13} strokeWidth={1.9} />检查更新
+          <Button loading={checking} disabled={busy !== ''} onclick={() => void check()}>
+            <RefreshCw size={16} strokeWidth={1.8} />检查更新
           </Button>
         {/if}
         <!--
           带着实例跳到补给站，那边的筛选条件会对准它。跨场景跳转必须带参数，
           否则用户到了那边还要自己把版本和加载器再选一遍。
         -->
-        <Button variant="link" onclick={() => nav.enter('supply', '', { forInstance: instanceId })}>
-          <Plus size={13} strokeWidth={2} />添加模组
+        <Button onclick={() => nav.enter('supply', '', { forInstance: instanceId })}>
+          <Plus size={16} strokeWidth={1.9} />添加模组
         </Button>
-        <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'mods' })}>
-          <FolderOpen size={13} strokeWidth={1.9} />模组目录
+        <Button onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'mods' })}>
+          <FolderOpen size={16} strokeWidth={1.8} />模组目录
         </Button>
       </span>
     {/snippet}
@@ -285,7 +285,7 @@
             title="删除"
             disabled={busy !== ''}
             onclick={() => void remove(item)}>
-            <Trash2 size={13} strokeWidth={1.8} />
+            <Trash2 size={16} strokeWidth={1.8} />
           </Button>
         </li>
       {/each}
@@ -311,7 +311,7 @@
 
   .acts {
     display: flex;
-    gap: var(--s4);
+    gap: var(--s2);
   }
 
   .empty {

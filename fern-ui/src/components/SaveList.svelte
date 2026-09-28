@@ -133,8 +133,8 @@
       {#if saves.length > 0}<small class="t-quiet">{saves.length} 个世界</small>{/if}
     {/snippet}
     {#snippet actions()}
-      <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'saves' })}>
-        <FolderOpen size={13} strokeWidth={1.9} />存档目录
+      <Button onclick={() => void invoke('open_instance_directory', { instanceId, sub: 'saves' })}>
+        <FolderOpen size={16} strokeWidth={1.8} />存档目录
       </Button>
     {/snippet}
   </SectionHead>

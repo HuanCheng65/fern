@@ -247,14 +247,14 @@
       {/if}
     </dl>
     <div class="links">
-      <Button variant="link" onclick={() => void invoke('open_instance_directory', { instanceId: instance.id })}>
-        <FolderOpen size={13} strokeWidth={1.9} />游戏目录
+      <Button onclick={() => void invoke('open_instance_directory', { instanceId: instance.id })}>
+        <FolderOpen size={16} strokeWidth={1.8} />游戏目录
       </Button>
-      <Button variant="link" onclick={() => void launch.repair(instance.id)}>
-        <RefreshCw size={13} strokeWidth={1.9} />校验文件
+      <Button onclick={() => void launch.repair(instance.id)}>
+        <RefreshCw size={16} strokeWidth={1.8} />校验文件
       </Button>
-      <Button variant="link" onclick={() => (exporting = true)}>
-        <Share size={13} strokeWidth={1.9} />导出
+      <Button onclick={() => (exporting = true)}>
+        <Share size={16} strokeWidth={1.8} />导出
       </Button>
     </div>
     {#if launch.error}
@@ -282,8 +282,8 @@
     />
     <!-- 按钮站哪是这块布局的事，所以位置写在容器上，而不是塞给按钮。 -->
     <div class="logs">
-      <Button variant="link" onclick={() => void invoke('open_logs_directory')}>
-        <FolderOpen size={13} strokeWidth={1.9} />日志目录
+      <Button onclick={() => void invoke('open_logs_directory')}>
+        <FolderOpen size={16} strokeWidth={1.8} />日志目录
       </Button>
     </div>
   {/if}
@@ -409,7 +409,8 @@
 
   .links {
     display: flex;
-    gap: var(--s4);
+    flex-wrap: wrap;
+    gap: var(--s2);
     margin-top: var(--s5);
   }
 

@@ -72,12 +72,12 @@
     padding: var(--s1) 0;
     color: var(--ink);
     font-size: var(--t-small);
-    opacity: 0.4;
+    opacity: 0.6;
     transition: opacity var(--t-fast) var(--ease);
   }
 
   nav button:hover {
-    opacity: 0.75;
+    opacity: 0.85;
   }
 
   nav button.on {

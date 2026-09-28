@@ -38,7 +38,8 @@
 </script>
 
 <div class="card">
-  <button class="face" onclick={() => onopen?.()} title="打开 {name}">
+  <!-- 不写 title：原生提示框是一块系统灰，会直接盖在封面上。 -->
+  <button class="face" onclick={() => onopen?.()} aria-label="打开 {name}">
     <Cover seed={cover} {hour} quality={0.55} />
   </button>
 
@@ -46,11 +47,10 @@
     <button
       class="go"
       aria-label="启动 {name}"
-      title="启动"
       disabled={busy}
       onclick={() => onlaunch()}
     >
-      <Play size={14} fill="currentColor" strokeWidth={0} />
+      <Play size={16} fill="currentColor" strokeWidth={0} />
     </button>
   {/if}
 
@@ -110,8 +110,8 @@
     right: var(--s2);
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: rgba(10, 14, 16, 0.6);
     color: #f3f6f6;
@@ -153,7 +153,7 @@
   }
 
   .text small {
-    color: var(--ink-4);
-    font-size: var(--t-micro);
+    color: var(--ink-3);
+    font-size: var(--t-small);
   }
 </style>

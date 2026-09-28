@@ -262,7 +262,8 @@
     color: var(--ink);
     font-size: var(--t-body);
     font-weight: 500;
-    opacity: 0.4;
+    /* 未选中也得读得出来：0.4 压在渐变上量出来只有 3 : 1。 */
+    opacity: 0.6;
     transition:
       opacity var(--t-base) var(--ease),
       filter var(--t-base) var(--ease),
@@ -270,7 +271,7 @@
   }
 
   .scene:hover {
-    opacity: 0.75;
+    opacity: 0.85;
   }
 
   .scene.on {

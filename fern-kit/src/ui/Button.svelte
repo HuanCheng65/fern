@@ -26,7 +26,10 @@
   import { host } from '../host.svelte'
 
   interface Props extends HTMLButtonAttributes {
-    /** 重量。default 是最轻的那档实体按钮，link 只有一个词。 */
+    /**
+     * 重量。default 是最轻的那档实体按钮：有一块淡底，工具栏上的动作用它。
+     * link 只有一个词，只该出现在一句话里。
+     */
     variant?: 'default' | 'primary' | 'ghost' | 'icon' | 'link'
     /**
      * 语气。
@@ -184,7 +187,13 @@
     font-family: var(--sans);
     font-size: var(--t-body);
     font-weight: 500;
-    color: var(--ink-2);
+    color: var(--ink);
+    /*
+     * 默认的那一档有一块面。以前它是透明的，悬停才出底——得先把指针移上去才
+     * 知道这里能点，工具栏上的动作因此都退成了一行小字链接。其余变体各自把
+     * 底色收回去。
+     */
+    background: var(--tint-2);
     white-space: nowrap;
     transition:
       background var(--t-fast) var(--ease),
@@ -195,7 +204,7 @@
 
   .btn:hover {
     color: var(--ink);
-    background: var(--tint-1);
+    background: var(--tint-3);
   }
 
   .btn:active {
@@ -318,20 +327,29 @@
   }
 
   .btn--ghost {
+    color: var(--ink-2);
+    background: none;
     box-shadow: inset 0 0 0 1px var(--hairline);
   }
 
   .btn--ghost:hover {
+    background: var(--tint-1);
     box-shadow: inset 0 0 0 1px var(--tint-3);
   }
 
-  /* 只有一个图标的按钮：顶栏、关闭、加号。 */
+  /*
+   * 只有一个图标的按钮：顶栏、关闭、加号。
+   *
+   * 36 而不是 30：它没有字来撑面积，一个 14px 的图标放在 30px 的框里，看上去
+   * 就是一个可有可无的小记号。图标配 16。
+   */
   .btn--icon {
     min-height: 0;
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
     padding: 0;
-    color: var(--ink-3);
+    color: var(--ink-2);
+    background: none;
     border-radius: var(--r1);
   }
 
@@ -349,6 +367,7 @@
     --btn-gap: var(--s1);
     font-size: var(--t-small);
     color: var(--accent);
+    background: none;
   }
 
   .btn--link:hover {

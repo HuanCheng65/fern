@@ -130,12 +130,12 @@
     color: var(--ink);
     font-size: var(--t-small);
     text-align: left;
-    opacity: 0.4;
+    opacity: 0.6;
     transition: opacity var(--t-fast) var(--ease);
   }
 
   .item:hover {
-    opacity: 0.75;
+    opacity: 0.85;
   }
 
   .item.on {
