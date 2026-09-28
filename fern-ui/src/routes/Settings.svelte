@@ -2085,7 +2085,7 @@
     inset: 0;
     z-index: 5;
     padding: calc(var(--top) + var(--s2)) var(--pad-x) 0;
-    background: var(--panel);
+    background: var(--sheet);
     -webkit-backdrop-filter: blur(26px) saturate(1.3);
     backdrop-filter: blur(26px) saturate(1.3);
   }
@@ -2133,7 +2133,7 @@
   .swatch.on {
     box-shadow:
       inset 0 0 0 1px rgba(0, 0, 0, 0.2),
-      0 0 0 2px var(--panel),
+      0 0 0 2px var(--sheet),
       0 0 0 3.5px var(--ink);
   }
 
