@@ -20,6 +20,7 @@
   import Stage from '../layouts/Stage.svelte'
   import Detail from '../layouts/Detail.svelte'
   import PeerCard from 'fern-kit/parts/PeerCard.svelte'
+  import { salutation } from '../lib/greeting'
   import { DEFAULT_NAME, isConnected, session } from '../lib/pearl-session.svelte'
   import { PATH_LABEL, PUNCH_STAGE_LABEL, type PathState } from '../lib/pearl-types'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -45,19 +46,7 @@
    * 问候跟着钟点走。只取一次：这一屏的停留时间是秒级的，不值得一个定时器。
    * 名字是自己起的才念出来——对着默认的「玩家」寒暄会显得像机器。
    */
-  const hour = new Date().getHours()
-  const greeting =
-    hour < 5
-      ? '夜深了'
-      : hour < 11
-        ? '早上好'
-        : hour < 14
-          ? '中午好'
-          : hour < 18
-            ? '下午好'
-            : hour < 23
-              ? '晚上好'
-              : '夜深了'
+  const greeting = salutation(new Date().getHours())
 
   async function copy(text: string, what: string) {
     try {

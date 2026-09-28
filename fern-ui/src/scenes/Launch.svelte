@@ -28,6 +28,7 @@
   import { accounts, launchIdentity, originOf, switchAction } from '../lib/accounts.svelte'
   import { instances } from '../lib/instances.svelte'
   import { aside, fraction, jobs } from '../lib/jobs.svelte'
+  import { salutation } from '../lib/greeting'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
   import { preflight } from '../lib/preflight.svelte'
@@ -84,14 +85,13 @@
    * 问候语跟着真实时间走，和封面的环境种子同一个信号。
    *
    * 每分钟对一次表：启动器可以整夜开着，跨过午夜还说「下午好」比不打招呼更糟。
-   * 不写「夜深了」那种——那是在劝人做什么，文案规范里明确不做这件事。
    */
   let hour = $state(new Date().getHours())
   $effect(() => {
     const timer = setInterval(() => (hour = new Date().getHours()), 60_000)
     return () => clearInterval(timer)
   })
-  const salutation = $derived(hour >= 18 || hour < 5 ? '晚上好' : hour >= 12 ? '下午好' : '早上好')
+  const greeting = $derived(salutation(hour))
 
   /**
    * 换一个身份走命令面板，和上面点实例名呼出切换器是同一个东西。
@@ -122,7 +122,7 @@
             origin: ambiguous ? originOf(identity) : undefined,
           }
         : undefined}
-      {salutation}
+      salutation={greeting}
       noAccount={!identity && !accounts.loading}
       {phase}
       jobLabel={job ? job.stage || job.title : undefined}
