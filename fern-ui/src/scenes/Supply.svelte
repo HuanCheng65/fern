@@ -13,6 +13,7 @@
    * 再返回，接着看，不用重新往下滑一遍。
    */
   import { Check, Search } from 'lucide-svelte'
+  import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
   import Select from 'fern-kit/ui/Select.svelte'
   import SupplyCard from 'fern-kit/parts/SupplyCard.svelte'
@@ -20,6 +21,7 @@
   import Loading from '../components/Loading.svelte'
   import Browse from '../layouts/Browse.svelte'
   import ProjectDetailView from './ProjectDetail.svelte'
+  import { ui } from '../lib/i18n'
   import { instances } from '../lib/instances.svelte'
   import { expand, riseIn } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
@@ -199,7 +201,15 @@
 
     <div class="results" bind:this={results}>
       {#if supply.error}
-        <div class="alert">{supply.error}</div>
+        <!-- 原文是 reqwest 的报错，对玩家没用、对排查有用，所以收起来而不是删掉。 -->
+        <div class="failed">
+          <p>{ui.supply.failed}</p>
+          <Button loading={supply.searching} onclick={() => supply.refresh()}>{ui.supply.retry}</Button>
+          <details>
+            <summary class="t-quiet">{ui.supply.detail}</summary>
+            <div class="alert">{supply.error}</div>
+          </details>
+        </div>
       {:else if supply.searching && supply.hits.length === 0}
         <Loading note="搜索中" fill />
       {:else if supply.hits.length === 0}
@@ -367,6 +377,27 @@
 
   .hint {
     margin: 0;
+  }
+
+  .failed {
+    display: grid;
+    justify-items: start;
+    gap: var(--s3);
+    padding-top: var(--s2);
+  }
+
+  .failed p {
+    margin: 0;
+  }
+
+  .failed details {
+    display: grid;
+    gap: var(--s2);
+  }
+
+  .failed summary {
+    cursor: pointer;
+    font-size: var(--t-small);
   }
 
   .foot {
