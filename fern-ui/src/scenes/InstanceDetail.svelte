@@ -57,8 +57,8 @@
   const isCurrent = $derived(instances.current?.id === instance.id)
   /** 这个实例上现在有什么在跑。走开再回来它还在——作业不属于这个组件。 */
   const job = $derived(jobs.forSubject(instance.id))
-  /** 这段日志是不是这个实例的。别的实例的崩溃栈显示在这里比不显示更糟。 */
-  const ownLog = $derived(launch.instanceId === instance.id ? launch.log : [])
+  /** 只取这个实例自己的日志。别的实例的崩溃栈显示在这里比不显示更糟。 */
+  const ownLog = $derived(launch.logOf(instance.id))
   /** 这个实例现在跑到哪一段了。undefined 是没在跑。 */
   const phase = $derived(launch.phaseOf(instance.id))
 
@@ -275,8 +275,8 @@
     />
   {:else}
     <LogLines
-      lines={ownLog}
-      emptyNote={launch.instanceId === instance.id
+      lines={ownLog ?? []}
+      emptyNote={ownLog
         ? '本次运行尚无输出。'
         : '这个实例本次会话还没有运行过。'}
     />

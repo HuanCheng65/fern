@@ -166,6 +166,16 @@ class LaunchStore {
 
   /** 正在看的那个实例的日志。 */
   log = $derived(this.#logs[this.instanceId] ?? [])
+
+  /**
+   * 某一个实例这次会话的日志。undefined 是它这次会话还没启动过。
+   *
+   * 实例详情页要用这个而不是 `log`：`instanceId` 跟着最后一次启动走，同时开着
+   * 两个实例时，先启动的那个就读不到自己的日志了。
+   */
+  logOf(instanceId: string): GameLogLine[] | undefined {
+    return this.#logs[instanceId]
+  }
   /** 有没有游戏在跑。面板和岛用它，具体到某一个实例要用 `phaseOf`。 */
   anyRunning = $derived(Object.values(this.games).some((game) => game.phase !== 'preparing'))
   running = $derived(Object.keys(this.games).length > 0)
