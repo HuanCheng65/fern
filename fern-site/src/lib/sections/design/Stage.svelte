@@ -72,7 +72,7 @@
     actions: [{ label: '查看详情', run: () => {} }]
   };
 
-  /* 同一个人的四个实例。钟点各不相同，所以四张封面的色温、四句问候也各不相同。 */
+  /* 同一个人的四个实例。钟点各不相同，所以四块背景的色温、四句问候也各不相同；封面是实例的脸，不跟着钟点变。 */
   const INSTANCES = [
     { name: '主世界', hours: 320, hour: 9, detail: 'Minecraft 1.20.1 · Fabric' },
     { name: '机械动力', hours: 260, hour: 18, detail: 'Minecraft 1.20.1 · Fabric · 96 个模组' },
