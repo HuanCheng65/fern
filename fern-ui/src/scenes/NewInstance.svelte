@@ -26,13 +26,14 @@
   import { open } from '@tauri-apps/plugin-dialog'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import { onMount } from 'svelte'
-  import { Check, ChevronDown, Package, Plus } from 'lucide-svelte'
+  import { Check, ChevronDown, FolderOpen, Package, Plus, Search } from 'lucide-svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
   import Loading from '../components/Loading.svelte'
   import { EXISTING, instances, inTauri, type LoaderOption } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
+  import { supply } from '../lib/supply.svelte'
   import { expand, pop, unfold } from '../lib/motion'
   import { ancient, generations, newestRelease, newestSnapshot, snapshots } from '../lib/versions'
   import Button from 'fern-kit/ui/Button.svelte'
@@ -303,11 +304,35 @@
       extras = extras.filter((kind) => list.some((option) => option.kind === kind))
     })
   })
+
+  /** 去补给站挑一个整合包。那边装整合包就是建实例，不必再回到这里。 */
+  function browsePacks() {
+    supply.kind = 'modpack'
+    supply.refresh()
+    nav.go('supply')
+  }
 </script>
 
 <section class="create" class:dropping>
+  <!--
+    三条建实例的路并列在标题旁：从版本建是这一屏本身，另外两条是整合包和已有
+    的游戏目录。整合包对模组玩家是**最常见**的那条，所以它不能是页脚的一行小字。
+  -->
   <header>
     <h1 class="t-h1">{TITLE}</h1>
+    {#if !pack}
+      <div class="ways">
+        <Button onclick={() => void pickPack()}>
+          <Package size={16} strokeWidth={1.8} />从整合包文件创建
+        </Button>
+        <Button onclick={browsePacks}>
+          <Search size={16} strokeWidth={1.8} />浏览整合包
+        </Button>
+        <Button onclick={() => nav.enter('instances', EXISTING)}>
+          <FolderOpen size={16} strokeWidth={1.8} />添加现有游戏
+        </Button>
+      </div>
+    {/if}
   </header>
 
   {#if pack}
@@ -572,17 +597,7 @@
   {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
 
   <footer>
-    <!-- 次要出口。层级明确降级：这一屏的主操作只有「创建」一个。 -->
-    <div class="ways">
-      {#if !pack}
-        <Button variant="link" onclick={() => void pickPack()}>从整合包创建</Button>
-        <span class="t-quiet">·</span>
-        <Button variant="link" onclick={() => nav.enter('instances', EXISTING)}>
-          添加现有游戏
-        </Button>
-      {/if}
-    </div>
-    <Button onclick={() => nav.up()}>取消</Button>
+    <Button class="cancel" onclick={() => nav.up()}>取消</Button>
     {#if pack}
       <Button variant="primary" loading={busy} onclick={() => void importPack()}>
         {#snippet icon()}<Plus size={15} />{/snippet}
@@ -613,6 +628,11 @@
   }
 
   header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s3);
     padding-bottom: var(--s5);
   }
 
@@ -853,8 +873,13 @@
 
   .ways {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--s2);
-    flex: 1;
+  }
+
+  /* 取消和主按钮靠右站在一起。 */
+  footer :global(.cancel) {
+    margin-left: auto;
   }
 </style>

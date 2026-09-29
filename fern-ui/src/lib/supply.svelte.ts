@@ -216,9 +216,14 @@ class SupplyStore {
     this.loaded = false
   }
 
-  /** 第一次进补给站：有当前实例就按它筛。 */
+  /**
+   * 第一次进补给站：有当前实例就按它筛。
+   *
+   * 看整合包时不筛——整合包建的是新实例，自带版本和加载器，拿当前实例去框它
+   * 只会把合适的包全藏掉。那时也不算「已经默认过」，换回模组时照常对准。
+   */
   aimAtCurrent() {
-    if (this.#defaulted) return
+    if (this.#defaulted || this.kind === 'modpack') return
     this.#defaulted = true
     if (instances.current) this.aimAt(instances.current.id)
   }
