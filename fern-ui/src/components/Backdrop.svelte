@@ -50,10 +50,25 @@
     parallax?: boolean
     /** 焦点不在舞台上时（面板展开等），背景下沉。 */
     away?: boolean
+    /**
+     * 这一屏的主角是内容而不是画（启动页以外的场景）：背景压暗一档，不模糊。
+     *
+     * 列表和文字压在一片会变亮的场上，白天最亮的那几档底色上次要文字只有
+     * 3.6 : 1。压暗约 0.37 之后是 5 : 1 以上。不模糊是因为这一层常驻，逐帧的
+     * 滤镜在 WebKitGTK 上是看得见的开销。
+     */
+    quiet?: boolean
   }
 
-  let { seed, hours = 0, biome, particles = true, parallax = true, away = false }: Props =
-    $props()
+  let {
+    seed,
+    hours = 0,
+    biome,
+    particles = true,
+    parallax = true,
+    away = false,
+    quiet = false,
+  }: Props = $props()
 
   let base = $state<HTMLCanvasElement>()
   let phaseCanvas = $state<HTMLCanvasElement>()
@@ -411,7 +426,7 @@
   })
 </script>
 
-<div id="bg" class:away>
+<div id="bg" class:away class:quiet>
   <div id="bgMove" bind:this={move}>
     <div id="bgDrift">
       {#if !asleep}
@@ -543,6 +558,10 @@
     opacity: 0;
     transition: opacity var(--pan);
     pointer-events: none;
+  }
+
+  #bg.quiet #veil {
+    opacity: 0.6;
   }
 
   #bg.away #veil {

@@ -168,7 +168,7 @@
 <svelte:head><title>Fern</title></svelte:head>
 
 <div class="shell" class:rounded={selfRounded() && !frame.maximized}>
-  <Backdrop {seed} {biome} particles={theme.particles} parallax={theme.parallax} {away} />
+  <Backdrop {seed} {biome} quiet={nav.scene !== 'launch'} particles={theme.particles} parallax={theme.parallax} {away} />
 
   {#if !ready}
     <!--
