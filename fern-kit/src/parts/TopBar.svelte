@@ -71,9 +71,27 @@
     onsettings,
   }: Props = $props()
 
-  let buttons: HTMLButtonElement[] = $state([])
-  /** 面包屑要长在当前那个词上，位置从真实布局量——字宽随字体和语言变。 */
-  let anchor = $state({ left: 0, right: 0 })
+  let header = $state<HTMLElement>()
+  let brand = $state<HTMLElement>()
+  let nav = $state<HTMLElement>()
+  /**
+   * 名字最多能占多宽：从品牌右边到五个词的左边。从真实布局量——字宽随字体
+   * 和语言变，窗口宽度也在变。量不到时给一个保守值。
+   */
+  let room = $state(220)
+  $effect(() => {
+    if (!header) return
+    const measure = () => {
+      if (!brand || !nav) return
+      const navLeft = nav.offsetLeft - nav.offsetWidth / 2
+      const brandRight = brand.offsetLeft + brand.offsetWidth
+      room = Math.max(0, navLeft - brandRight - 48)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(header)
+    measure()
+    return () => observer.disconnect()
+  })
 
   const inDetail = $derived(depth > 0 && detailLabel !== '')
 
@@ -88,11 +106,6 @@
   $effect(() => {
     if (detailLabel) held = detailLabel
   })
-  const index = $derived(Math.max(0, scenes.findIndex((item) => item.id === scene)))
-  $effect(() => {
-    const el = buttons[index]
-    if (el) anchor = { left: el.offsetLeft, right: el.offsetLeft + el.offsetWidth }
-  })
 </script>
 
 <!--
@@ -100,37 +113,42 @@
   拖拽，所以不用逐块开洞。
 -->
 <header
+  bind:this={header}
   class="top"
   class:mac={mac}
   class:glass={scrolled}
   data-tauri-drag-region="deep"
 >
-  <button class="brand" onclick={() => onbrand?.()} title="回到启动">
+  <button class="brand" bind:this={brand} onclick={() => onbrand?.()} aria-label="回到启动">
     <Mark size={18} />
     <!-- 字标：小写、650、字距 −1.5%（见 docs/fern-brand-system.html 04）。 -->
     <span class="word">fern</span>
   </button>
 
-  <nav aria-label="主导航" class:deep={inDetail}>
-    <!--
-      返回箭头长在当前场景词的左边，不替换整条导航——移动端那种「返回 + 标题」
-      会让全局导航消失，用户失去空间感。
-    -->
-    <button
-      class="back"
-      class:on={inDetail}
-      style:left={`${anchor.left - 22}px`}
-      tabindex={inDetail ? 0 : -1}
-      aria-hidden={!inDetail}
-      aria-label="返回"
-      onclick={() => onback?.()}
-    >
-      <ArrowLeft size={14} strokeWidth={2} />
-    </button>
+  <!--
+    推入详情时，返回和名字长在左段，品牌的右边。整条是一颗返回按钮：箭头加
+    名字，点哪里都是回去。
 
-    {#each scenes as item, i (item.id)}
+    它曾经长在当前场景词的两侧，名字压在其余四个词上面，于是那四个词只能退到
+    9% 再模糊掉——进详情等于主导航消失了。放到左段之后五个词原样不动，当前那
+    个照常亮着，说的正是「你在这个场景里面」。
+  -->
+  <button
+    class="trail"
+    class:on={inDetail}
+    style:max-width={`${room}px`}
+    tabindex={inDetail ? 0 : -1}
+    aria-hidden={!inDetail}
+    aria-label={inDetail ? `返回，当前：${held}` : undefined}
+    onclick={() => onback?.()}
+  >
+    <ArrowLeft size={16} strokeWidth={2} />
+    <span>{held}</span>
+  </button>
+
+  <nav aria-label="主导航" bind:this={nav}>
+    {#each scenes as item (item.id)}
       <button
-        bind:this={buttons[i]}
         class="scene"
         class:on={scene === item.id}
         aria-current={scene === item.id ? 'page' : undefined}
@@ -140,14 +158,6 @@
       </button>
     {/each}
 
-    <!--
-      详情名从当前场景词右侧揭示。五个词的位置死死钉住不重排——位置稳定比
-      对称重要，任何时候场景词都在肌肉记忆的位置上。名字压在已经退到 14%
-      的词上面，所以它不吃指针事件，底下的词照样可点、可悬停恢复。
-    -->
-    <span class="crumb" class:on={inDetail} style:left={`${anchor.right + 14}px`}>
-      {held}
-    </span>
   </nav>
 
   <div class="right">
@@ -266,7 +276,6 @@
     opacity: 0.6;
     transition:
       opacity var(--t-base) var(--ease),
-      filter var(--t-base) var(--ease),
       color var(--t-base) var(--ease);
   }
 
@@ -279,65 +288,47 @@
   }
 
   /*
-   * 推入详情：其余四个词位置一个像素不动，只是退到景深之外。
-   *
-   * 只压暗不够——实例名压在它们上面是叠字，两层都是清晰的文字就会互相争。
-   * 加一点失焦才真的分出前后：模糊过的那层不再被当成文字读，名字才立得住。
-   */
-  nav.deep .scene:not(.on) {
-    opacity: 0.09;
-    filter: blur(2.5px);
-  }
-
-  /* 悬停就回到焦点上——横跳能力保留，它们仍然可点。 */
-  nav.deep .scene:not(.on):hover {
-    opacity: 0.7;
-    filter: none;
-  }
-
-  .back {
-    position: absolute;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    color: var(--ink);
-    opacity: 0;
-    transform: translateX(4px);
-    pointer-events: none;
-    transition:
-      opacity var(--t-base) var(--ease),
-      transform var(--t-base) var(--ease);
-  }
-
-  .back.on {
-    opacity: 0.7;
-    transform: none;
-    pointer-events: auto;
-  }
-
-  .back.on:hover {
-    opacity: 1;
-  }
-
-  /*
    * 从左向右揭示，和详情页内容进场走同一条时长——顶栏的形态变化和内容的纵深
-   * 变化要被感知为一件事。
+   * 变化要被感知为一件事。收起时名字留在原地被卷回去（见 `held`）。
    */
-  .crumb {
-    position: absolute;
-    max-width: 26ch;
-    overflow: hidden;
+  .trail {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    height: 32px;
+    margin-left: var(--s5);
+    padding: 0 var(--s2);
+    border-radius: var(--r1);
     color: var(--ink);
     font-size: var(--t-body);
+    font-weight: 500;
     white-space: nowrap;
-    text-overflow: ellipsis;
     pointer-events: none;
     clip-path: inset(0 100% 0 0);
-    transition: clip-path var(--t-slow) var(--ease);
+    transition:
+      clip-path var(--t-slow) var(--ease),
+      background var(--t-fast) var(--ease);
   }
 
-  .crumb.on {
+  .trail.on {
+    pointer-events: auto;
     clip-path: inset(0 0 0 0);
+  }
+
+  .trail:hover {
+    background: var(--tint-1);
+  }
+
+  .trail :global(svg) {
+    flex: none;
+    color: var(--ink-2);
+  }
+
+  .trail span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .right {
