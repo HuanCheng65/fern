@@ -6,9 +6,13 @@
  * 这条最常见的路径每次都要从头开始。
  *
  * **筛选条件和「装到哪」是两件事。** 前者决定列表里有什么，后者决定装到哪个
- * 实例去。上一版把两者合成了一个——按当前实例过滤——于是想看看有什么就得先
- * 有一个实例，而且看不到任何「这个模组还没适配你这个版本」的事实。现在装不
- * 装得上是版本列表上的**标注**。
+ * 实例去。更早的一版把两者焊死——只能按当前实例过滤——于是想看看有什么就得
+ * 先有一个实例。后来拆开了，又矫枉过正：来给某个实例装东西的人（多数人）要
+ * 面对一屏装不上的结果。
+ *
+ * 现在两者兼得：有当前实例时，第一次进来默认按它筛，并摆出一枚可以一键去掉
+ * 的「适用于」条件；没有实例就不筛。手动改了版本或加载器，那枚条件就不再成
+ * 立，随之消失。
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -184,6 +188,13 @@ class SupplyStore {
 
   /** 装到哪个实例。是浏览的上下文，不是筛选条件。 */
   targetId = $state('')
+  /**
+   * 现在的版本和加载器是不是照着某个实例定的。是的话结果区顶上有一枚「适用于」。
+   * 只有 `aimAt` 会把它设上；手动改条件、点掉那枚，都会把它清掉。
+   */
+  aimed = $state(false)
+  /** 这次会话里是否已经替用户默认对准过一次。只做一次：去掉之后不该再回来。 */
+  #defaulted = false
   target = $derived(
     instances.list.find((item) => item.id === this.targetId) ?? instances.current,
   )
@@ -200,7 +211,24 @@ class SupplyStore {
     if (!instance) return
     this.gameVersion = instance.gameVersion
     this.loader = loaderTag(instance.loader)
+    this.aimed = true
+    this.#defaulted = true
     this.loaded = false
+  }
+
+  /** 第一次进补给站：有当前实例就按它筛。 */
+  aimAtCurrent() {
+    if (this.#defaulted) return
+    this.#defaulted = true
+    if (instances.current) this.aimAt(instances.current.id)
+  }
+
+  /** 去掉「适用于」：回到不限版本、不限加载器。装到哪个实例不变。 */
+  unaim() {
+    this.aimed = false
+    this.gameVersion = ''
+    this.loader = ''
+    this.refresh()
   }
 
   async search(append = false) {

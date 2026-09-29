@@ -12,7 +12,7 @@
    * 结果无限滚动，翻到哪、搜的什么、筛选了什么全在 store 里——点进一个项目
    * 再返回，接着看，不用重新往下滑一遍。
    */
-  import { Check, Search } from 'lucide-svelte'
+  import { Check, Search, X } from 'lucide-svelte'
   import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
   import Select from 'fern-kit/ui/Select.svelte'
@@ -67,7 +67,10 @@
   // 否则用户随后改了「安装到」，下一次求值又会被它盖回去。
   $effect(() => {
     const aim = nav.params.forInstance
-    if (!aim) return
+    if (!aim) {
+      supply.aimAtCurrent()
+      return
+    }
     supply.aimAt(aim)
     nav.consume('forInstance')
   })
@@ -149,6 +152,7 @@
         scrolls
         onchange={(value) => {
           supply.gameVersion = value
+          supply.aimed = false
           supply.refresh()
         }}
       >
@@ -193,6 +197,7 @@
           anyLabel="全部"
           onchange={(value) => {
             supply.loader = value
+            supply.aimed = false
             supply.refresh()
           }}
         />
@@ -200,6 +205,18 @@
     {/snippet}
 
     <div class="results" bind:this={results}>
+      <!--
+        「适用于」摆在所有状态之上，包括「没有匹配的结果」——那正是最需要一键
+        放宽的时候。
+      -->
+      {#if supply.aimed && supply.target}
+        <div class="scope">
+          <button class="chip" onclick={() => supply.unaim()} aria-label="去掉条件：适用于 {supply.target.name}">
+            适用于：{supply.target.name}
+            <X size={14} strokeWidth={2} />
+          </button>
+        </div>
+      {/if}
       {#if supply.error}
         <!-- 原文是 reqwest 的报错，对玩家没用、对排查有用，所以收起来而不是删掉。 -->
         <div class="failed">
@@ -284,6 +301,32 @@
   .field :global(.input) {
     min-height: 44px;
     padding-left: calc(var(--s3) * 2 + 16px);
+  }
+
+  .scope {
+    display: flex;
+    padding-bottom: var(--s3);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 30px;
+    padding: 0 var(--s2) 0 var(--s3);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--ink);
+    font-size: var(--t-small);
+    transition: background var(--t-fast) var(--ease);
+  }
+
+  .chip :global(svg) {
+    color: var(--ink-2);
+  }
+
+  .chip:hover {
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
   }
 
   .results-head {
