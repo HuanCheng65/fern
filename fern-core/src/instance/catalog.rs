@@ -592,6 +592,9 @@ mod tests {
         let second = create_instance(&paths, "余烬谷", "1.21.1").expect("create second");
         assert_ne!(first.id, second.id);
         assert_ne!(first.cover.identity, second.cover.identity);
+        // 建出来就记下了群系，而且第二个避开了第一个的（见 `cover.rs`）。
+        assert!(first.cover.biome.is_some());
+        assert_ne!(first.cover.biome, second.cover.biome);
 
         // 名字本身照常保留，转写的只是不再发生。
         assert_eq!(first.name, "余烬谷");
