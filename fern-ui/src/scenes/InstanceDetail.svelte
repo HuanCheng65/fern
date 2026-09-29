@@ -16,6 +16,7 @@
   import Cover from 'fern-kit/ui/Cover.svelte'
   import Detail from '../layouts/Detail.svelte'
   import ExportInstance from '../components/ExportInstance.svelte'
+  import InstanceGlance from '../components/InstanceGlance.svelte'
   import InstanceSettings from '../components/InstanceSettings.svelte'
   import LogLines from '../components/LogLines.svelte'
   import ModList from '../components/ModList.svelte'
@@ -203,6 +204,11 @@
         {/each}
       </section>
     {/if}
+    <InstanceGlance
+      instanceId={instance.id}
+      mods={instance.loader !== 'Vanilla'}
+      ontab={(id) => nav.setTab(id)}
+    />
     <!--
       一个实例是一摞层，摆出来的就是那一摞：游戏本体在最上面，加载器叠在它
       上面，顺序即合并顺序。此前这里只写着「Fabric」，而装模组之前要知道的
@@ -375,8 +381,8 @@
 
   .layers dd {
     margin: 0;
-    color: var(--ink-4);
-    font-size: var(--t-micro);
+    color: var(--ink-3);
+    font-size: var(--t-small);
   }
 
   .grid {
@@ -391,8 +397,8 @@
   }
 
   .grid dt {
-    color: var(--ink-4);
-    font-size: var(--t-micro);
+    color: var(--ink-3);
+    font-size: var(--t-small);
   }
 
   .grid dd {
