@@ -256,3 +256,24 @@
   min-width: 0;
   min-height: 0;
 }
+
+/*
+ * 浮层（菜单、下拉）从触发器那条边长出来，收回去也回到那条边。
+ *
+ * 它们用的是原生 popover，一直在文档里、靠 showPopover 显隐，Svelte 的过渡
+ * 管不到，所以动画写在这里。`--pop-shift` 由定位代码按向上还是向下展开给出。
+ * 时长跟着 --t-fast 走，关掉动效时塌成 1ms。
+ */
+@keyframes fern-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--pop-shift, -4px)) scale(0.97);
+  }
+}
+
+@keyframes fern-popover-out {
+  to {
+    opacity: 0;
+    transform: translateY(var(--pop-shift, -4px)) scale(0.97);
+  }
+}

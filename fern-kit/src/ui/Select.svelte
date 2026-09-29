@@ -33,6 +33,7 @@
    */
   import { ChevronDown } from 'lucide-svelte'
   import { tick, type Snippet } from 'svelte'
+  import { DURATION, scaled } from '../motion'
   import Field from './Field.svelte'
   import type { ControlProps } from './field'
 
@@ -107,6 +108,9 @@
     const left = Math.max(EDGE, Math.min(box.left, window.innerWidth - EDGE - width))
     list.style.left = `${left}px`
     list.style.maxHeight = `${Math.min(wanted, (up ? above : below) - 4)}px`
+    // 从贴着触发器的那条边长出来。
+    list.style.transformOrigin = up ? 'bottom center' : 'top center'
+    list.style.setProperty('--pop-shift', up ? '4px' : '-4px')
     if (up) {
       list.style.top = ''
       list.style.bottom = `${window.innerHeight - box.top + gap}px`
@@ -121,15 +125,36 @@
     open = true
     active = Math.max(0, options.findIndex((option) => option.value === value))
     await tick()
-    list?.showPopover?.()
+    // 正在收的时候又被打开：接着显示，不重来一次 showPopover（已经开着的
+    // popover 再调一次会抛错）。
+    clearTimeout(leaveTimer)
+    const reopening = leaving
+    leaving = false
+    if (!reopening) list?.showPopover?.()
     place()
     list?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
   }
 
+  /**
+   * 收起：先放一段离场，再真的藏起来。popover 一藏就没了，动画只能排在它前面。
+   * 关掉动效时直接藏。
+   */
+  let leaving = $state(false)
+  let leaveTimer = 0
   function hide() {
     if (!open) return
     open = false
-    list?.hidePopover?.()
+    const ms = scaled(DURATION.fast)
+    if (ms === 0) {
+      list?.hidePopover?.()
+      return
+    }
+    leaving = true
+    clearTimeout(leaveTimer)
+    leaveTimer = window.setTimeout(() => {
+      leaving = false
+      list?.hidePopover?.()
+    }, ms)
   }
 
   function pick(next: T) {
@@ -256,6 +281,7 @@
     id={listboxId}
     class="list"
     class:shown={open}
+    class:leaving
     popover="manual"
     role="listbox"
     aria-label={label ?? ariaLabel}
@@ -392,8 +418,17 @@
   }
 
   /* 不认 popover 的 webview 上，:popover-open 不会生效，靠这个类兜底。 */
-  .list:not(.shown) {
+  .list:not(.shown):not(.leaving) {
     display: none;
+  }
+
+  .list.shown {
+    animation: fern-popover-in var(--t-fast) var(--ease);
+  }
+
+  .list.leaving {
+    pointer-events: none;
+    animation: fern-popover-out var(--t-fast) ease-in forwards;
   }
 
   .option {

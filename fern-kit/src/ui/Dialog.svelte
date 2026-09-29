@@ -10,7 +10,8 @@
    * 一张样式表。
    */
   import { fade, scale } from 'svelte/transition'
-  import { host } from '../host.svelte'
+  import { cubicOut } from 'svelte/easing'
+  import { DURATION, scaled } from '../motion'
 
   interface Props {
     label: string
@@ -23,14 +24,13 @@
   }
 
   let { label, width = '440px', align = 'center', onclose, children }: Props = $props()
-
-  const ms = (base: number) => Math.round(base * host.motionScale)
 </script>
 
 <div
   class="scrim"
   role="presentation"
-  transition:fade={{ duration: ms(160) }}
+  in:fade={{ duration: scaled(DURATION.base) }}
+  out:fade={{ duration: scaled(DURATION.fast) }}
   onclick={onclose}
 ></div>
 
@@ -41,7 +41,8 @@
     role="dialog"
     aria-modal="true"
     aria-label={label}
-    transition:scale={{ duration: ms(200), start: 0.97, opacity: 0 }}
+    in:scale={{ duration: scaled(DURATION.base), start: 0.97, opacity: 0, easing: cubicOut }}
+    out:scale={{ duration: scaled(DURATION.fast), start: 0.98, opacity: 0 }}
   >
     {@render children()}
   </div>
