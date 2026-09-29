@@ -31,6 +31,7 @@
   import { CREATE, EXISTING, ORDERS, instances } from '../lib/instances.svelte'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
+  import { lastPlayedLabel, playTimeLabel } from '../lib/played'
   import { platform } from '../lib/frame.svelte'
   import { expand, riseIn } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
@@ -73,6 +74,25 @@
   $effect(() => {
     if (nav.detail && !creating && !adopting && !instances.loading && !viewing) nav.up()
   })
+
+  /**
+   * 卡片第三行：哪天玩过、玩了多久。
+   *
+   * 时长是 0 就不说。那多半不是「没玩」，而是时长统计出现之前玩的——写成
+   * 「不足 1 分钟」就成了一个错的具体数字。
+   */
+  function metaOf(item: { lastPlayed?: number; playSeconds: number }): string {
+    const when = lastPlayedLabel(item.lastPlayed)
+    return item.playSeconds > 0 ? `${when} · ${playTimeLabel(item.playSeconds)}` : when
+  }
+
+  /** 卡片上名字旁那一枚。只说正在发生的事，没在跑就没有。 */
+  function statusOf(id: string): string | undefined {
+    const phase = launch.phaseOf(id)
+    if (phase === 'running') return '运行中'
+    if (phase !== undefined) return '正在启动'
+    return undefined
+  }
 </script>
 
 {#if creating}
@@ -143,6 +163,8 @@
             cover={item.cover}
             biome={item.coverBiome}
             detail={`${item.gameVersion} · ${item.loader}`}
+            meta={metaOf(item)}
+            status={statusOf(item.id)}
             current={instances.current?.id === item.id}
             busy={launch.occupied(item.id)}
             onopen={() => nav.open(item.id)}

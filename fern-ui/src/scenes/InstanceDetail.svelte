@@ -27,6 +27,7 @@
   import { instanceStorage } from '../lib/storage'
   import { launch } from '../lib/launch.svelte'
   import { nav } from '../lib/nav.svelte'
+  import { lastPlayedLabel, playTimeLabel } from '../lib/played'
   import { prefs } from '../lib/prefs.svelte'
   import { preflight } from '../lib/preflight.svelte'
   import { perform } from '../lib/advice'
@@ -90,8 +91,8 @@
 
   const played = $derived(
     instance.lastPlayed === undefined
-      ? '尚未玩过'
-      : `上次游玩 ${new Date(instance.lastPlayed * 1000).toLocaleDateString('zh-CN')}`,
+      ? lastPlayedLabel(undefined)
+      : `上次游玩 ${lastPlayedLabel(instance.lastPlayed)}`,
   )
 
   /**
@@ -114,19 +115,7 @@
     })
   })
 
-  /**
-   * 累计玩了多久。
-   *
-   * 只有一个单位：小时以上不再说分钟——「玩了 37 小时」是这句话要传达的全部，
-   * 后面跟一个分钟数并不会让它更准确。不足一小时才说分钟，否则一场刚玩完的
-   * 会话会显示成 0。
-   */
-  const playedFor = $derived.by(() => {
-    const seconds = instance.playSeconds
-    if (seconds < 60) return '不足 1 分钟'
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`
-    return `${Math.floor(seconds / 3600)} 小时`
-  })
+  const playedFor = $derived(playTimeLabel(instance.playSeconds))
 </script>
 
 <Detail {tabs} {tab} ontab={(id) => nav.setTab(id)}>

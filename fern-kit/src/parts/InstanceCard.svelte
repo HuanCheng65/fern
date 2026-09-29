@@ -2,8 +2,9 @@
   /**
    * 实例列表里的一张卡。
    *
-   * 封面是这张卡的主视觉，名字和版本在下面，启动键悬停才出现——「我就想立刻玩
-   * 这个」的那条路径，不必先进详情。
+   * 封面是这张卡的主视觉，名字和版本在下面，再下面一行是玩家真正拿来分辨实例
+   * 的东西：上次什么时候玩的、玩了多久。启动键一直在封面角上——「我就想立刻玩
+   * 这个」的那条路径，不必先进详情，也不必先把指针移上去才知道能点。
    *
    * 当前实例标在名字旁边，不标在封面上。上一版在封面外沿描了一圈强调色，一道硬边
    * 贴着一张生成的图，读起来是「这张图被选中了」；而要说的是「这个实例是当前的」，
@@ -21,6 +22,10 @@
     biome?: BiomeKey
     /** 名字下面那一行，例如 `1.20.1 · Fabric`。 */
     detail?: string
+    /** 再下面一行，例如 `今天 · 37 小时`。 */
+    meta?: string
+    /** 名字旁的状态，例如「运行中」。有它时不再标「当前」以外的东西。 */
+    status?: string
     /** 是不是当前实例。 */
     current?: boolean
     /** 采样用的钟点，见 Cover。产品里不给——封面不跟着时间变。 */
@@ -31,8 +36,19 @@
     onlaunch?: () => void
   }
 
-  let { name, cover, biome, detail, hour, current = false, busy = false, onopen, onlaunch }: Props =
-    $props()
+  let {
+    name,
+    cover,
+    biome,
+    detail,
+    meta,
+    status,
+    hour,
+    current = false,
+    busy = false,
+    onopen,
+    onlaunch,
+  }: Props = $props()
 </script>
 
 <div class="card">
@@ -56,8 +72,10 @@
     <span class="line">
       <strong>{name}</strong>
       {#if current}<span class="now">当前</span>{/if}
+      {#if status}<span class="status">{status}</span>{/if}
     </span>
     {#if detail}<small class="t-mono">{detail}</small>{/if}
+    {#if meta}<small class="meta">{meta}</small>{/if}
   </button>
 </div>
 
@@ -113,19 +131,18 @@
     border-radius: 50%;
     background: rgba(10, 14, 16, 0.6);
     color: #f3f6f6;
-    opacity: 0;
-    transform: scale(0.9);
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     transition:
-      opacity var(--t-fast) var(--ease),
+      background var(--t-fast) var(--ease),
+      color var(--t-fast) var(--ease),
       transform var(--t-fast) var(--ease);
   }
 
-  .card:hover .go,
-  .go:focus-visible {
-    opacity: 1;
-    transform: none;
+  .go:hover {
+    background: var(--accent);
+    color: var(--accent-ink);
+    transform: scale(1.06);
   }
 
   .go:disabled {
@@ -153,5 +170,15 @@
   .text small {
     color: var(--ink-3);
     font-size: var(--t-small);
+  }
+
+  .status {
+    flex: none;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--tint-2);
+    color: var(--ink);
+    font-size: var(--t-micro);
+    line-height: 1.7;
   }
 </style>
