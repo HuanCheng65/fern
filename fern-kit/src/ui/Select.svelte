@@ -301,7 +301,13 @@
         tabindex="-1"
         aria-selected={option.value === value}
         data-active={index === active}
-        onclick={() => pick(option.value)}
+        onclick={(event) => {
+        // 控件常被包在 <label> 里（「排序」那种）。label 的默认动作是把这次点击
+        // 转给它的第一个控件——也就是触发按钮，而那一刻菜单已经收起，于是又被
+        // 打开。选项的点击到此为止。
+        event.preventDefault()
+        pick(option.value)
+      }}
         onmousemove={() => (active = index)}
       >
         <span class="text">{option.label}</span>
