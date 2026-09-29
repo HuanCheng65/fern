@@ -6,11 +6,16 @@
 //!
 //! 所以群系在建实例的那一刻挑定：挑现有实例用得最少的那一个，并列时照旧用哈
 //! 希的结果，于是第一个实例和以前长得一模一样。挑定之后写进 `instance.json`，
-//! 以后删掉别的实例也不会让它变脸。没记群系的老实例照旧按哈希算，外观不变。
+//! 以后删掉别的实例也不会让它变脸。
+//!
+//! 这条规则出现之前建的实例没有记群系，会在第一次列出时按创建先后补一次
+//! （`settle`）：最早的那个照旧拿哈希的结果，后面撞了的才换。补完写回磁盘，
+//! 之后同样不再变。
 //!
 //! 群系表和哈希是 `biome.ts` 的复刻，两边必须一致；测试会读那个文件核对。
 
 use super::{CoverSeed, InstanceProfile};
+use crate::DataPaths;
 
 /// 与 `biome.ts` 里 `BIOMES` 的键同序——哈希取模的结果依赖这个顺序。
 pub(crate) const BIOMES: [&str; 8] = [
@@ -34,11 +39,7 @@ fn implied(identity: &str) -> usize {
 
 /// 这张封面实际是哪个群系。
 fn biome_of(cover: &CoverSeed) -> usize {
-    cover
-        .biome
-        .as_deref()
-        .and_then(|name| BIOMES.iter().position(|key| *key == name))
-        .unwrap_or_else(|| implied(&cover.identity))
+    biome_known(cover).unwrap_or_else(|| implied(&cover.identity))
 }
 
 /// 给一个新实例挑群系：现有实例里用得最少的那个。
@@ -56,6 +57,56 @@ pub(crate) fn pick(existing: &[InstanceProfile], identity: &str) -> String {
         .find(|&index| used[index] == fewest)
         .unwrap_or(start);
     BIOMES[chosen].to_owned()
+}
+
+/// 给没记群系的实例补上，按创建先后，返回补了哪几个（下标）。
+///
+/// 已经记了的先算进去；没记的按顺序一个个挑，每挑一个就算进去，所以顺序决定
+/// 谁保住原来的脸。答不出创建时刻的排在最后，同一时刻按 id，结果是确定的。
+fn backfill(profiles: &mut [InstanceProfile]) -> Vec<usize> {
+    let mut missing: Vec<usize> = (0..profiles.len())
+        .filter(|&index| biome_known(&profiles[index].cover).is_none())
+        .collect();
+    missing.sort_by(|&left, &right| {
+        let key = |index: usize| {
+            let profile = &profiles[index];
+            (
+                profile.created_at.is_none(),
+                profile.created_at,
+                profile.id.as_str().to_owned(),
+            )
+        };
+        key(left).cmp(&key(right))
+    });
+    let mut settled: Vec<InstanceProfile> = profiles
+        .iter()
+        .filter(|profile| biome_known(&profile.cover).is_some())
+        .cloned()
+        .collect();
+    for &index in &missing {
+        let biome = pick(&settled, &profiles[index].cover.identity);
+        profiles[index].cover.biome = Some(biome);
+        settled.push(profiles[index].clone());
+    }
+    missing
+}
+
+/// 记下的群系是不是一个认得的名字。认不出的和没记一样处理。
+fn biome_known(cover: &CoverSeed) -> Option<usize> {
+    cover
+        .biome
+        .as_deref()
+        .and_then(|name| BIOMES.iter().position(|key| *key == name))
+}
+
+/// 列出实例之后调用：给老实例补上群系并写回。
+///
+/// 写不进去就算了——这次照样用补出来的群系显示，下次列出时会得到同一个结果
+/// 再试一次。封面配色不值得让列表出错。
+pub fn settle(paths: &DataPaths, profiles: &mut [InstanceProfile]) {
+    for index in backfill(profiles) {
+        let _ = super::catalog::write_instance_profile(paths, &profiles[index]);
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +174,25 @@ mod tests {
         // 第九个只能重复，但不会挑一个已经用了两次的。
         existing.push(profile("extra", Some("ocean")));
         assert_ne!(pick(&existing, "ninth"), "ocean");
+    }
+
+    #[test]
+    fn old_instances_are_settled_oldest_first() {
+        // 两个老实例按哈希都是下界：先建的那个保住，后建的换掉。
+        let mut older = profile("k3v9q2mz", None);
+        older.created_at = Some(100);
+        let mut newer = profile("sky", None);
+        newer.cover.identity = "空岛".to_owned();
+        newer.created_at = Some(200);
+        let mut profiles = vec![newer, older];
+
+        let changed = backfill(&mut profiles);
+        assert_eq!(changed, vec![1, 0]);
+        assert_eq!(profiles[1].cover.biome.as_deref(), Some("nether"));
+        assert_eq!(profiles[0].cover.biome.as_deref(), Some("end"));
+
+        // 补过一次就不再动。
+        assert!(backfill(&mut profiles).is_empty());
     }
 
     #[test]

@@ -395,8 +395,15 @@ fn paths() -> Result<fern_core::DataPaths, String> {
 
 #[tauri::command]
 async fn list_instances() -> Result<Vec<fern_core::InstanceProfile>, String> {
-    off_thread(|| fern_core::list_instances(&paths()?).map_err(|error| format!("{error:#}")))
-        .await?
+    off_thread(|| {
+        let paths = paths()?;
+        let mut profiles =
+            fern_core::list_instances(&paths).map_err(|error| format!("{error:#}"))?;
+        // 老实例第一次被列出时补上封面群系，之后就固定了。
+        fern_core::settle_instance_covers(&paths, &mut profiles);
+        Ok(profiles)
+    })
+    .await?
 }
 
 /// 能建实例的所有版本。

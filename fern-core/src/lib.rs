@@ -85,6 +85,7 @@ pub use instance::catalog::{
     remove_component as remove_instance_component, rename_instance, set_instance_account,
     touch_played, update_instance_settings, write_instance_profile,
 };
+pub use instance::cover::settle as settle_instance_covers;
 pub use instance::discover::{Discovery, inspect as inspect_directory};
 pub use instance::external::{
     ExternalScan, ExternalVersion, SkippedVersion, attach as attach_external_version,
