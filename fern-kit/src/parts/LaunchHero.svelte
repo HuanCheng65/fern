@@ -15,7 +15,7 @@
    * 拿到的全是纯值：谁在跑、跑到哪一段、有没有问题，都是产品那边折出来的。作业、
    * 预检查、账户体系不进这里。
    */
-  import { unfold } from '../motion'
+  import { unfold, appear } from '../motion'
   import { ChevronDown, Play, Plus, X } from 'lucide-svelte'
   import AccountFace from './AccountFace.svelte'
   import Button from '../ui/Button.svelte'
@@ -98,13 +98,17 @@
   </button>
 {/if}
 
+<!--
+  换了实例，背景在交叉淡化，名字和版本也跟着换——key 在它们上面，新的那一行
+  淡入，而不是和背景脱节地一下跳过去。
+-->
 <button class="name" onclick={() => onswitch?.()} title="切换实例">
-  <span>{name}</span>
+  {#key name}<span in:appear>{name}</span>{/key}
   <ChevronDown size={26} strokeWidth={1.6} />
 </button>
 
 <p class="meta t-mono">
-  {detail}
+  {#key detail}<span in:appear>{detail}</span>{/key}
   <!-- 这一屏把管理欲望引去实例详情，却一直没给出那扇门。就在这里。 -->
   <Button variant="link" onclick={() => onmanage?.()}>管理</Button>
 </p>

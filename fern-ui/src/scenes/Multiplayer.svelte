@@ -18,6 +18,7 @@
    */
   import { Check, Copy, LogOut } from 'lucide-svelte'
   import Stage from '../layouts/Stage.svelte'
+  import { appear } from '../lib/motion'
   import Detail from '../layouts/Detail.svelte'
   import PeerCard from 'fern-kit/parts/PeerCard.svelte'
   import { salutation } from '../lib/greeting'
@@ -96,7 +97,10 @@
   })
 </script>
 
+<!-- 三种状态（没开房、已结束、会话中）换的是整屏，叠在同一格里交接。 -->
+<div class="stack layers">
 {#if session.mode === 'idle'}
+<div class="layer" in:appear out:appear>
   <Stage>
     <p class="greet">{greeting}{session.name !== DEFAULT_NAME ? `，${session.name}` : ''}</p>
     <p class="lede">和朋友进入同一个世界。</p>
@@ -128,7 +132,9 @@
     <!-- 唯一保留的一句说明，写成规格而不是广告：陈述事实，没有形容词。 -->
     <p class="fact">点对点直连 · 数据不经过服务器</p>
   </Stage>
+</div>
 {:else if session.ended}
+<div class="layer" in:appear out:appear>
   <!--
     会话整个结束了——隧道超时、房主关房、后台出错都走到这里。此后不会再有任何
     事件，房间码和成员列表描述的都是不存在的东西，所以整屏换成一句事实加一条
@@ -144,7 +150,9 @@
       <Button variant="ghost" onclick={() => session.leave()}>返回</Button>
     </div>
   </Stage>
+</div>
 {:else}
+<div class="layer" in:appear out:appear>
   <Detail
     tabs={[
       { id: 'members', label: hosting ? '成员' : '连接' },
@@ -290,9 +298,17 @@
       {/if}
     {/if}
   </Detail>
+</div>
 {/if}
+</div>
 
 <style>
+  .layers,
+  .layer {
+    height: 100%;
+    min-height: 0;
+  }
+
   .greet {
     margin: 0;
     font-size: clamp(28px, 8vw, 34px);
