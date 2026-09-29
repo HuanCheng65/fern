@@ -15,6 +15,7 @@
    * 拿到的全是纯值：谁在跑、跑到哪一段、有没有问题，都是产品那边折出来的。作业、
    * 预检查、账户体系不进这里。
    */
+  import { unfold } from '../motion'
   import { ChevronDown, Play, Plus, X } from 'lucide-svelte'
   import AccountFace from './AccountFace.svelte'
   import Button from '../ui/Button.svelte'
@@ -151,7 +152,7 @@
 {/if}
 
 {#if error}
-  <div class="alert error">
+  <div class="alert error" transition:unfold>
     <span>{error}</span>
     <Button variant="icon" aria-label="关闭" onclick={() => ondismiss?.()}>
       <X size={16} />

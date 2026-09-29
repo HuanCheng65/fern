@@ -10,6 +10,7 @@
    * 贴着一张生成的图，读起来是「这张图被选中了」；而要说的是「这个实例是当前的」，
    * 那句话属于名字，不属于画。
    */
+  import { appear } from '../motion'
   import { Play } from 'lucide-svelte'
   import Cover from '../ui/Cover.svelte'
   import type { BiomeKey } from '../ui/biome'
@@ -72,7 +73,7 @@
     <span class="line">
       <strong>{name}</strong>
       {#if current}<span class="now">当前</span>{/if}
-      {#if status}<span class="status">{status}</span>{/if}
+      {#if status}<span class="status" transition:appear>{status}</span>{/if}
     </span>
     {#if detail}<small class="t-mono">{detail}</small>{/if}
     {#if meta}<small class="meta">{meta}</small>{/if}

@@ -14,6 +14,7 @@
    *
    * 一行只做一件最常用的事：**点名字切换到它**。其余的进档案。
    */
+  import { unfold } from '../lib/motion'
   import { Check, ChevronRight, Plus } from 'lucide-svelte'
   import AccountFace from './AccountFace.svelte'
   import { accounts, addableKinds, originOf, type AccountKind } from '../lib/accounts.svelte'
@@ -41,7 +42,7 @@
 
   <ul class="roster">
     {#each accounts.list as account (account.id)}
-      <li class="row" class:on={accounts.active?.id === account.id}>
+      <li class="row" class:on={accounts.active?.id === account.id} transition:unfold>
         <AccountFace {account} size={30} />
 
         <button
@@ -75,7 +76,7 @@
     </Menu>
   </div>
 
-  {#if accounts.error}<div class="alert">{accounts.error}</div>{/if}
+  {#if accounts.error}<div class="alert" transition:unfold>{accounts.error}</div>{/if}
 </div>
 
 <style>

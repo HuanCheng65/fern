@@ -9,6 +9,7 @@
    * 模组要把每个 jar 打开读一遍清单，几百个的实例上要一会儿，所以回来之前写
    * 「正在读取」而不是 0。
    */
+  import { appear } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
   import { dayLabel } from 'fern-kit/parts/snapshots'
   import { listSnapshots, type Snapshot } from '../lib/backup'
@@ -66,8 +67,8 @@
       {#if saves === undefined}
         <span class="value quiet">正在读取</span>
       {:else}
-        <span class="value">{saves.length} 个</span>
-        <span class="note">
+        <span class="value" in:appear>{saves.length} 个</span>
+        <span class="note" in:appear>
           {#if latestSave}
             {latestSave.name}{latestSave.modified ? ` · ${dayLabel(latestSave.modified)}` : ''}
           {:else}
@@ -84,7 +85,7 @@
       {#if modCount === undefined}
         <span class="value quiet">正在读取</span>
       {:else}
-        <span class="value">{modCount} 个</span>
+        <span class="value" in:appear>{modCount} 个</span>
       {/if}
     </button>
   {/if}
@@ -95,8 +96,8 @@
       {#if snapshots === undefined}
         <span class="value quiet">正在读取</span>
       {:else}
-        <span class="value">{snapshots.length} 张</span>
-        <span class="note">
+        <span class="value" in:appear>{snapshots.length} 张</span>
+        <span class="note" in:appear>
           {latestSnapshot ? `最近 ${dayLabel(latestSnapshot.takenAt)}` : '还没有快照'}
         </span>
       {/if}

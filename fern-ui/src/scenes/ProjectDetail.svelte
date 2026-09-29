@@ -13,6 +13,7 @@
    * 解析器加一层消毒，要么自己写一个——把网络来的字符串变成 DOM 是 XSS 面，
    * 不值得为一段介绍开这个口。正文交给「在 Modrinth 打开」。
    */
+  import { unfold } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowUpRight, Download, Plus } from 'lucide-svelte'
   import Loading from '../components/Loading.svelte'
@@ -441,7 +442,7 @@
       </div>
     {/if}
 
-    {#if error}<div class="alert">{error}</div>{/if}
+    {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
   </Detail>
 {/if}
 

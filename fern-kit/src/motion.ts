@@ -16,6 +16,7 @@
  *    了噪音。
  */
 
+import { slide } from 'svelte/transition'
 import { host } from './host.svelte'
 
 /** 乘上「减弱/关闭动效」的档位。关掉时返回 0，过渡自己会退化成瞬时。 */
@@ -77,6 +78,16 @@ export function popover(
     css: (t: number, u: number) =>
       `opacity: ${t}; transform: translateY(${u * shift}px) scale(${0.97 + t * 0.03});`,
   }
+}
+
+/**
+ * 就地撑开、收起一段内容：下拉的版本列表、报错、增减的一行。
+ *
+ * 动的是高度，下面的东西跟着让位——用户看得出这一段是从这里长出来的，而不是
+ * 盖在上面；删掉一行时，下面的行是滑上来的，不是跳上来的。
+ */
+export function unfold(node: Element, { duration = DURATION.base } = {}) {
+  return slide(node, { duration: scaled(duration), easing: easeOut })
 }
 
 /** 和 scale.css 里 `--ease` 同一条：前段快、尾巴长。 */

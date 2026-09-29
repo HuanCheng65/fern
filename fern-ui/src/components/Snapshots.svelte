@@ -12,6 +12,7 @@
    *
    * 所以整行是一个按钮：点进去做决定，列表本身只用来找。
    */
+  import { appear, unfold } from '../lib/motion'
   import { Camera } from 'lucide-svelte'
   import Loading from './Loading.svelte'
   import SnapshotSheet from './SnapshotSheet.svelte'
@@ -142,7 +143,7 @@
   {#if loading}
     <Loading note={ui.snapshots.loading} />
   {:else if snapshots.length === 0}
-    <div class="empty">
+    <div class="empty" in:appear>
       <p class="lead">{ui.snapshots.emptyLead}</p>
       <p class="t-quiet">{ui.snapshots.emptyDetail}</p>
     </div>
@@ -150,7 +151,7 @@
     <SnapshotList {rows} onpick={(row) => (open = byId.get(row.id))} />
   {/if}
 
-  {#if error}<div class="alert">{error}</div>{/if}
+  {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
 </section>
 
 {#if open}

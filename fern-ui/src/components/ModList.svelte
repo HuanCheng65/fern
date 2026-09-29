@@ -15,6 +15,7 @@
    * 更新是问出来的，不是盯出来的：按下「检查更新」才联网，有新版的那几行才多
    * 出一颗按钮。自动检查会让每次打开这一屏都等一次网络，而答案几天才变一次。
    */
+  import { appear, unfold } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
   import { preflight } from '../lib/preflight.svelte'
   import { integrity } from '../lib/integrity.svelte'
@@ -254,11 +255,16 @@
   {#if loading}
     <Loading note="读取模组" />
   {:else if mods.length === 0}
-    <p class="t-quiet empty">尚未安装模组。将 jar 文件拖入窗口即可安装。</p>
+    <p class="t-quiet empty" in:appear>尚未安装模组。将 jar 文件拖入窗口即可安装。</p>
   {:else}
-    <ul class="list">
+    <ul class="list" in:appear>
       {#each mods as item (item.fileName)}
-        <li class="row" class:off={!item.enabled} class:busy={busy === item.fileName}>
+        <li
+          class="row"
+          class:off={!item.enabled}
+          class:busy={busy === item.fileName}
+          transition:unfold
+        >
           <button
             class="toggle"
             role="switch"
@@ -292,7 +298,7 @@
     </ul>
   {/if}
 
-  {#if error}<div class="alert">{error}</div>{/if}
+  {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
 </section>
 
 <style>

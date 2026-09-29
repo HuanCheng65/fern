@@ -11,6 +11,7 @@
    * `account/list/new` 是可寻址的（⌘K 里的「添加账户」就落在这儿），没带上
    * 种类时总得问一次。选错的代价不小，所以两处都写清楚每种是什么。
    */
+  import { unfold } from '../lib/motion'
   import { untrack } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowLeft, ExternalLink } from 'lucide-svelte'
@@ -201,7 +202,7 @@
     {/if}
   {/if}
 
-  {#if accounts.error}<div class="alert">{accounts.error}</div>{/if}
+  {#if accounts.error}<div class="alert" transition:unfold>{accounts.error}</div>{/if}
 </div>
 
 <style>

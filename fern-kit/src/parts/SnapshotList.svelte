@@ -13,6 +13,7 @@
    */
   import { CircleAlert, Pin } from 'lucide-svelte'
   import { byDay, clock, type SnapshotRow } from './snapshots'
+  import { unfold } from '../motion'
 
   interface Props {
     rows: SnapshotRow[]
@@ -30,7 +31,7 @@
     <h3 class="day">{group.label}</h3>
     <ul class="list">
       {#each group.items as item (item.id)}
-        <li>
+        <li transition:unfold>
           <svelte:element
             this={onpick ? 'button' : 'div'}
             class="row"

@@ -11,6 +11,7 @@
    * 封面只在标题旁边放一小张，认得出是哪个实例就够了。这里曾经是一整条横幅，
    * 占掉首屏近四分之一，而它不携带任何信息——这一屏要看的是下面的东西。
    */
+  import { unfold } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
   import { Check, FolderOpen, Play, RefreshCw, Share } from 'lucide-svelte'
   import Cover from 'fern-kit/ui/Cover.svelte'
@@ -251,7 +252,7 @@
       </Button>
     </div>
     {#if launch.error}
-      <div class="alert">{launch.error}</div>
+      <div class="alert" transition:unfold>{launch.error}</div>
     {/if}
   {:else if tab === 'mods'}
     <ModList instanceId={instance.id} />

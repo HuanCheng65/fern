@@ -11,6 +11,7 @@
    * 删他的东西。写出来之后它才是一次知情的选择，而下面那句「恢复之前会自动
    * 拍一张」是它的退路。
    */
+  import { unfold } from '../lib/motion'
   import { untrack } from 'svelte'
   import { Check, X } from 'lucide-svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
@@ -461,7 +462,7 @@
       {/if}
     {/if}
 
-    {#if error}<div class="alert">{error}</div>{/if}
+    {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
   </div>
 
   <footer>

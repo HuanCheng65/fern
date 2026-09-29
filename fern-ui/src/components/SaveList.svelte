@@ -13,6 +13,7 @@
    * 显示的是目录名而不是世界名：目录名是它在磁盘上的真实身份，两个都叫
    * 「新的世界」的存档在列表里长得一模一样反而认不出来。
    */
+  import { appear, unfold } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
   import { save as pickPath } from '@tauri-apps/plugin-dialog'
   import { FolderOpen, Play } from 'lucide-svelte'
@@ -142,11 +143,11 @@
   {#if loading}
     <Loading note="读取存档" />
   {:else if saves.length === 0}
-    <p class="t-quiet empty">还没有存档。进游戏创建一个世界之后会出现在这里。</p>
+    <p class="t-quiet empty" in:appear>还没有存档。进游戏创建一个世界之后会出现在这里。</p>
   {:else}
-    <ul class="list">
+    <ul class="list" in:appear>
       {#each saves as item (item.name)}
-        <li class="row">
+        <li class="row" transition:unfold>
           <span class="name">{item.name}</span>
           <span class="t-mono when">{day(item.modified)}</span>
           <span class="t-mono size">{formatBytes(item.bytes)}</span>
@@ -170,7 +171,7 @@
     </ul>
   {/if}
 
-  {#if error}<div class="alert">{error}</div>{/if}
+  {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
 </section>
 
 {#if removing}

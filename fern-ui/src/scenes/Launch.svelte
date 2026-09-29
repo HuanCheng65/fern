@@ -22,6 +22,7 @@
    * 的 Steve 是完全合法的状态（`roster.rs` 的去重键是 kind + uuid + 皮肤站），
    * 光有名字根本分不开。
    */
+  import { unfold } from '../lib/motion'
   import { palette } from 'fern-kit/parts/palette'
   import LaunchHero from 'fern-kit/parts/LaunchHero.svelte'
   import Stage from '../layouts/Stage.svelte'
@@ -152,7 +153,7 @@
         </Button>
       </div>
       {#if instances.error}
-        <div class="alert error"><span>{instances.error}</span></div>
+        <div class="alert error" transition:unfold><span>{instances.error}</span></div>
       {/if}
   {/if}
 </Stage>

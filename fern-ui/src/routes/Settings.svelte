@@ -43,7 +43,7 @@
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { SETTINGS_SECTIONS } from '../lib/settings-catalog'
   import { ui } from '../lib/i18n'
-  import { depth } from '../lib/motion'
+  import { depth, unfold } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
   import { launch } from '../lib/launch.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
@@ -1179,7 +1179,7 @@
             <Button variant="ghost" onclick={() => void loadRuntimes()}>扫描</Button>
           </SettingRow>
 
-          {#if runtimeError}<div class="alert">{runtimeError}</div>{/if}
+          {#if runtimeError}<div class="alert" transition:unfold>{runtimeError}</div>{/if}
         {:else if section === 'download'}
           <SettingRow id="download/source" found={focused === 'download/source'}>
             {#snippet note()}根据系统区域建议使用 {sourceName[suggestedSource()]}。当前源失败时将自动切换到另一个源。{/snippet}
@@ -1570,8 +1570,8 @@
             </Button>
           </SettingRow>
 
-          {#if pathError}<div class="alert">{pathError}</div>{/if}
-          {#if storageError && storage}<div class="alert">{storageError}</div>{/if}
+          {#if pathError}<div class="alert" transition:unfold>{pathError}</div>{/if}
+          {#if storageError && storage}<div class="alert" transition:unfold>{storageError}</div>{/if}
         {:else}
           <!--
             这一块不走 SettingRow：那一行是「一个名字，一个控件」，而这里没有

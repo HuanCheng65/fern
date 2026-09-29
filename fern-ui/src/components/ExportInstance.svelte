@@ -14,6 +14,7 @@
    * config 摘出去。空分区不出现——一个永远勾不出东西的选项只会让人怀疑
    * 导出坏了。
    */
+  import { unfold } from '../lib/motion'
   import { save } from '@tauri-apps/plugin-dialog'
   import Dialog from 'fern-kit/ui/Dialog.svelte'
   import SegmentedControl from 'fern-kit/ui/SegmentedControl.svelte'
@@ -231,7 +232,7 @@
       </div>
     {/if}
 
-    {#if error}<div class="alert">{error}</div>{/if}
+    {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
   </div>
 
   <footer>

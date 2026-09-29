@@ -20,6 +20,7 @@
    * 就发生的事。
    */
   import { FolderOpen, Plus, Search } from 'lucide-svelte'
+  import { flip } from 'svelte/animate'
   import { palette } from 'fern-kit/parts/palette'
   import Select from 'fern-kit/ui/Select.svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
@@ -33,7 +34,7 @@
   import { nav } from '../lib/nav.svelte'
   import { lastPlayedLabel, playTimeLabel } from '../lib/played'
   import { platform } from '../lib/frame.svelte'
-  import { depth, riseIn } from '../lib/motion'
+  import { depth, riseIn, unfold, DURATION, scaled } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
 
@@ -128,7 +129,7 @@
         </Button>
       </div>
     {/if}
-    {#if instances.error}<div class="alert">{instances.error}</div>{/if}
+    {#if instances.error}<div class="alert" transition:unfold>{instances.error}</div>{/if}
   </section>
 {:else}
   <div class="depth" in:depth={{ sink: nav.sink }} out:depth={{ sink: nav.sink }}>
@@ -163,7 +164,7 @@
 
     <div class="grid">
       {#each instances.ordered as item, index (item.id)}
-        <div in:riseIn={{ index }}>
+        <div in:riseIn={{ index }} animate:flip={{ duration: scaled(DURATION.base) }}>
           <InstanceCard
             name={item.name}
             cover={item.cover}

@@ -22,6 +22,7 @@
    *
    * 目录用系统选择器选，不让用户手打路径。
    */
+  import { unfold } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
   import { open } from '@tauri-apps/plugin-dialog'
   import { FolderOpen } from 'lucide-svelte'
@@ -436,7 +437,7 @@
     {/if}
   {/if}
 
-  {#if error}<div class="alert">{error}</div>{/if}
+  {#if error}<div class="alert" transition:unfold>{error}</div>{/if}
 </div>
 
 <style>

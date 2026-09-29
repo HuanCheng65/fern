@@ -10,6 +10,7 @@
    */
   import { AlertTriangle, CircleAlert } from 'lucide-svelte'
   import Button from '../ui/Button.svelte'
+  import { unfold } from '../motion'
   import { consequence, label, type FixAction } from './advice'
 
   interface Props {
@@ -51,7 +52,8 @@
   }
 </script>
 
-<div class="advice" class:warning={tone === 'warning'}>
+<!-- 预检查的结论是会来会走的：修好一条，它就收起来，下面的跟着上移。 -->
+<div class="advice" class:warning={tone === 'warning'} transition:unfold>
   <span class="icon">
     {#if tone === 'warning'}
       <AlertTriangle size={15} strokeWidth={1.9} />

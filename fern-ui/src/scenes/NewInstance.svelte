@@ -34,7 +34,7 @@
   import { suggestName } from '../lib/naming'
   import { nav } from '../lib/nav.svelte'
   import { supply } from '../lib/supply.svelte'
-  import { expand, pop, unfold } from '../lib/motion'
+  import { expand, pop, unfold, appear } from '../lib/motion'
   import { ancient, generations, newestRelease, newestSnapshot, snapshots } from '../lib/versions'
   import Button from 'fern-kit/ui/Button.svelte'
   import Input from 'fern-kit/ui/Input.svelte'
@@ -404,7 +404,7 @@
                 最新那一代平铺，别的按代折起来。整行可点——一行里横排七八个
                 号码，既难点也难看。
               -->
-              <div class="list scroll">
+              <div class="list scroll" in:appear>
                 {#if current}
                   {#each current.versions as version (version.id)}
                     <button

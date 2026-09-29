@@ -13,6 +13,7 @@
    * 这是文档 §4.3 和 §6.1 的同一条要求：这一层平时该是隐形的，只有想接管的
    * 人才需要看见它。
    */
+  import { appear, unfold } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
   import { ChevronRight } from 'lucide-svelte'
   import AccountFace from './AccountFace.svelte'
@@ -326,7 +327,7 @@
 {#if loading}
   <Loading note="读取实例信息" />
 {:else}
-  <div class="body">
+  <div class="body" in:appear>
       <!--
         身份放在第一节：这一屏其余几项都是机器的事，只有这一项是人的事。
 
@@ -630,7 +631,7 @@
   </div>
 {/if}
 
-{#if error}<div class="alert pad">{error}</div>{/if}
+{#if error}<div class="alert pad" transition:unfold>{error}</div>{/if}
 
 <style>
   .pad {

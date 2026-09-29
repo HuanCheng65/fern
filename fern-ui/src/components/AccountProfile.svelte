@@ -14,6 +14,7 @@
    * 一个人——存档里的物品、领地插件的记录都认这个号。这句话只有在能看见那串
    * 数字的时候才说得清楚。
    */
+  import { unfold } from '../lib/motion'
   import { Check, Trash2 } from 'lucide-svelte'
   import AccountFace from './AccountFace.svelte'
   import { accounts, KIND_LABEL } from '../lib/accounts.svelte'
@@ -166,7 +167,7 @@
       {/if}
     </div>
 
-    {#if accounts.error}<div class="alert">{accounts.error}</div>{/if}
+    {#if accounts.error}<div class="alert" transition:unfold>{accounts.error}</div>{/if}
   </div>
 {/if}
 

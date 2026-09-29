@@ -11,12 +11,11 @@
    *
    * 空间语言和正式界面对齐——步骤之间也是镜头横向平移，不是弹窗叠弹窗。
    */
+  import { unfold, lateral } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
-  import { fly } from 'svelte/transition'
   import { ArrowLeft, ArrowRight, ExternalLink, Plus } from 'lucide-svelte'
   import AdoptDirectory from '../components/AdoptDirectory.svelte'
   import Mark from 'fern-kit/ui/Mark.svelte'
-  import { theme } from '../lib/theme.svelte'
   import { prefs, suggestedSource, type DownloadSource } from '../lib/prefs.svelte'
   import { accounts, verificationTarget } from '../lib/accounts.svelte'
   import { offlineLoginAllowed } from '../lib/region'
@@ -96,11 +95,6 @@
   ])
   const step = $derived(steps[Math.min(index, steps.length - 1)]!)
 
-  const enter = $derived({
-    x: direction * 34,
-    duration: Math.round(220 * theme.motionScale),
-    opacity: 0,
-  })
 
   function go(delta: number) {
     direction = delta
@@ -202,7 +196,11 @@
 
 <section class="setup" data-tauri-drag-region="deep">
   {#key step}
-    <div class="screen" in:fly={enter}>
+    <div
+      class="screen"
+      in:lateral={{ direction, distance: 34 }}
+      out:lateral={{ direction, distance: 34 }}
+    >
       {#if step === 'welcome'}
         <!--
           第一次打开还没有实例，也就没有背景可学色彩——所以这一屏用品牌自己
@@ -243,7 +241,7 @@
             </div>
           {/if}
 
-          {#if accounts.error}<p class="alert">{accounts.error}</p>{/if}
+          {#if accounts.error}<p class="alert" transition:unfold>{accounts.error}</p>{/if}
 
           <div class="actions">
             <div class="back">
@@ -299,7 +297,7 @@
               autocomplete="current-password"
             />
 
-            {#if accounts.error}<p class="alert">{accounts.error}</p>{/if}
+            {#if accounts.error}<p class="alert" transition:unfold>{accounts.error}</p>{/if}
 
             <div class="actions">
               <div class="back">
@@ -480,7 +478,9 @@
     padding: 0 var(--pad-x);
   }
 
+  /* 前后两步在离场和进场的那一刻叠在同一格，否则新的一步会被旧的顶下去。 */
   .screen {
+    grid-area: 1 / 1;
     grid-area: 1 / 1;
     display: grid;
     justify-items: start;

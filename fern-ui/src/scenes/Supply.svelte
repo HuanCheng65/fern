@@ -23,7 +23,7 @@
   import ProjectDetailView from './ProjectDetail.svelte'
   import { ui } from '../lib/i18n'
   import { instances } from '../lib/instances.svelte'
-  import { depth, riseIn } from '../lib/motion'
+  import { depth, riseIn, appear, unfold } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
   import { KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
 
@@ -212,7 +212,7 @@
         放宽的时候。
       -->
       {#if supply.aimed && supply.target}
-        <div class="scope">
+        <div class="scope" transition:unfold>
           <button class="chip" onclick={() => supply.unaim()} aria-label="去掉条件：适用于 {supply.target.name}">
             适用于：{supply.target.name}
             <X size={14} strokeWidth={2} />
@@ -221,7 +221,7 @@
       {/if}
       {#if supply.error}
         <!-- 原文是 reqwest 的报错，对玩家没用、对排查有用，所以收起来而不是删掉。 -->
-        <div class="failed">
+        <div class="failed" in:appear>
           <p>{ui.supply.failed}</p>
           <Button loading={supply.searching} onclick={() => supply.refresh()}>{ui.supply.retry}</Button>
           <details>
@@ -232,7 +232,7 @@
       {:else if supply.searching && supply.hits.length === 0}
         <Loading note="搜索中" fill />
       {:else if supply.hits.length === 0}
-        <p class="t-quiet hint">没有匹配的结果。</p>
+        <p class="t-quiet hint" in:appear>没有匹配的结果。</p>
       {:else}
         <!--
           排序不是筛选条件——它不删掉任何东西，只换个顺序，所以跟着结果走
