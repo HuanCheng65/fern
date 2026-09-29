@@ -1309,6 +1309,7 @@ mod tests {
             cover: crate::CoverSeed {
                 identity: "moss".to_owned(),
                 growth: 0,
+                biome: None,
             },
             settings: crate::InstanceSettings::default(),
             account_id: None,

@@ -94,7 +94,7 @@
                   <span class="n">{it.name}</span>
                   <span class="m mono">{it.meta}</span>
                 </div>
-                <Cover seed={it.name} hours={it.hours} hour={it.hour} w={331} h={176} quality={0.6} />
+                <Cover seed={it.name} hours={it.hours} hour={it.hour} w={331} h={176} />
               </div>
             {/each}
           </div>

@@ -520,6 +520,7 @@ commands(() => {
       title: item.name,
       hint: `${item.gameVersion} · ${item.loader}`,
       seed: item.cover,
+      biome: item.coverBiome,
       run: () => instances.select(item.id),
     }
   }

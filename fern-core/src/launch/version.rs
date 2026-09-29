@@ -290,6 +290,7 @@ mod tests {
             cover: CoverSeed {
                 identity: "moss".to_owned(),
                 growth: 0,
+                biome: None,
             },
             settings: InstanceSettings::default(),
             account_id: None,

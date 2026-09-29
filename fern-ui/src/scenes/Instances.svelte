@@ -141,6 +141,7 @@
           <InstanceCard
             name={item.name}
             cover={item.cover}
+            biome={item.coverBiome}
             detail={`${item.gameVersion} · ${item.loader}`}
             current={instances.current?.id === item.id}
             busy={launch.occupied(item.id)}

@@ -11,6 +11,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { commands, provides, type Subject } from 'fern-kit/parts/palette'
+import { biomeKey, type BiomeKey } from 'fern-kit/ui/biome'
 import { nav } from './nav.svelte'
 
 /**
@@ -44,6 +45,8 @@ export interface Instance {
   layers: Layer[]
   /** 封面的恒定种子。用它而不是名字——改个名字不该换一张脸。 */
   cover: string
+  /** 建实例时挑定的群系。老实例没有，封面按种子的哈希算。 */
+  coverBiome?: BiomeKey
   /** 上次玩过的 Unix 秒。从没玩过是 undefined。 */
   lastPlayed?: number
   /** 这个实例是什么时候加进来的，Unix 秒。文件系统答不出来时是 undefined。 */
@@ -76,7 +79,7 @@ interface CoreInstance {
   gameVersion: string
   loader: string
   components?: { kind: string; version: string }[]
-  cover?: { identity: string }
+  cover?: { identity: string; biome?: string }
   lastPlayed?: number
   createdAt?: number
   playSeconds?: number
@@ -124,6 +127,7 @@ const toInstance = (profile: CoreInstance): Instance => ({
   loader: loaderName(profile.loader),
   layers: toLayers(profile),
   cover: profile.cover?.identity || profile.id,
+  coverBiome: biomeKey(profile.cover?.biome),
   lastPlayed: profile.lastPlayed,
   createdAt: profile.createdAt,
   playSeconds: profile.playSeconds ?? 0,
@@ -354,6 +358,7 @@ provides(() =>
       title: item.name,
       hint: `${item.gameVersion} · ${item.loader}`,
       seed: item.cover,
+      biome: item.coverBiome,
       // 玩过的时间就是面板要的那个先验：不必等它从零学起。核心那边记的是秒。
       seen: item.lastPlayed === undefined ? undefined : item.lastPlayed * 1000,
       run: () => {

@@ -12,6 +12,7 @@
   import { ArrowRight } from 'lucide-svelte'
   import { pieces, type Row } from './palette.svelte'
   import type { Snippet } from 'svelte'
+  import type { BiomeKey } from '../ui/biome'
 
   interface Props {
     row: Row
@@ -20,7 +21,7 @@
     /** 这一行还能不能往里走。只在高亮时出现——每一行都挂一个提示是噪音。 */
     deeper?: boolean
     /** 有种子的行画缩略图，画什么由调用方决定。 */
-    thumb?: Snippet<[string]>
+    thumb?: Snippet<[string, BiomeKey | undefined]>
     onhover?: () => void
     onrun?: () => void
   }
@@ -49,7 +50,7 @@
 
 <button class="row" class:on={active} onmouseenter={onhover} onclick={onrun}>
   {#if seed && thumb}
-    <span class="thumb">{@render thumb(seed)}</span>
+    <span class="thumb">{@render thumb(seed, row.kind === 'subject' ? row.subject.biome : undefined)}</span>
   {:else}
     <span class="glyph"><ArrowRight size={14} strokeWidth={2} /></span>
   {/if}

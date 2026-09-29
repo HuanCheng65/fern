@@ -108,6 +108,7 @@ pub fn create_instance_with_loader(
         .context("create launcher data directories")?;
     let id = allocate_id(paths)?;
     let mut profile = InstanceProfile::vanilla(InstanceId::parse(&id)?, name, game_version);
+    assign_cover(paths, &mut profile);
     if loader != crate::LoaderKind::Vanilla {
         // 拦在这里而不是补全时：建一个永远补全不了的实例，比直接说不行更糟——
         // 用户会以为成了，直到点启动才发现。
@@ -545,6 +546,14 @@ const ID_LENGTH: usize = 10;
 ///
 /// 那就干脆不可读。找哪个文件夹是哪个实例，走详情页的「游戏目录」，概览里也
 /// 把 id 摆着可以复制。
+/// 给新实例挑定封面群系：和现有实例尽量不撞（见 `cover.rs`）。
+///
+/// 读不全现有实例也照样建——撞色是小事，建不出来是大事。
+pub(crate) fn assign_cover(paths: &DataPaths, profile: &mut InstanceProfile) {
+    let existing = list_instances(paths).unwrap_or_default();
+    profile.cover.biome = Some(super::cover::pick(&existing, &profile.cover.identity));
+}
+
 pub(crate) fn allocate_id(paths: &DataPaths) -> Result<String> {
     for _ in 0..64 {
         let candidate = token()?;

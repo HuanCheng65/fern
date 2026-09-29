@@ -111,7 +111,7 @@
       onpointerdowncapture={takeover}
     >
       <div class="behind" aria-hidden="true">
-        <Cover seed="主世界" hours={320} hour={18} w={900} h={520} quality={0.6} />
+        <Cover seed="主世界" hours={320} hour={18} w={900} h={520} />
       </div>
       {#if Palette && open}
         <!-- 不关：这一格是给人试的，关掉就没得试了。执行的结果由 say() 播报。 -->

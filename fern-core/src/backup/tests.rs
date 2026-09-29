@@ -19,6 +19,7 @@ fn instance(root: &Path) -> DataPaths {
         cover: CoverSeed {
             identity: "moss".to_owned(),
             growth: 0,
+            biome: None,
         },
         ..InstanceProfile::vanilla(InstanceId::parse("moss").expect("id"), "苔", "1.20.1")
     };

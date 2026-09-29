@@ -33,7 +33,7 @@
       <img src={hit.iconUrl} alt="" loading="lazy" />
     {:else}
       <!-- 没有图标的项目用生成式色块补位，网格才不会破相。 -->
-      <Cover seed={hit.slug} quality={0.4} />
+      <Cover seed={hit.slug} />
     {/if}
   </span>
   <span class="text">

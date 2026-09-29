@@ -131,7 +131,7 @@
 
 <Detail {tabs} {tab} ontab={(id) => nav.setTab(id)}>
   {#snippet banner()}
-    <Cover seed={instance.cover} quality={0.7} />
+    <Cover seed={instance.cover} biome={instance.coverBiome} />
     <div class="banner-fade"></div>
   {/snippet}
 

@@ -407,7 +407,7 @@
       <div class="light">
         {#each INSTANCES as it, k (it.name)}
           <div class="sky" style="opacity:{cover(k)}">
-            <Cover seed={it.name} hours={it.hours} hour={it.hour} quality={0.7} />
+            <Cover seed={it.name} hours={it.hours} hour={it.hour} />
           </div>
         {/each}
       </div>

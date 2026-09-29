@@ -10,6 +10,7 @@
   import PaletteRow from './PaletteRow.svelte'
   import { TYPE_LABEL, type Row, type Scope } from './palette.svelte'
   import type { Snippet } from 'svelte'
+  import type { BiomeKey } from '../ui/biome'
 
   interface Props {
     query: string
@@ -21,7 +22,7 @@
     searching?: boolean
     /** 只看不动：官网上那块是静止的，不聚焦、不能打字。 */
     still?: boolean
-    thumb?: Snippet<[string]>
+    thumb?: Snippet<[string, BiomeKey | undefined]>
     onquery?: (value: string) => void
     onkeydown?: (event: KeyboardEvent) => void
     onhover?: (index: number) => void

@@ -11,21 +11,19 @@
    */
   import { Play } from 'lucide-svelte'
   import Cover from '../ui/Cover.svelte'
+  import type { BiomeKey } from '../ui/biome'
 
   interface Props {
     name: string
-    /** 封面的种子。产品里是实例的 cover 字段，通常就是实例名。 */
+    /** 封面的种子。产品里是实例的 cover 字段。 */
     cover: string
+    /** 封面锁定的群系。老实例没有，按种子算。 */
+    biome?: BiomeKey
     /** 名字下面那一行，例如 `1.20.1 · Fabric`。 */
     detail?: string
     /** 是不是当前实例。 */
     current?: boolean
-    /**
-     * 钉住色温用的钟点，0–24。不给就是此刻。
-     *
-     * 产品里不给：封面跟着真实时间走，早上和深夜本来就该是两个样子。给它的是官网
-     * ——一张讲产品的页面不能每次打开都是另一个颜色，凌晨看到的那张不该比白天暗一档。
-     */
+    /** 采样用的钟点，见 Cover。产品里不给——封面不跟着时间变。 */
     hour?: number
     /** 正在启动或已占用时，启动键不出现。 */
     busy?: boolean
@@ -33,14 +31,14 @@
     onlaunch?: () => void
   }
 
-  let { name, cover, detail, hour, current = false, busy = false, onopen, onlaunch }: Props =
+  let { name, cover, biome, detail, hour, current = false, busy = false, onopen, onlaunch }: Props =
     $props()
 </script>
 
 <div class="card">
   <!-- 不写 title：原生提示框是一块系统灰，会直接盖在封面上。 -->
   <button class="face" onclick={() => onopen?.()} aria-label="打开 {name}">
-    <Cover seed={cover} {hour} quality={0.55} />
+    <Cover seed={cover} {biome} {hour} />
   </button>
 
   {#if onlaunch}

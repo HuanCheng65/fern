@@ -191,6 +191,7 @@ pub fn import(
     let id = crate::instance::catalog::allocate_id(paths)?;
     let mut profile =
         InstanceProfile::vanilla(InstanceId::parse(&id)?, &read.name, &read.game_version);
+    crate::instance::catalog::assign_cover(paths, &mut profile);
     // 游戏本体那一层已经在（`vanilla` 建的），Prism 的那些 patch 叠在它上面：
     // 版本描述归 Fern 管（`shared_versions`），原版那一份就是按版本号下下来的。
     profile.components.extend(read.components);

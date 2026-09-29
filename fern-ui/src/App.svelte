@@ -49,6 +49,7 @@
   let ready = $state(false)
   /** 背景用当前实例的封面当种子——首页的背景就是这个实例自己的封面。 */
   const seed = $derived(instances.current?.cover ?? 'Fern')
+  const biome = $derived(instances.current?.coverBiome)
   /**
    * 顶栏的面包屑只要一个词，而那个词是当前这一屏自己登记的（`nav.name`）。
    * 外壳不认识实例，也不认识补给里的项目——上一版在这里放了一张映射表，于是
@@ -167,7 +168,7 @@
 <svelte:head><title>Fern</title></svelte:head>
 
 <div class="shell" class:rounded={selfRounded() && !frame.maximized}>
-  <Backdrop {seed} particles={theme.particles} parallax={theme.parallax} {away} />
+  <Backdrop {seed} {biome} particles={theme.particles} parallax={theme.parallax} {away} />
 
   {#if !ready}
     <!--

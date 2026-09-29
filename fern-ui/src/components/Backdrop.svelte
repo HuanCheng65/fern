@@ -28,6 +28,7 @@
     paletteOf,
     resolve,
     stopsOf,
+    type BiomeKey,
     type BiomeOptions,
     type Env,
     type RGB,
@@ -42,6 +43,8 @@
     seed: string
     /** 生长种子，这里用连接上的人数——房间越热闹，构图越密。 */
     hours?: number
+    /** 实例建时挑定的群系，和封面一致。不给就按种子算。 */
+    biome?: BiomeKey
     /** 特效开关，跟着设置走。 */
     particles?: boolean
     parallax?: boolean
@@ -49,7 +52,8 @@
     away?: boolean
   }
 
-  let { seed, hours = 0, particles = true, parallax = true, away = false }: Props = $props()
+  let { seed, hours = 0, biome, particles = true, parallax = true, away = false }: Props =
+    $props()
 
   let base = $state<HTMLCanvasElement>()
   let phaseCanvas = $state<HTMLCanvasElement>()
@@ -59,7 +63,7 @@
   let paused = $state(false)
   let mode = $state<'gl' | 'cpu'>('cpu')
 
-  const options = (): BiomeOptions => ({ name: seed, hours })
+  const options = (): BiomeOptions => ({ name: seed, hours, biomeKey: biome ?? '' })
 
   /** 呼吸一轮的时长，与旧 CSS 动画一致。 */
   const BREATH_MS = 168_000
@@ -159,7 +163,7 @@
 
   /** 样式目标变了：GL 路径开一段交叉淡化，CPU 路径直接重画。 */
   function apply() {
-    const key = `${seed}|${hours}`
+    const key = `${seed}|${hours}|${biome ?? ''}`
     if (key === lastKey) return
     lastKey = key
     if (gl) {
@@ -171,7 +175,7 @@
         applyPalette(1, envAt(hourNow()))
         return
       }
-      if (next.r.seed === to.r.seed && next.r.g === to.r.g) return
+      if (next.r.seed === to.r.seed && next.r.g === to.r.g && next.r.bk === to.r.bk) return
       from = to
       to = next
       blendStart = now
@@ -402,6 +406,7 @@
   $effect(() => {
     void seed
     void hours
+    void biome
     apply()
   })
 </script>

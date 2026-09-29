@@ -24,6 +24,7 @@
  */
 
 import { match } from 'pinyin-pro'
+import type { BiomeKey } from '../ui/biome'
 
 export type SubjectType = 'instance' | 'account' | 'place' | 'project' | 'world' | 'server'
 
@@ -47,6 +48,8 @@ export interface Subject {
   terms?: string
   /** 生成式封面的种子。没有就画一个类型图标。 */
   seed?: string
+  /** 封面锁定的群系，和种子一起交给封面。 */
+  biome?: BiomeKey
   /**
    * 上一次**真的**用到它是什么时候（毫秒）。
    *

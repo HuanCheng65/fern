@@ -65,7 +65,7 @@
 </script>
 
 <section class="hero">
-  <span class="face" aria-hidden="true"><Cover {seed} quality={0.5} /></span>
+  <span class="face" aria-hidden="true"><Cover {seed} /></span>
 
   <button class="lockup" onclick={draw} aria-label="Fern">
     <Mark size={44} progress={drawn} />

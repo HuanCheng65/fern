@@ -13,6 +13,7 @@
 pub(crate) mod capability;
 pub(crate) mod catalog;
 pub(crate) mod class;
+pub(crate) mod cover;
 pub(crate) mod discover;
 pub(crate) mod external;
 pub(crate) mod hashes;
@@ -170,6 +171,10 @@ pub struct CoverSeed {
     pub identity: String,
     #[serde(default)]
     pub growth: u64,
+    /// 建实例时挑定的群系（见 `cover.rs`）。老实例没有这一项，界面按
+    /// `identity` 的哈希算。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub biome: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +438,7 @@ impl InstanceProfile {
             cover: CoverSeed {
                 identity: cover_identity,
                 growth: 0,
+                biome: None,
             },
             settings: InstanceSettings::default(),
             external: None,

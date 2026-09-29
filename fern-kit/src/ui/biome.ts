@@ -33,6 +33,10 @@ export const BIOMES = {
 export type BiomeKey = keyof typeof BIOMES
 export const BIOME_KEYS = Object.keys(BIOMES) as BiomeKey[]
 
+/** 从磁盘上读来的群系名。认不出的当没有，退回按种子算。 */
+export const biomeKey = (value: string | undefined): BiomeKey | undefined =>
+  value !== undefined && Object.hasOwn(BIOMES, value) ? (value as BiomeKey) : undefined
+
 /** 构图模板，有限集合。 */
 export const FIELDS = { stratus: '层云', vortex: '涡流', aurora: '极光' } as const
 export type FieldKey = keyof typeof FIELDS

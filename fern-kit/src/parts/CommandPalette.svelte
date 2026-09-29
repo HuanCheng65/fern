@@ -12,6 +12,7 @@
    */
   import Dialog from '../ui/Dialog.svelte'
   import Cover from '../ui/Cover.svelte'
+  import type { BiomeKey } from '../ui/biome'
   import PalettePanel from './PalettePanel.svelte'
   import { palette, type Row } from './palette.svelte'
 
@@ -90,7 +91,7 @@
 </script>
 
 <!-- 有种子的行画封面。行自己不认识封面，也不该认识：它只知道有个种子。 -->
-{#snippet cover(seed: string)}<Cover {seed} quality={0.4} />{/snippet}
+{#snippet cover(seed: string, biome: BiomeKey | undefined)}<Cover {seed} {biome} />{/snippet}
 
 <Dialog label="命令面板" width="600px" align="top" {onclose}>
   <PalettePanel

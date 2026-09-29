@@ -163,6 +163,7 @@ pub fn attach(
         display_name(version_id, &described),
         &described.game_version,
     );
+    crate::instance::catalog::assign_cover(paths, &mut profile);
     // 整个实例只有这一层，而且**不管它是不是加载器**。
     //
     // 这个目录叫什么，只有这里知道——它是别人起的名字，认出来的版本号未必等

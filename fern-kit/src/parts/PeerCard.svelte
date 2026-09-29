@@ -49,7 +49,7 @@
 </script>
 
 <article class="card">
-  <Cover seed={peer.id} hours={40} {hour} quality={0.6} w={48} h={48} class="avatar" />
+  <Cover seed={peer.id} hours={40} {hour} w={48} h={48} class="avatar" />
 
   <div class="body">
     <div class="name">{peer.name}</div>
