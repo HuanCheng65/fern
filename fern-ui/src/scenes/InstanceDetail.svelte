@@ -2,14 +2,14 @@
   /**
    * 实例详情——实例场景向内的那一级。
    *
-   * 结构固定：横幅加五个 tab，tab 不再往下嵌套。所以整个应用最深三步，
+   * 结构固定：标题加一排 tab，tab 不再往下嵌套。所以整个应用最深三步，
    * 任何位置一次返回就回到场景首页。
    *
    * 启动按钮在这里常驻，是刻意的：管理和游玩之间不该有距离。翻完模组列表
    * 想立刻试一下，不该先返回、再设为当前、再去启动场景。
    *
-   * 横幅就是这张封面本身——它从曲库的卡片位置展开到这里，是贯穿两级的视觉
-   * 锚点，实例的身份感靠它建立。
+   * 封面只在标题旁边放一小张，认得出是哪个实例就够了。这里曾经是一整条横幅，
+   * 占掉首屏近四分之一，而它不携带任何信息——这一屏要看的是下面的东西。
    */
   import { invoke } from '@tauri-apps/api/core'
   import { Check, FolderOpen, Play, RefreshCw, Share } from 'lucide-svelte'
@@ -130,18 +130,16 @@
 </script>
 
 <Detail {tabs} {tab} ontab={(id) => nav.setTab(id)}>
-  {#snippet banner()}
-    <Cover seed={instance.cover} biome={instance.coverBiome} />
-    <div class="banner-fade"></div>
-  {/snippet}
-
   {#snippet head()}
     <div class="titles">
-      <div>
-        <h1 class="t-h1">{instance.name}</h1>
-        <p class="t-mono facts">
-          Minecraft {instance.gameVersion} · {instance.loader} · {played}
-        </p>
+      <div class="who">
+        <span class="face"><Cover seed={instance.cover} biome={instance.coverBiome} /></span>
+        <div>
+          <h1 class="t-h1">{instance.name}</h1>
+          <p class="t-mono facts">
+            Minecraft {instance.gameVersion} · {instance.loader} · {played}
+          </p>
+        </div>
       </div>
 
       <div class="acts">
@@ -317,18 +315,26 @@
     overflow-wrap: anywhere;
   }
 
-  .banner-fade {
-    position: absolute;
-    inset: auto 0 0;
-    height: 55%;
-    background: linear-gradient(to bottom, transparent, var(--bg, rgba(6, 8, 10, 0.55)));
-    pointer-events: none;
+  .who {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    min-width: 0;
+  }
+
+  /* 和实例卡同一个比例，一眼对得上是哪一张。 */
+  .face {
+    flex: none;
+    width: 84px;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border-radius: var(--r1);
   }
 
   .facts {
-    margin: var(--s2) 0 0;
-    color: var(--ink-4);
-    font-size: var(--t-micro);
+    margin: var(--s1) 0 0;
+    color: var(--ink-3);
+    font-size: var(--t-small);
   }
 
   .acts {
