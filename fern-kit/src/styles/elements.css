@@ -239,3 +239,20 @@
   line-height: 1.55;
   user-select: text;
 }
+
+/*
+ * 叠放：切换中的新旧两层占同一格。
+ *
+ * 有离场动画的地方，旧的那层在淡出的那一百多毫秒里还在文档流里。不叠起来的话
+ * 新的一层会被它顶到下面，整屏先往下跳一截再弹回来。挂在切换点的父元素上。
+ */
+:where(.fern) .stack {
+  display: grid;
+  min-height: 0;
+}
+
+:where(.fern) .stack > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}

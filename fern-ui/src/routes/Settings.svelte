@@ -43,7 +43,7 @@
   import { accounts, type AccountKind } from '../lib/accounts.svelte'
   import { SETTINGS_SECTIONS } from '../lib/settings-catalog'
   import { ui } from '../lib/i18n'
-  import { expand } from '../lib/motion'
+  import { depth } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
   import { launch } from '../lib/launch.svelte'
   import { prefs, suggestedSource } from '../lib/prefs.svelte'
@@ -704,15 +704,30 @@
       storageBusy = ''
     }
   }
+
+  /**
+   * 设置是模态，全局的纵深在这里恒为 0，二级页的来回得自己说：有了 target
+   * 就是刚往里走了一级，没了就是刚退出来。
+   */
+  const pageSink = $derived(target ? 1 : -1)
 </script>
 
-<div class="settings">
+<div
+  class="settings stack"
+  in:depth={{ inner: true, sink: 1 }}
+  out:depth={{ inner: true, sink: -1 }}
+>
   {#if target}
     <!--
       二级页。整块换掉而不是挤在右栏里：左侧那列锚点回答的是「这一长页我要看
       哪一段」，而这里已经不是那一页了——留着它只会让人以为自己还站在表单上。
     -->
-    <div class="subpage scroll" data-page-scroll in:expand>
+    <div
+      class="subpage scroll"
+      data-page-scroll
+      in:depth={{ inner: true, sink: pageSink }}
+      out:depth={{ inner: true, sink: pageSink }}
+    >
       <header>
         <div class="crumbs">
           <!-- 返回到它所属的那一节，名字从目录里取——这一级是通用机制，不是
@@ -760,6 +775,7 @@
       </div>
     </div>
   {:else}
+  <div class="page" in:depth={{ sink: pageSink }} out:depth={{ sink: pageSink }}>
   <!--
     换一节也写进地址。它是横向的（`nav.settings` 对同深度的位置用 replace，
     不压栈），但它是「我在哪」的一部分——上一版只有被 ⌘K 送进来时才记，自己
@@ -1707,6 +1723,7 @@
           </SettingRow>
         {/if}
   </Form>
+  </div>
   {/if}
 </div>
 
@@ -1718,6 +1735,11 @@
    * `height: 100%` 会一起落到那些行上——栅格项被拉伸后高度是确定的，于是每
    * 一条注解都撑成整桶那么高，一桶展开就叠到下一桶身上。
    */
+  .page {
+    height: 100%;
+    min-height: 0;
+  }
+
   .subpage {
     height: 100%;
     min-height: 0;

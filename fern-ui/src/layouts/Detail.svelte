@@ -19,9 +19,7 @@
    * 症状。某个 tab 的内容多到想再分组，用表单布局的纵向锚点。
    */
   import type { Snippet } from 'svelte'
-  import { fly } from 'svelte/transition'
-  import { cubicOut } from 'svelte/easing'
-  import { DURATION, scaled } from '../lib/motion'
+  import { lateral } from '../lib/motion'
 
   interface Tab {
     id: string
@@ -62,13 +60,36 @@
    */
   let previous = $state(0)
   const index = $derived(tabs.findIndex((item) => item.id === tab))
-  const slide = $derived.by(() => {
-    const direction = index >= previous ? 1 : -1
-    return { x: direction * 12, duration: scaled(DURATION.base), easing: cubicOut, opacity: 0 }
-  })
+  const direction = $derived(index >= previous ? 1 : -1)
 
   $effect(() => {
     previous = index
+  })
+
+  /**
+   * 选中线只有一根，在 tab 之间滑过去。
+   *
+   * 每个 tab 各画一根、各自淡入淡出的话，切换时是一根消失、另一根出现——眼睛
+   * 找不到「从哪到哪」。一根滑过去，走的就是用户刚才那一下的方向。位置从真实
+   * 布局量：字宽随字体变。第一次量到之前不画过渡，否则它会从最左边滑进来。
+   */
+  let bar = $state<HTMLElement>()
+  let ink = $state({ left: 0, width: 0 })
+  let placed = $state(false)
+  $effect(() => {
+    void tab
+    const nav = bar
+    if (!nav) return
+    const measure = () => {
+      const active = nav.querySelector<HTMLElement>('button.on')
+      if (!active) return
+      ink = { left: active.offsetLeft, width: active.offsetWidth }
+      if (!placed) requestAnimationFrame(() => (placed = true))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(nav)
+    return () => observer.disconnect()
   })
 
   /** 阈值从真实布局量：标题整块滚过吸附条了才补小标题，不用写死的数字。 */
@@ -88,7 +109,7 @@
   <header class="head" bind:this={heading}>{@render head()}</header>
 
   <div class="bar">
-    <nav class="tabs" aria-label="分区">
+    <nav class="tabs" aria-label="分区" bind:this={bar}>
       {#each tabs as item (item.id)}
         <button
           class:on={tab === item.id}
@@ -98,6 +119,13 @@
           {item.label}
         </button>
       {/each}
+      <span
+        class="ink"
+        class:placed
+        style:width={`${ink.width}px`}
+        style:transform={`translateX(${ink.left}px)`}
+        aria-hidden="true"
+      ></span>
     </nav>
 
     {#if compactHead}
@@ -105,9 +133,14 @@
     {/if}
   </div>
 
-  <div class="body" class:reading>
+  <div class="body stack" class:reading>
     {#key tab}
-      <div in:fly={slide}>{@render children()}</div>
+      <div
+        in:lateral={{ direction, distance: 12 }}
+        out:lateral={{ direction, distance: 12 }}
+      >
+        {@render children()}
+      </div>
     {/key}
   </div>
 </div>
@@ -161,6 +194,7 @@
   }
 
   .tabs {
+    position: relative;
     display: flex;
     align-self: stretch;
     align-items: center;
@@ -204,16 +238,20 @@
     transition: opacity var(--t-base) var(--ease);
   }
 
-  /* ::after 已经是最小点击区（elements.css），指示线用 ::before。 */
-  .tabs button::before {
-    content: '';
+  .ink {
     position: absolute;
-    inset: auto 0 0;
+    left: 0;
+    bottom: 0;
     height: 2px;
     border-radius: 1px;
     background: var(--ink);
-    transform: scaleX(0);
-    transition: transform var(--t-base) var(--ease);
+    pointer-events: none;
+  }
+
+  .ink.placed {
+    transition:
+      transform var(--t-base) var(--ease),
+      width var(--t-base) var(--ease);
   }
 
   .tabs button:hover {
@@ -224,9 +262,7 @@
     opacity: 1;
   }
 
-  .tabs button.on::before {
-    transform: none;
-  }
+
 
   .body {
     padding: var(--s4) 0 var(--s8);

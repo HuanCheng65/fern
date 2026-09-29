@@ -33,7 +33,7 @@
   import { nav } from '../lib/nav.svelte'
   import { lastPlayedLabel, playTimeLabel } from '../lib/played'
   import { platform } from '../lib/frame.svelte'
-  import { expand, riseIn } from '../lib/motion'
+  import { depth, riseIn } from '../lib/motion'
   import { prefs } from '../lib/prefs.svelte'
   import Button from 'fern-kit/ui/Button.svelte'
 
@@ -95,22 +95,27 @@
   }
 </script>
 
+<!--
+  列表和它里面的几层（新建、添加、详情）叠在同一格：往里走时列表退后、里面那
+  层浮上来，往外退时反过来。见 lib/motion.ts 的 depth。
+-->
+<div class="stack layers">
 {#if creating}
-  <div class="depth" in:expand>
+  <div class="depth" in:depth={{ inner: true, sink: nav.sink }} out:depth={{ inner: true, sink: nav.sink }}>
     <NewInstance />
   </div>
 {:else if adopting}
-  <div class="depth scroll existing" data-page-scroll in:expand>
+  <div class="depth scroll existing" data-page-scroll in:depth={{ inner: true, sink: nav.sink }} out:depth={{ inner: true, sink: nav.sink }}>
     <h1 class="t-h1">{ADOPT}</h1>
     <AdoptDirectory />
   </div>
 {:else if viewing}
   <!-- 往深处走是就地展开，不是横移——两种导航要能分得清。 -->
-  <div class="depth" in:expand>
+  <div class="depth" in:depth={{ inner: true, sink: nav.sink }} out:depth={{ inner: true, sink: nav.sink }}>
     <InstanceDetail instance={viewing} />
   </div>
 {:else if instances.list.length === 0}
-  <section class="blank">
+  <section class="blank" in:depth={{ sink: nav.sink }} out:depth={{ sink: nav.sink }}>
     {#if instances.loading}
       <Loading note="读取实例" />
     {:else}
@@ -126,6 +131,7 @@
     {#if instances.error}<div class="alert">{instances.error}</div>{/if}
   </section>
 {:else}
+  <div class="depth" in:depth={{ sink: nav.sink }} out:depth={{ sink: nav.sink }}>
   <Collection>
     {#snippet controls()}
       <div class="status">
@@ -174,9 +180,15 @@
       {/each}
     </div>
   </Collection>
+  </div>
 {/if}
+</div>
 
 <style>
+  .layers {
+    height: 100%;
+  }
+
   .depth {
     height: 100%;
     min-height: 0;

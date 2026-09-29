@@ -23,7 +23,7 @@
   import ProjectDetailView from './ProjectDetail.svelte'
   import { ui } from '../lib/i18n'
   import { instances } from '../lib/instances.svelte'
-  import { expand, riseIn } from '../lib/motion'
+  import { depth, riseIn } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
   import { KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
 
@@ -114,11 +114,13 @@
   void instances.loadVersions()
 </script>
 
+<div class="stack layers">
 {#if nav.detail}
-  <div class="depth" in:expand>
+  <div class="depth" in:depth={{ inner: true, sink: nav.sink }} out:depth={{ inner: true, sink: nav.sink }}>
     <ProjectDetailView slug={nav.detail} />
   </div>
 {:else}
+  <div class="depth" in:depth={{ sink: nav.sink }} out:depth={{ sink: nav.sink }}>
   <Browse>
     {#snippet search()}
       <div class="field">
@@ -270,9 +272,15 @@
       {/if}
     </div>
   </Browse>
+  </div>
 {/if}
+</div>
 
 <style>
+  .layers {
+    height: 100%;
+  }
+
   .depth {
     height: 100%;
     min-height: 0;

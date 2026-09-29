@@ -160,6 +160,14 @@ class NavStore {
   /** 镜头往哪边走，决定新场景从哪一侧滑进来。 */
   direction = $state(1)
   /**
+   * 上一次导航在纵深上往哪走：1 是往里（进详情），-1 是往外（返回），0 是没动
+   * 纵深——换了场景、切了 tab、刷新落地。
+   *
+   * 换场景时一律算 0：那一刻横移在动，要是纵深也跟着动，两种动作叠在同一帧
+   * 里，看上去就是一次抽搐。
+   */
+  sink = $state<-1 | 0 | 1>(0)
+  /**
    * 场景内容滚到顶栏底下了。顶栏默认完全透明地浮在封面上，只有这时才浮现
    * 毛玻璃——启动场景永不滚动，所以那里的顶栏永远是纯粹悬浮的文字。
    */
@@ -238,6 +246,8 @@ class NavStore {
     const scene = space === SETTINGS ? this.beneath : (space as SceneId)
     const to = SCENES.findIndex((item) => item.id === scene)
     if (to >= 0) this.direction = to >= this.index ? 1 : -1
+    const depth = space === SETTINGS ? 0 : path.length - 1
+    this.sink = scene !== this.scene ? 0 : depth > this.depth ? 1 : depth < this.depth ? -1 : 0
     this.scrolled = false
   }
 

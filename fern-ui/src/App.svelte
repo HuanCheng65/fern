@@ -11,7 +11,6 @@
    */
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
-  import { fly } from 'svelte/transition'
   import Backdrop from './components/Backdrop.svelte'
   import TopBar from 'fern-kit/parts/TopBar.svelte'
   import CommandPalette from 'fern-kit/parts/CommandPalette.svelte'
@@ -32,7 +31,7 @@
   import { accounts } from './lib/accounts.svelte'
   import { CREATE, instances } from './lib/instances.svelte'
   import { launch } from './lib/launch.svelte'
-  import { DURATION, scaled } from './lib/motion'
+  import { lateral } from './lib/motion'
   import { island } from './lib/island.svelte'
   import { nav, SCENES, type SceneId } from './lib/nav.svelte'
   import { palette } from 'fern-kit/parts/palette'
@@ -162,7 +161,20 @@
     }
   })
 
-  const enter = $derived({ x: nav.direction * 26, duration: scaled(DURATION.base), opacity: 0 })
+  /**
+   * 退出一层时，焦点落在即将被移走的节点上（返回键、详情里的某颗按钮），
+   * 键盘用户就掉到了 body 上。接到舞台上，Tab 从这一屏重新开始。
+   */
+  let stage = $state<HTMLElement>()
+  $effect(() => {
+    void nav.here
+    if (nav.sink !== -1) return
+    // 往外退的这一刻，舞台里还拿着焦点的只可能是正在离场的那一层。
+    const active = document.activeElement
+    if (!active || active === document.body || stage?.contains(active) || active.closest('.trail')) {
+      stage?.focus({ preventScroll: true })
+    }
+  })
 </script>
 
 <svelte:head><title>Fern</title></svelte:head>
@@ -204,9 +216,13 @@
       onsettings={() => nav.toggleSettings()}
     />
 
-    <main class="stage">
+    <main class="stage stack" bind:this={stage} tabindex="-1">
       {#key nav.scene}
-        <div class="scene" in:fly={enter}>
+        <div
+          class="scene"
+          in:lateral={{ direction: nav.direction }}
+          out:lateral={{ direction: nav.direction }}
+        >
           {#if nav.scene === 'launch'}
             <LaunchScene
               onswitch={() => {
