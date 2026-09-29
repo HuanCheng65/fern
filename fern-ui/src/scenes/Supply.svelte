@@ -114,7 +114,7 @@
   void instances.loadVersions()
 </script>
 
-<div class="stack layers">
+<div class="overlap layers">
 {#if nav.detail}
   <div class="depth" in:depth={{ inner: true, sink: nav.sink }} out:depth={{ inner: true, sink: nav.sink }}>
     <ProjectDetailView slug={nav.detail} />

@@ -100,7 +100,7 @@
   列表和它里面的几层（新建、添加、详情）叠在同一格：往里走时列表退后、里面那
   层浮上来，往外退时反过来。见 lib/motion.ts 的 depth。
 -->
-<div class="stack layers">
+<div class="overlap layers">
 {#if creating}
   <div class="depth" in:depth={{ inner: true, sink: nav.sink }} out:depth={{ inner: true, sink: nav.sink }}>
     <NewInstance />

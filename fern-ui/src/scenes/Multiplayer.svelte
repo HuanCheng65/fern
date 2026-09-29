@@ -98,7 +98,7 @@
 </script>
 
 <!-- 三种状态（没开房、已结束、会话中）换的是整屏，叠在同一格里交接。 -->
-<div class="stack layers">
+<div class="overlap layers">
 {#if session.mode === 'idle'}
 <div class="layer" in:appear out:appear>
   <Stage>

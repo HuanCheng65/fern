@@ -133,7 +133,7 @@
     {/if}
   </div>
 
-  <div class="body stack" class:reading>
+  <div class="body overlap" class:reading>
     {#key tab}
       <div
         in:lateral={{ direction, distance: 12 }}

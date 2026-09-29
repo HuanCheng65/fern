@@ -216,7 +216,7 @@
       onsettings={() => nav.toggleSettings()}
     />
 
-    <main class="stage stack" bind:this={stage} tabindex="-1">
+    <main class="stage overlap" bind:this={stage} tabindex="-1">
       {#key nav.scene}
         <div
           class="scene"

@@ -713,7 +713,7 @@
 </script>
 
 <div
-  class="settings stack"
+  class="settings overlap"
   in:depth={{ inner: true, sink: 1 }}
   out:depth={{ inner: true, sink: -1 }}
 >
@@ -2105,6 +2105,12 @@
   .settings {
     position: absolute;
     inset: 0;
+    /*
+     * 舞台是叠放格（.overlap），它的子元素默认被放进那一格——而绝对定位的元素
+     * 一旦有了格子位置，包含块就变成格子区域（舞台的内容框），`inset: 0` 于是
+     * 让出了舞台的内边距，周围露出一圈。退出格子，回到相对整个舞台铺满。
+     */
+    grid-area: auto;
     z-index: 5;
     padding: calc(var(--top) + var(--s2)) var(--pad-x) 0;
     background: var(--sheet);
