@@ -311,8 +311,12 @@
     }
   }
 
+  /*
+   * 主按钮的分量在实心的强调色上，不在个头上。它几乎总有一颗次按钮站在旁边
+   * （启动 / 设为当前、确定 / 取消），高一截就是两条底边。真正独自站着、该大一
+   * 号的那一颗（启动屏的启动键）由它的布局自己说 `--control-lg`。
+   */
   .btn--primary {
-    min-height: var(--control-lg);
     padding: 0 var(--s5);
     color: var(--accent-ink);
     background: var(--accent);
