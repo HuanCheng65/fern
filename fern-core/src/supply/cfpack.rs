@@ -185,6 +185,13 @@ pub(super) async fn resolve(manifest: &Manifest, sideload: &Sideload) -> Result<
     let info: HashMap<u64, curseforge::PackProject> = curseforge::pack_projects(&projects).await?;
     let found = curseforge::pack_files(&files).await?;
 
+    let blocked: Vec<String> = found
+        .iter()
+        .filter(|file| file.url.is_none())
+        .filter_map(|file| file.sha1.clone())
+        .collect();
+    let mirrors = super::mirrored_on_modrinth(&blocked).await;
+
     let mut out = Vec::new();
     for (project, file_id) in wanted {
         let Some(file) = found.iter().find(|file| file.id == file_id) else {
@@ -197,7 +204,13 @@ pub(super) async fn resolve(manifest: &Manifest, sideload: &Sideload) -> Result<
             return Err(anyhow!("整合包里的文件名不安全：{}", file.name));
         }
         let directory = about.map_or("mods", |about| about.directory);
-        let local = match file.url {
+        let url = file.url.clone().or_else(|| {
+            file.sha1
+                .as_ref()
+                .and_then(|sha1| mirrors.get(sha1))
+                .cloned()
+        });
+        let local = match url {
             Some(_) => None,
             None => sideload.locate(&file.name, file.sha1.as_deref(), file.size),
         };
@@ -205,7 +218,7 @@ pub(super) async fn resolve(manifest: &Manifest, sideload: &Sideload) -> Result<
             title: about.map_or_else(|| file.name.clone(), |about| about.title.clone()),
             path: format!("{directory}/{}", file.name),
             file_name: file.name.clone(),
-            url: file.url.clone(),
+            url,
             sha1: file.sha1.clone(),
             size: file.size,
             page: about

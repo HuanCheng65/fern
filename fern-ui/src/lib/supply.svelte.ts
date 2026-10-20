@@ -195,7 +195,9 @@ export function compatibility(
   const accepted =
     target.loader === 'Quilt' ? ['quilt', 'fabric'] : [target.loader.toLowerCase()]
   if (target.loader === 'Vanilla') return { ok: false, note: '实例没有加载器' }
-  if (!version.loaders.some((item) => accepted.includes(item))) {
+  // 没标加载器不等于不兼容：CurseForge 上 Fabric 出现之前的老文件一个都没标，
+  // 那时候只有 Forge。和后端 `Installed::fits` 同一条规矩——说它装不上要有证据。
+  if (version.loaders.length > 0 && !version.loaders.some((item) => accepted.includes(item))) {
     return { ok: false, note: `不支持 ${target.loader}` }
   }
   return { ok: true, note: '' }

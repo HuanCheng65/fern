@@ -302,10 +302,17 @@ pub async fn project(source: Source, id: &str) -> Result<ProjectDetail> {
 /// 不在这里按目标实例筛。详情页要把所有版本都摆出来，装不上的标出来而不是
 /// 藏起来——「这个模组还没适配 1.21」是用户需要知道的事实，一个空列表说不了
 /// 这句话。
-pub async fn versions(source: Source, project: &str) -> Result<Vec<ProjectVersion>> {
+///
+/// `target` 是界面上「安装到」的那个实例的版本和加载器。Modrinth 一次就给全部
+/// 版本，用不上它；CurseForge 只能分页取，要靠它把适用的那些一起取回来。
+pub async fn versions(
+    source: Source,
+    project: &str,
+    target: Option<(&str, LoaderKind)>,
+) -> Result<Vec<ProjectVersion>> {
     match source {
         Source::Modrinth => modrinth::versions(project).await,
-        Source::CurseForge => curseforge::versions(project).await,
+        Source::CurseForge => curseforge::versions(project, target).await,
     }
 }
 
@@ -337,6 +344,32 @@ pub(crate) async fn project_names(
         Source::Modrinth => modrinth::project_names(ids).await,
         Source::CurseForge => curseforge::project_names(ids).await,
     }
+}
+
+/// 那些 CurseForge 不给地址的文件，有没有一模一样的一份挂在 Modrinth 上。
+///
+/// 关掉 CurseForge 第三方分发的作者，很多自己也在 Modrinth 发同一个文件——
+/// sha1 相同就是同一份字节，而作者在 Modrinth 上是允许分发的。从那里取不是
+/// 绕过谁的设置，是走作者开着的那扇门。实测一个 117 个文件的热门整合包里有
+/// 17 个只能手动下载，让用户点开 17 个网页是不现实的。
+///
+/// 问不到（网络不通、Modrinth 没有）就当没有：这些文件照样走手动下载。
+pub(crate) async fn mirrored_on_modrinth(
+    sha1s: &[String],
+) -> std::collections::HashMap<String, String> {
+    if sha1s.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    known_files(sha1s)
+        .await
+        .map(|found| {
+            found
+                .into_iter()
+                .filter(|(_, file)| is_external_url(&file.url))
+                .map(|(hash, file)| (hash, file.url))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 把一个版本的主文件下到指定位置，返回落盘的路径。

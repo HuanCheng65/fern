@@ -1122,8 +1122,13 @@ async fn project_detail(
 async fn project_versions(
     source: fern_core::Source,
     project: String,
+    game_version: Option<String>,
+    loader: Option<fern_core::LoaderKind>,
 ) -> Result<Vec<fern_core::ProjectVersion>, String> {
-    fern_core::supply_versions(source, &project)
+    let target = game_version
+        .as_deref()
+        .map(|version| (version, loader.unwrap_or(fern_core::LoaderKind::Vanilla)));
+    fern_core::supply_versions(source, &project, target)
         .await
         .map_err(|error| format!("{error:#}"))
 }

@@ -28,6 +28,7 @@
   import {
     compactNumber,
     compatibility,
+    loaderTag,
     parseProjectKey,
     supply,
     type InstallOutcome,
@@ -133,8 +134,17 @@
       // 两个请求各自独立，一起发。
       const [found, list] = await Promise.all([
         invoke<ProjectDetail>('project_detail', { source, project: id }),
-        invoke<ProjectVersion[]>('project_versions', { source, project: id }),
+        invoke<ProjectVersion[]>('project_versions', {
+          source,
+          project: id,
+          // CurseForge 只能分页取版本，要靠它把适用于这个实例的那些一起取回来。
+          gameVersion: target?.gameVersion ?? null,
+          loader: target ? loaderTag(target.loader) || null : null,
+        }),
       ])
+      // 先记下这份列表是按哪个目标取的，再放出 detail：下面那个重取的 effect
+      // 看见 detail 就会跑，不能让它把刚取回来的再取一遍。
+      loadedFor = target?.id ?? ''
       detail = found
       versions = list
       nav.name(found.title)
@@ -223,9 +233,18 @@
       // CurseForge 上有些文件只能去网站上下。装之前先把计划算出来：缺文件
       // 就把那一行展开、说清去哪下，而不是开始一件注定失败的作业。
       if (source === 'curseforge') {
-        opened = version.id
-        const checked = await loadPlan(version)
-        if (!checked || checked.files.some((file) => file.page && !file.found)) return
+        const checked = await invoke<InstallPlan>('install_plan', {
+          instanceId: where.id,
+          source,
+          versionId: version.id,
+          kind,
+          picked,
+        })
+        if (checked.files.some((file) => file.page && !file.found)) {
+          opened = version.id
+          plan = checked
+          return
+        }
       }
       // 这件事既属于这个项目，也属于那个实例——两边的页面都该看得见它。
       const outcome = await invoke<InstallOutcome>('install_resource', {
@@ -318,6 +337,25 @@
       checking = false
     }
   }
+
+  /**
+   * CurseForge 的版本列表按「安装到」取了一部分，换了目标就要重取——否则
+   * 换成一个 1.12.2 的实例，列表里只剩新版本，看起来像是没有适用的版本。
+   */
+  let loadedFor = ''
+  $effect(() => {
+    const key = target?.id ?? ''
+    if (source !== 'curseforge' || !detail || key === loadedFor) return
+    loadedFor = key
+    void invoke<ProjectVersion[]>('project_versions', {
+      source,
+      project: id,
+      gameVersion: target?.gameVersion ?? null,
+      loader: target ? loaderTag(target.loader) || null : null,
+    })
+      .then((list) => (versions = list))
+      .catch((cause) => (error = String(cause)))
+  })
 
   $effect(() => {
     project

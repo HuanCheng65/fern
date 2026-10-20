@@ -350,18 +350,27 @@ fn dependencies(raw: &[RawDependency]) -> Vec<(String, plan::DependencyKind)> {
 }
 
 /// 排序。CurseForge 的 `ModsSearchSortField`：
-/// 2 人气、3 最近更新、6 下载量、11 发布日期、12 评分。
+/// 1 推荐、2 人气、3 最近更新、6 下载量、11 发布日期、12 评分。
 ///
-/// 「相关度」它没有对应的字段：有搜索词时不传排序，交给上游按匹配程度排；
-/// 没有搜索词时相关度无从谈起，按人气排。「关注数」也没有，评分是最近的那个。
-fn sort_field(sort: &str, query: &str) -> Option<u32> {
+/// 「相关度」没有同名的字段，实测（2026-10）挑的：
+///
+/// - 不传排序时，搜 `jei` 第一条是个不相干的小模组，不能用。
+/// - 「推荐、降序」对模组最准：jei、create、waystones、applied energistics
+///   第一条都是本体。但对整合包，它会把推广位顶上来——搜 `all the mods 9`
+///   第一条是个宝可梦服务器包。
+/// - 「人气、降序」对整合包最准（ATM 系列、Better Adventures+ 在前），对模组
+///   则会把 Xaero's Minimap 排到 Create 前面。
+///
+/// 所以整合包按人气，其余按推荐。没有搜索词时相关度无从谈起，按人气排。
+/// 「关注数」也没有，评分是最近的那个。
+fn sort_field(sort: &str, query: &str, kind: ResourceKind) -> u32 {
     match sort {
-        "downloads" => Some(6),
-        "updated" => Some(3),
-        "newest" => Some(11),
-        "follows" => Some(12),
-        _ if query.trim().is_empty() => Some(2),
-        _ => None,
+        "downloads" => 6,
+        "updated" => 3,
+        "newest" => 11,
+        "follows" => 12,
+        _ if query.trim().is_empty() || kind == ResourceKind::Modpack => 2,
+        _ => 1,
     }
 }
 
@@ -412,9 +421,11 @@ pub(super) async fn search(request: &SearchQuery) -> Result<SearchResult> {
             ));
         }
     }
-    if let Some(field) = sort_field(&request.sort, &request.query) {
-        url.push_str(&format!("&sortField={field}&sortOrder=desc"));
-    }
+    // 不带 sortOrder 时上游按升序排，「人气」就成了最冷门的在前。
+    url.push_str(&format!(
+        "&sortField={}&sortOrder=desc",
+        sort_field(&request.sort, &request.query, kind)
+    ));
 
     let raw: Paged<RawMod> = upstream()?.get(&url).await?;
     Ok(SearchResult {
@@ -569,8 +580,29 @@ async fn raw_files(project: u64, filter: &str) -> Result<Vec<RawFile>> {
     Ok(files)
 }
 
-pub(super) async fn versions(project: &str) -> Result<Vec<ProjectVersion>> {
-    let files = raw_files(mod_id(project)?, "").await?;
+/// 一个项目的版本：最新的 [`VERSION_LIMIT`] 个，再加上适用于 `target` 的那些。
+///
+/// 只取最新的不够：JEI 有几千个文件，最新的两百个几乎全是新版本的，给 1.12.2
+/// 的实例看就只剩四五个。全拉下来又是几十次请求。所以按目标实例再单独问一次，
+/// 两份合在一起。
+pub(super) async fn versions(
+    project: &str,
+    target: Option<(&str, LoaderKind)>,
+) -> Result<Vec<ProjectVersion>> {
+    let id = mod_id(project)?;
+    let mut files = raw_files(id, "").await?;
+    if let Some((game_version, loader)) = target.filter(|(version, _)| !version.is_empty()) {
+        let mut filter = format!("&gameVersion={}", urlencoding(game_version));
+        if let Some(value) = loader_type(loader) {
+            filter.push_str(&format!("&modLoaderType={value}"));
+        }
+        for file in raw_files(id, &filter).await? {
+            if !files.iter().any(|known| known.id == file.id) {
+                files.push(file);
+            }
+        }
+        files.sort_by(|left, right| right.file_date.cmp(&left.file_date));
+    }
     Ok(files.into_iter().map(describe).collect())
 }
 
@@ -952,9 +984,277 @@ mod tests {
     }
 
     #[test]
-    fn relevance_is_left_to_the_server_only_when_there_is_a_query() {
-        assert_eq!(sort_field("relevance", "jei"), None);
-        assert_eq!(sort_field("relevance", ""), Some(2));
-        assert_eq!(sort_field("downloads", "jei"), Some(6));
+    fn relevance_means_featured_for_mods_and_popularity_for_packs() {
+        assert_eq!(sort_field("relevance", "jei", ResourceKind::Mod), 1);
+        assert_eq!(sort_field("relevance", "atm", ResourceKind::Modpack), 2);
+        assert_eq!(sort_field("relevance", "", ResourceKind::Mod), 2);
+        assert_eq!(sort_field("downloads", "jei", ResourceKind::Mod), 6);
+    }
+}
+
+/// 对着真的 CurseForge 跑。要构建时注入的密钥，也要联网，所以默认不跑：
+///
+/// ```text
+/// cargo test -p fern-core --lib supply::curseforge::live -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    /// JEI。热门、文件多、Forge 和 NeoForge 都有。
+    const JEI: &str = "238222";
+
+    #[tokio::test]
+    #[ignore]
+    async fn search_detail_and_versions_come_back_in_shape() {
+        let hits = search(&SearchQuery {
+            query: "jei".to_owned(),
+            ..SearchQuery::default()
+        })
+        .await
+        .expect("search");
+        println!(
+            "search total={} first={:?}",
+            hits.total,
+            hits.hits.first().map(|hit| (&hit.title, &hit.icon_url))
+        );
+        assert!(!hits.hits.is_empty());
+
+        // Quilt 要同时带上 Fabric 的模组：这个参数的写法文档没写清，上游不认就会 400。
+        let quilt = search(&SearchQuery {
+            query: "sodium".to_owned(),
+            loader: Some(LoaderKind::Quilt),
+            game_version: "1.20.1".to_owned(),
+            ..SearchQuery::default()
+        })
+        .await
+        .expect("quilt search");
+        println!(
+            "quilt total={} first={:?}",
+            quilt.total,
+            quilt.hits.first().map(|hit| &hit.title)
+        );
+        assert!(!quilt.hits.is_empty());
+
+        let detail = project(JEI).await.expect("project");
+        println!(
+            "detail {} type={} icon={:?} loaders={:?} versions={} links={:?}",
+            detail.title,
+            detail.project_type,
+            detail.icon_url,
+            detail.loaders,
+            detail.game_versions.len(),
+            detail.links
+        );
+        assert_eq!(detail.project_type, "mod");
+
+        let list = versions(JEI, Some(("1.12.2", LoaderKind::Forge)))
+            .await
+            .expect("versions");
+        let old = list
+            .iter()
+            .filter(|version| version.game_versions.iter().any(|it| it == "1.12.2"))
+            .count();
+        println!("1.12.2 versions={old}");
+        // 只取最新两百个时这里只有四五个。
+        assert!(old > 20);
+        let first = list.first().expect("a version");
+        println!(
+            "versions={} first={} games={:?} loaders={:?} deps={}",
+            list.len(),
+            first.name,
+            first.game_versions,
+            first.loaders,
+            first.dependencies.len()
+        );
+        assert!(!first.loaders.is_empty());
+
+        let named = project_names(&[JEI.to_owned()]).await.expect("names");
+        println!(
+            "named page={:?}",
+            named.get(JEI).and_then(|it| it.page.clone())
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn our_fingerprint_is_the_one_curseforge_computes() {
+        // 拿一个真文件：下下来自己算，和上游给的对一遍，再拿去反查。
+        let files = raw_files(mod_id(JEI).expect("id"), "")
+            .await
+            .expect("files");
+        let file = files
+            .iter()
+            .find(|file| file.url().is_some() && file.file_length < 5_000_000)
+            .expect("a downloadable file");
+        let bytes = reqwest::get(file.url().expect("url"))
+            .await
+            .expect("download")
+            .bytes()
+            .await
+            .expect("body");
+        let ours = super::super::fingerprint::of_bytes(&bytes);
+        println!(
+            "{} ours={ours} theirs={}",
+            file.file_name, file.file_fingerprint
+        );
+        assert_eq!(u64::from(ours), file.file_fingerprint);
+
+        let found = versions_by_fingerprint(&[ours]).await.expect("lookup");
+        let known = found.get(&ours).expect("upstream knows this fingerprint");
+        assert_eq!(known.version_id, file.id.to_string());
+        println!("matched {:?}", known);
+
+        let latest = latest_for(
+            &[(JEI.to_owned(), "1".to_owned())],
+            "1.20.1",
+            LoaderKind::Forge,
+        )
+        .await
+        .expect("latest");
+        println!("latest for 1.20.1 forge: {:?}", latest.get(JEI));
+        assert!(latest.contains_key(JEI));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_dependency_already_in_mods_is_recognised_by_fingerprint() {
+        use crate::supply::plan::{RequirementState, resolve};
+
+        // Create Crafts & Additions 必需 Create。
+        const ADDITIONS: &str = "439890";
+        const CREATE: &str = "328085";
+
+        let root = std::env::temp_dir().join(format!("fern-cf-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = crate::DataPaths::new(root.clone());
+        let profile = crate::create_instance_with_loader(
+            &paths,
+            "live",
+            "1.20.1",
+            LoaderKind::Forge,
+            Some("47.2.0"),
+        )
+        .expect("instance");
+        let id = profile.id.as_str();
+
+        let additions = candidate(ADDITIONS, "1.20.1", LoaderKind::Forge)
+            .await
+            .expect("lookup")
+            .expect("a 1.20.1 forge file");
+        let before = resolve(
+            &paths,
+            id,
+            Source::CurseForge,
+            &additions.version_id,
+            ResourceKind::Mod,
+            &crate::supply::Sideload::default(),
+        )
+        .await
+        .expect("plan");
+        let create = |plan: &crate::supply::plan::InstallPlan| {
+            plan.requirements
+                .iter()
+                .find(|item| item.project_id == CREATE)
+                .map(|item| (item.title.clone(), item.state))
+        };
+        println!("before: {:?} files={}", create(&before), before.files.len());
+        assert_eq!(
+            create(&before).map(|it| it.1),
+            Some(RequirementState::Planned)
+        );
+
+        // 把 Create 自己放进 mods/，不经过我们的安装——就像用户拖进来的。
+        let chosen = candidate(CREATE, "1.20.1", LoaderKind::Forge)
+            .await
+            .expect("lookup")
+            .expect("create file");
+        let file = chosen.file.expect("file");
+        let bytes = reqwest::get(file.url.expect("url"))
+            .await
+            .expect("download")
+            .bytes()
+            .await
+            .expect("body");
+        let mods = crate::instance::paths_for(&paths, &profile)
+            .game_directory(id)
+            .join("mods");
+        std::fs::create_dir_all(&mods).expect("mods");
+        std::fs::write(mods.join(&file.name), &bytes).expect("write");
+
+        let after = resolve(
+            &paths,
+            id,
+            Source::CurseForge,
+            &additions.version_id,
+            ResourceKind::Mod,
+            &crate::supply::Sideload::default(),
+        )
+        .await
+        .expect("plan");
+        println!("after: {:?} files={}", create(&after), after.files.len());
+        assert_eq!(
+            create(&after).map(|it| it.1),
+            Some(RequirementState::Satisfied)
+        );
+        assert_eq!(after.files.len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_real_modpack_resolves() {
+        use crate::supply::{Sideload, cfpack, modpack};
+
+        let hits = search(&SearchQuery {
+            query: std::env::var("FERN_LIVE_PACK").unwrap_or_else(|_| "all the mods 9".to_owned()),
+            kind: ResourceKind::Modpack,
+            ..SearchQuery::default()
+        })
+        .await
+        .expect("search");
+        let pack = hits.hits.first().expect("a pack");
+        let list = versions(&pack.project_id, None).await.expect("versions");
+        let version = list.first().expect("a version");
+        let release = release(&version.id).await.expect("release");
+        let size = release.file.as_ref().map_or(0, |file| file.size);
+        println!("{} {} {} bytes", pack.title, version.name, size);
+
+        let directory = std::env::temp_dir().join(format!("fern-cf-pack-{}", std::process::id()));
+        let file = release.file.expect("file");
+        let bytes = reqwest::get(file.url.expect("pack url"))
+            .await
+            .expect("download")
+            .bytes()
+            .await
+            .expect("body");
+        std::fs::create_dir_all(&directory).expect("mkdir");
+        let archive = directory.join(&file.name);
+        std::fs::write(&archive, &bytes).expect("write");
+
+        let summary = modpack::inspect(&archive).expect("inspect");
+        println!("{summary:?}");
+        let manifest = cfpack::read(&archive).expect("read").expect("manifest");
+        let files = cfpack::resolve(&manifest, &Sideload::default())
+            .await
+            .expect("resolve");
+        let manual: Vec<_> = files.iter().filter_map(|file| file.manual()).collect();
+        let places: std::collections::BTreeMap<&str, usize> =
+            files.iter().fold(Default::default(), |mut map, file| {
+                *map.entry(file.path.split('/').next().unwrap_or(""))
+                    .or_default() += 1;
+                map
+            });
+        println!(
+            "files={} by dir={places:?} manual={}",
+            files.len(),
+            manual.len()
+        );
+        for item in manual.iter().take(5) {
+            println!("  manual: {} {} {}", item.title, item.file_name, item.page);
+        }
+        assert_eq!(files.len(), summary.files);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

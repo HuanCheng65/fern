@@ -275,6 +275,24 @@ pub async fn resolve(
         }
     }
 
+    // CurseForge 不给地址的那几个，先看 Modrinth 上有没有同一份字节（见
+    // `mirrored_on_modrinth`）。有的就不用让用户跑一趟网页了。
+    let blocked: Vec<String> = files
+        .iter()
+        .filter(|file| file.url.is_empty() && !file.sha1.is_empty())
+        .map(|file| file.sha1.clone())
+        .collect();
+    let mirrors = super::mirrored_on_modrinth(&blocked).await;
+    for file in &mut files {
+        if file.url.is_empty()
+            && let Some(url) = mirrors.get(&file.sha1)
+        {
+            file.url = url.clone();
+            file.local = None;
+            file.found = false;
+        }
+    }
+
     // 主项目排在最前：它是用户点的那一个，剩下的是它牵出来的。
     files.sort_by_key(|file| !file.primary);
     let bytes = files.iter().map(|file| file.bytes).sum();
