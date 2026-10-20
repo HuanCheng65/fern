@@ -713,7 +713,7 @@ mod tests {
     fn manifest_continuation_lines_are_joined() {
         // 72 字节折行是 MANIFEST 的规矩，长包名一定会碰上。
         let manifest = "Manifest-Version: 1.0\nMain-Class: net.neoforged.installertools.Conso\n leEntryPoint\nBuild-Jdk: 17\n";
-        let root = std::env::temp_dir().join(format!("fern-manifest-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("fern-forge-manifest-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("create root");
         let jar = root.join("tool.jar");
 
