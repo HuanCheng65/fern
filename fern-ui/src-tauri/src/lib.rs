@@ -1089,25 +1089,41 @@ async fn launch_instance(
 /// 装不装得上是标注，不是过滤器。
 #[tauri::command]
 async fn search_resources(
+    source: fern_core::Source,
     query: fern_core::SearchQuery,
 ) -> Result<fern_core::SearchResult, String> {
-    fern_core::search_modrinth(&query)
+    fern_core::search_supply(source, &query)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
+/// 这一份构建能问哪几家。CurseForge 要构建时注入的密钥，没有就不摆出来。
+#[tauri::command]
+fn supply_sources() -> Vec<fern_core::Source> {
+    [fern_core::Source::Modrinth, fern_core::Source::CurseForge]
+        .into_iter()
+        .filter(|source| source.available())
+        .collect()
+}
+
 /// 一个项目的详情。
 #[tauri::command]
-async fn project_detail(project: String) -> Result<fern_core::ProjectDetail, String> {
-    fern_core::modrinth_project(&project)
+async fn project_detail(
+    source: fern_core::Source,
+    project: String,
+) -> Result<fern_core::ProjectDetail, String> {
+    fern_core::supply_project(source, &project)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
 /// 一个项目的全部版本，新的在前。兼容性由界面按目标实例标注。
 #[tauri::command]
-async fn project_versions(project: String) -> Result<Vec<fern_core::ProjectVersion>, String> {
-    fern_core::modrinth_versions(&project)
+async fn project_versions(
+    source: fern_core::Source,
+    project: String,
+) -> Result<Vec<fern_core::ProjectVersion>, String> {
+    fern_core::supply_versions(source, &project)
         .await
         .map_err(|error| format!("{error:#}"))
 }
@@ -1119,20 +1135,22 @@ async fn project_versions(project: String) -> Result<Vec<fern_core::ProjectVersi
 #[tauri::command]
 async fn install_plan(
     instance_id: String,
+    source: fern_core::Source,
     version_id: String,
     kind: fern_core::ResourceKind,
 ) -> Result<fern_core::InstallPlan, String> {
     let paths = paths()?;
-    fern_core::resolve_install_plan(&paths, &instance_id, &version_id, kind)
+    fern_core::resolve_install_plan(&paths, &instance_id, source, &version_id, kind)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
 /// 装一个版本。模组会连同**还缺的**必需依赖一起装。
 #[tauri::command]
-async fn install_from_modrinth(
+async fn install_resource(
     app: tauri::AppHandle,
     instance_id: String,
+    source: fern_core::Source,
     version_id: String,
     kind: fern_core::ResourceKind,
     title: String,
@@ -1141,9 +1159,10 @@ async fn install_from_modrinth(
     let paths = paths()?;
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
-    let result = fern_core::install_from_modrinth(&paths, &instance_id, &version_id, kind, &job)
-        .await
-        .map_err(|error| format!("{error:#}"));
+    let result =
+        fern_core::install_from_supply(&paths, &instance_id, source, &version_id, kind, &job)
+            .await
+            .map_err(|error| format!("{error:#}"));
     job.finish(&result);
     result
 }
@@ -1165,6 +1184,7 @@ async fn update_mod(
     app: tauri::AppHandle,
     instance_id: String,
     file_name: String,
+    source: fern_core::Source,
     version_id: String,
     title: String,
     subjects: Vec<String>,
@@ -1172,7 +1192,7 @@ async fn update_mod(
     let paths = paths()?;
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
-    let result = fern_core::update_mod(&paths, &instance_id, &file_name, &version_id, &job)
+    let result = fern_core::update_mod(&paths, &instance_id, &file_name, source, &version_id, &job)
         .await
         .map_err(|error| format!("{error:#}"));
     job.finish(&result);
@@ -1262,10 +1282,11 @@ async fn import_prism_instance(
     .await?
 }
 
-/// 从 Modrinth 装一个整合包。它建的是一个**新实例**，不是装进已有的实例。
+/// 从补给站装一个整合包。它建的是一个**新实例**，不是装进已有的实例。
 #[tauri::command]
 async fn install_modpack(
     app: tauri::AppHandle,
+    source: fern_core::Source,
     version_id: String,
     name: Option<String>,
     title: String,
@@ -1274,8 +1295,9 @@ async fn install_modpack(
     let paths = paths()?;
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
-    let result = fern_core::install_modpack_from_modrinth(
+    let result = fern_core::install_modpack_from_supply(
         &paths,
+        source,
         &version_id,
         name.as_deref().filter(|value| !value.is_empty()),
         &job,
@@ -1797,7 +1819,8 @@ pub fn run() {
             import_modpack,
             project_versions,
             install_plan,
-            install_from_modrinth,
+            install_resource,
+            supply_sources,
             list_mods,
             list_saves,
             trash_save,

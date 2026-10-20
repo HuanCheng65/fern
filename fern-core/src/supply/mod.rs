@@ -1,7 +1,8 @@
-//! 补给站：Modrinth。
+//! 补给站：Modrinth 与 CurseForge。
 //!
-//! 先接 Modrinth 而不是 CurseForge：它的 API 公开、无需鉴权、协议清楚。
-//! CurseForge 要申请 API key 并把密钥分发进客户端，那是另一码事。
+//! 两家各在自己的文件里（`modrinth.rs`、`curseforge.rs`），只管「URL 怎么拼、
+//! JSON 长什么样」。这里是和来源无关的那一半：搜索条件、详情、版本、安装计划
+//! 和安装本身都按 [`Source`] 分派，界面只认中性的名字。
 //!
 //! 这一层只负责「去哪里找、下哪个文件」。文件落进 `mods/` 之后就归 `mods`
 //! 模块管——补给是获取，管理是状态，两件事。
@@ -13,26 +14,20 @@
 //! 整合包是这一层的另一条支线，在 `modpack.rs`：装它不是「装东西到某个实例」，
 //! 是**建一个实例**。
 
+mod http;
 pub(crate) mod modpack;
+mod modrinth;
 pub(crate) mod plan;
 pub mod survey;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use fern_download::{DownloadEvent, DownloadTask};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{DataPaths, LoaderKind};
 
-const API: &str = "https://api.modrinth.com/v2";
-
-/// Modrinth 要求调用方表明身份，并据此做速率限制（每分钟 300 次）。
-/// 匿名调用会被降级甚至拒绝。
-const USER_AGENT: &str = concat!(
-    "HuanCheng65/fern/",
-    env!("CARGO_PKG_VERSION"),
-    " (github.com/HuanCheng65/fern)"
-);
+pub(crate) use modrinth::known_files;
 
 /// 一次装依赖最多跟这么深。真实的依赖链两三层就到头，留点余量，主要是防
 /// 上游数据里出现环让我们一直转下去。
@@ -40,17 +35,17 @@ const MAX_DEPTH: usize = 6;
 
 /// 东西是从哪一家来的。
 ///
-/// 目前只有 Modrinth 一家在跑，但**这个枚举要先存在**：它会被写进来源日志，
-/// 而那份日志是磁盘上的、补不回来的东西。等接 CurseForge 时再加字段，就是一次
-/// 迁移；现在加，是零成本。
+/// 它会被写进来源日志，而那份日志是磁盘上的、补不回来的东西——所以 serde 的
+/// 名字和 [`Source::tag`] 必须是同一个词，测试盯着。
 ///
 /// 两家的 id 类型不一样——Modrinth 是字符串（`AANobbMI`），CurseForge 是整数
-/// （`394468`）。日志里一律按字符串存：它只用来回查，不参与运算。
+/// （`394468`）。一律按字符串存、按字符串传：它只用来回查，不参与运算。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
     #[default]
     Modrinth,
+    #[serde(rename = "curseforge")]
     CurseForge,
 }
 
@@ -60,6 +55,25 @@ impl Source {
         match self {
             Self::Modrinth => "modrinth",
             Self::CurseForge => "curseforge",
+        }
+    }
+
+    /// 这一份构建能不能问这一家。
+    ///
+    /// CurseForge 要一把密钥，在构建时注入；本地开发没配的话，补给站就只有
+    /// Modrinth——界面据此决定摆不摆来源切换，而不是摆一个点了就报错的按钮。
+    pub fn available(self) -> bool {
+        match self {
+            Self::Modrinth => true,
+            Self::CurseForge => false,
+        }
+    }
+
+    /// 网站上这个项目的页面。详情页给一个「在网站上打开」，正文交给浏览器。
+    fn label(self) -> &'static str {
+        match self {
+            Self::Modrinth => "Modrinth",
+            Self::CurseForge => "CurseForge",
         }
     }
 }
@@ -176,6 +190,7 @@ pub struct ProjectDetail {
     pub loaders: Vec<String>,
     /// 外部链接。只保留 https 的，其余当没有。
     pub links: Vec<ProjectLink>,
+    pub source: Source,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -197,6 +212,7 @@ pub struct SearchHit {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
     pub categories: Vec<String>,
+    pub source: Source,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -220,6 +236,7 @@ pub struct ProjectVersion {
     pub date_published: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_name: Option<String>,
+    pub source: Source,
     /// 这个版本声明的依赖，原样带上。
     ///
     /// 只有 id，没有名字——列表里每一行都去换一次名字是几十次请求。想知道
@@ -236,231 +253,135 @@ pub struct VersionDependency {
     pub kind: plan::DependencyKind,
 }
 
-// ——— 线上的 JSON 形状，只取用得上的字段 ———
-
-#[derive(Debug, Deserialize)]
-struct RawSearch {
-    hits: Vec<RawHit>,
-    total_hits: u64,
+/// 一个版本，翻成两家都说得出的形状。安装计划只认这个。
+#[derive(Debug, Clone)]
+pub(crate) struct Release {
+    pub project_id: String,
+    pub version_id: String,
+    pub name: String,
+    pub version_number: String,
+    /// 要装的那一个文件。没有就是这个版本没东西可装。
+    pub file: Option<ReleaseFile>,
+    pub dependencies: Vec<Dependency>,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawHit {
-    project_id: String,
-    slug: String,
-    title: String,
-    description: String,
-    #[serde(default)]
-    author: String,
-    #[serde(default)]
-    downloads: u64,
-    #[serde(default)]
-    icon_url: Option<String>,
-    #[serde(default)]
-    categories: Vec<String>,
+#[derive(Debug, Clone)]
+pub(crate) struct ReleaseFile {
+    /// CurseForge 上作者不允许第三方分发的文件没有下载地址，只能去网页上下。
+    pub url: Option<String>,
+    pub name: String,
+    pub size: u64,
+    /// 老文件偶尔没有 sha1。没有就是一次不校验的下载。
+    pub sha1: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawProject {
-    id: String,
-    slug: String,
-    title: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    project_type: String,
-    #[serde(default)]
-    categories: Vec<String>,
-    #[serde(default)]
-    icon_url: Option<String>,
-    #[serde(default)]
-    gallery: Vec<RawGallery>,
-    #[serde(default)]
-    downloads: u64,
-    #[serde(default)]
-    followers: u64,
-    #[serde(default)]
-    updated: String,
-    #[serde(default)]
-    license: Option<RawLicense>,
-    #[serde(default)]
-    game_versions: Vec<String>,
-    #[serde(default)]
-    loaders: Vec<String>,
-    #[serde(default)]
-    source_url: Option<String>,
-    #[serde(default)]
-    issues_url: Option<String>,
-    #[serde(default)]
-    wiki_url: Option<String>,
-    #[serde(default)]
-    discord_url: Option<String>,
+#[derive(Debug, Clone)]
+pub(crate) struct Dependency {
+    pub project_id: Option<String>,
+    /// 少数依赖钉死了版本而不给项目。
+    pub version_id: Option<String>,
+    pub kind: plan::DependencyKind,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawGallery {
-    url: String,
-    #[serde(default)]
-    title: Option<String>,
+/// 这一家在这份构建里问不了。
+fn unavailable(source: Source) -> anyhow::Error {
+    anyhow!("此版本未接入 {}", source.label())
 }
 
-#[derive(Debug, Deserialize)]
-struct RawLicense {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawVersion {
-    id: String,
-    project_id: String,
-    name: String,
-    version_number: String,
-    version_type: String,
-    #[serde(default)]
-    game_versions: Vec<String>,
-    #[serde(default)]
-    loaders: Vec<String>,
-    #[serde(default)]
-    downloads: u64,
-    #[serde(default)]
-    date_published: String,
-    #[serde(default)]
-    files: Vec<RawFile>,
-    #[serde(default)]
-    dependencies: Vec<RawDependency>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawFile {
-    url: String,
-    filename: String,
-    #[serde(default)]
-    primary: bool,
-    #[serde(default)]
-    size: u64,
-    hashes: RawHashes,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct RawHashes {
-    #[serde(default)]
-    sha1: String,
-    /// 导出 mrpack 时要写进 `hashes`，格式要求两个都有，而这一个只有上游算得出来。
-    #[serde(default)]
-    sha512: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawDependency {
-    #[serde(default)]
-    version_id: Option<String>,
-    #[serde(default)]
-    project_id: Option<String>,
-    #[serde(default)]
-    dependency_type: String,
-}
-
-impl RawVersion {
-    /// 一个版本可能挂多个文件（源码包、附带资源包）。`primary` 才是要装的
-    /// 那一个；上游偶尔不标，退回第一个。
-    fn primary_file(&self) -> Option<&RawFile> {
-        self.files
-            .iter()
-            .find(|file| file.primary)
-            .or_else(|| self.files.first())
+/// 搜索。条件全部来自调用方，一个都不从「当前实例」推断。
+pub async fn search(source: Source, request: &SearchQuery) -> Result<SearchResult> {
+    match source {
+        Source::Modrinth => modrinth::search(request).await,
+        Source::CurseForge => Err(unavailable(source)),
     }
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .expect("valid modrinth client")
-}
-
-/// 每个请求试几次。装一个带依赖的模组要发 N+1 次请求，任何一次抖动都会让
-/// 整个安装失败——而 TLS 握手在不稳的网络上说断就断。
-const ATTEMPTS: u32 = 3;
-
-async fn get<T: serde::de::DeserializeOwned>(url: &str) -> Result<T> {
-    let mut last_error = None;
-    for attempt in 0..ATTEMPTS {
-        if attempt > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(300u64 << attempt)).await;
-        }
-        match attempt_get(url).await {
-            Ok(bytes) => return serde_json::from_slice(&bytes).context("解析 Modrinth 的响应"),
-            // 服务端明确的拒绝重试没有意义，直接抛出去。
-            Err(Refusal::Final(error)) => return Err(error),
-            Err(Refusal::Retryable(error)) => last_error = Some(error),
-        }
+/// 项目详情。
+pub async fn project(source: Source, id: &str) -> Result<ProjectDetail> {
+    match source {
+        Source::Modrinth => modrinth::project(id).await,
+        Source::CurseForge => Err(unavailable(source)),
     }
-    Err(last_error
-        .unwrap_or_else(|| anyhow!("请求 {url} 失败"))
-        .context(format!("请求 {url}")))
 }
 
-/// 带 JSON 请求体的那一种。只有按 hash 批量查版本用得上。
+/// 一个项目的全部版本，新的在前。
 ///
-/// 不做重试：POST 在语义上不保证幂等，而这一个具体的接口失败了就退回「不知道
-/// 装了什么」，比反复敲上游好。
-async fn post<T: serde::de::DeserializeOwned>(url: &str, body: Vec<u8>) -> Result<T> {
-    let response = client()
-        .post(url)
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .await
-        .with_context(|| format!("请求 {url}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(anyhow!("Modrinth 返回 HTTP {status}"));
+/// 不在这里按目标实例筛。详情页要把所有版本都摆出来，装不上的标出来而不是
+/// 藏起来——「这个模组还没适配 1.21」是用户需要知道的事实，一个空列表说不了
+/// 这句话。
+pub async fn versions(source: Source, project: &str) -> Result<Vec<ProjectVersion>> {
+    match source {
+        Source::Modrinth => modrinth::versions(project).await,
+        Source::CurseForge => Err(unavailable(source)),
     }
-    let bytes = response.bytes().await.context("读取 Modrinth 的响应")?;
-    serde_json::from_slice(&bytes).context("解析 Modrinth 的响应")
 }
 
-enum Refusal {
-    /// 再试也是这个结果。
-    Final(anyhow::Error),
-    /// 网络层面的抖动，值得再来一次。
-    Retryable(anyhow::Error),
+pub(crate) async fn release(source: Source, version_id: &str) -> Result<Release> {
+    match source {
+        Source::Modrinth => modrinth::release(version_id).await,
+        Source::CurseForge => Err(unavailable(source)),
+    }
 }
 
-async fn attempt_get(url: &str) -> std::result::Result<Vec<u8>, Refusal> {
-    let response = match client().get(url).send().await {
-        Ok(response) => response,
-        Err(error) => return Err(Refusal::Retryable(error.into())),
+pub(crate) async fn candidate(
+    source: Source,
+    project: &str,
+    game_version: &str,
+    loader: LoaderKind,
+) -> Result<Option<Release>> {
+    match source {
+        Source::Modrinth => modrinth::candidate(project, game_version, loader).await,
+        Source::CurseForge => Err(unavailable(source)),
+    }
+}
+
+/// 一批项目 id 分别叫什么。id 对用户没有任何意义。
+pub(crate) async fn project_names(
+    source: Source,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, plan::Named>> {
+    match source {
+        Source::Modrinth => modrinth::project_names(ids).await,
+        Source::CurseForge => Err(unavailable(source)),
+    }
+}
+
+/// 把一个版本的主文件下到指定位置，返回落盘的路径。
+///
+/// 整合包要先把包体拿到手才能读里面的清单，所以它走这一条而不是 `install`
+/// ——那一条的前提是「文件放进某个实例的某个目录」。
+pub async fn fetch_release_file(
+    source: Source,
+    version_id: &str,
+    directory: &std::path::Path,
+    events: &UnboundedSender<DownloadEvent>,
+) -> Result<std::path::PathBuf> {
+    let version = release(source, version_id).await?;
+    let file = version
+        .file
+        .ok_or_else(|| anyhow!("{} 这个版本没有可下载的文件", version.name))?;
+    let url = file
+        .url
+        .ok_or_else(|| anyhow!("{} 的作者不允许第三方启动器下载这个文件", version.name))?;
+    tokio::fs::create_dir_all(directory).await?;
+    let destination = fern_download::safe_join(directory, std::path::Path::new(&file.name))?;
+    let task = match file.sha1.as_deref() {
+        Some(sha1) if file.size > 0 => {
+            DownloadTask::new(destination.clone(), &url, sha1, file.size)?
+        }
+        _ => DownloadTask::unverified(destination.clone(), &url)?,
     };
-    let status = response.status();
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(Refusal::Final(anyhow!("请求过于频繁，稍后再试")));
-    }
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(Refusal::Final(anyhow!("Modrinth 上没有这个条目")));
-    }
-    if status.is_client_error() {
-        return Err(Refusal::Final(anyhow!("Modrinth 返回 HTTP {status}")));
-    }
-    if !status.is_success() {
-        return Err(Refusal::Retryable(anyhow!("Modrinth 返回 HTTP {status}")));
-    }
-    match response.bytes().await {
-        Ok(bytes) => Ok(bytes.to_vec()),
-        Err(error) => Err(Refusal::Retryable(error.into())),
-    }
+    crate::data::downloader::client(4)
+        .download_all(vec![task], events)
+        .await?;
+    Ok(destination)
 }
 
-/// 这个加载器在 Modrinth 上对应哪些标签。
+/// 这个加载器在补给站上对应哪些标签。两家都翻成这同一套小写名字。
 ///
 /// Quilt 能直接加载 Fabric 模组，而大多数作者只标 fabric——只按 quilt 过滤
 /// 会得到一个几乎空的列表。反过来 Forge 和 NeoForge 不能混，别合并。
-fn loader_tags(loader: LoaderKind) -> Vec<&'static str> {
+pub(crate) fn loader_tags(loader: LoaderKind) -> Vec<&'static str> {
     match loader {
         LoaderKind::Fabric => vec!["fabric"],
         LoaderKind::Quilt => vec!["quilt", "fabric"],
@@ -470,136 +391,6 @@ fn loader_tags(loader: LoaderKind) -> Vec<&'static str> {
         // 得到的是一个空列表，不如不过滤，让人按游戏版本自己找。
         LoaderKind::Vanilla | LoaderKind::LiteLoader => Vec::new(),
     }
-}
-
-fn json_array(values: &[&str]) -> String {
-    let quoted: Vec<String> = values.iter().map(|value| format!("\"{value}\"")).collect();
-    format!("[{}]", quoted.join(","))
-}
-
-/// 搜索。
-///
-/// 条件全部来自调用方，一个都不从「当前实例」推断。不写条件就是不限，于是
-/// 补给站默认是在浏览整个 Modrinth，而不是在浏览「这个实例装得上的东西」。
-pub async fn search(request: &SearchQuery) -> Result<SearchResult> {
-    let kind = request.kind;
-    let mut facets = vec![json_array(&[&format!(
-        "project_type:{}",
-        kind.project_type()
-    )])];
-    if !request.game_version.is_empty() {
-        facets.push(json_array(&[&format!("versions:{}", request.game_version)]));
-    }
-    if !request.category.is_empty() {
-        facets.push(json_array(&[&format!("categories:{}", request.category)]));
-    }
-    if let Some(loader) = request.loader.filter(|_| kind.honours_loader()) {
-        let tags = loader_tags(loader);
-        if !tags.is_empty() {
-            // 同一个 facet 数组里的条目是「或」的关系，正好用来表达 quilt 或 fabric。
-            let any: Vec<String> = tags.iter().map(|tag| format!("categories:{tag}")).collect();
-            facets.push(json_array(
-                &any.iter().map(String::as_str).collect::<Vec<_>>(),
-            ));
-        }
-    }
-    let sort = match request.sort.as_str() {
-        "downloads" | "follows" | "newest" | "updated" => request.sort.as_str(),
-        _ => "relevance",
-    };
-    let url = format!(
-        "{API}/search?query={}&index={sort}&offset={}&limit={}&facets={}",
-        urlencoding(&request.query),
-        request.offset,
-        request.limit.clamp(1, 100),
-        urlencoding(&format!("[{}]", facets.join(",")))
-    );
-
-    let raw: RawSearch = get(&url).await?;
-    Ok(SearchResult {
-        total: raw.total_hits,
-        hits: raw
-            .hits
-            .into_iter()
-            .map(|hit| SearchHit {
-                project_id: hit.project_id,
-                slug: hit.slug,
-                title: hit.title,
-                description: hit.description,
-                author: hit.author,
-                downloads: hit.downloads,
-                icon_url: hit.icon_url.filter(|url| !url.is_empty()),
-                categories: hit.categories,
-            })
-            .collect(),
-    })
-}
-
-/// 一个项目的全部版本，新的在前。
-///
-/// 不在这里按目标实例筛。详情页要把所有版本都摆出来，装不上的标出来而不是
-/// 藏起来——「这个模组还没适配 1.21」是用户需要知道的事实，一个空列表说不了
-/// 这句话。
-pub async fn versions(project: &str) -> Result<Vec<ProjectVersion>> {
-    let raw: Vec<RawVersion> = get(&format!("{API}/project/{project}/version")).await?;
-    Ok(raw.into_iter().map(describe).collect())
-}
-
-/// 项目详情。
-pub async fn project(slug: &str) -> Result<ProjectDetail> {
-    let raw: RawProject = get(&format!("{API}/project/{slug}")).await?;
-    let mut links = Vec::new();
-    for (label, url) in [
-        ("源码", raw.source_url),
-        ("问题追踪", raw.issues_url),
-        ("百科", raw.wiki_url),
-        ("Discord", raw.discord_url),
-    ] {
-        // 链接来自上游，非 https 的一律当没有——详情页上的每一个都会被点。
-        if let Some(url) = url.filter(|url| is_external_url(url)) {
-            links.push(ProjectLink {
-                label: label.to_owned(),
-                url,
-            });
-        }
-    }
-    links.push(ProjectLink {
-        label: "Modrinth 页面".to_owned(),
-        url: format!("https://modrinth.com/{}/{}", raw.project_type, raw.slug),
-    });
-
-    Ok(ProjectDetail {
-        id: raw.id,
-        slug: raw.slug,
-        title: raw.title,
-        description: raw.description,
-        project_type: raw.project_type,
-        categories: raw.categories,
-        icon_url: raw.icon_url.filter(|url| !url.is_empty()),
-        gallery: raw
-            .gallery
-            .into_iter()
-            .map(|image| GalleryImage {
-                title: image.title.unwrap_or_default(),
-                url: image.url,
-            })
-            .collect(),
-        downloads: raw.downloads,
-        followers: raw.followers,
-        updated: raw.updated,
-        // 上游的 name 可能是空串而不是缺失，所以按「第一个非空」取，别用
-        // unwrap_or——那样会得到一个空的许可证栏。
-        license: raw
-            .license
-            .map(|license| {
-                let name = license.name.unwrap_or_default();
-                if name.is_empty() { license.id } else { name }
-            })
-            .unwrap_or_default(),
-        game_versions: raw.game_versions,
-        loaders: raw.loaders,
-        links,
-    })
 }
 
 /// 能不能交给系统浏览器打开。
@@ -614,188 +405,6 @@ pub fn is_external_url(raw: &str) -> bool {
     url.scheme() == "https" && url.host_str().is_some_and(|host| !host.is_empty())
 }
 
-async fn raw_versions(
-    project: &str,
-    game_version: &str,
-    loader: LoaderKind,
-) -> Result<Vec<RawVersion>> {
-    let mut url = format!("{API}/project/{project}/version");
-    let mut query = Vec::new();
-    if !game_version.is_empty() {
-        query.push(format!(
-            "game_versions={}",
-            urlencoding(&json_array(&[game_version]))
-        ));
-    }
-    let tags = loader_tags(loader);
-    if !tags.is_empty() {
-        query.push(format!("loaders={}", urlencoding(&json_array(&tags))));
-    }
-    if !query.is_empty() {
-        url.push('?');
-        url.push_str(&query.join("&"));
-    }
-    get(&url).await
-}
-
-async fn raw_version(version_id: &str) -> Result<RawVersion> {
-    get(&format!("{API}/version/{version_id}")).await
-}
-
-/// 一批 sha1 分别是哪个版本。
-///
-/// 这是 Modrinth 上唯一可靠的「这个文件是什么」——文件名不是身份，同一个模组
-/// 从不同渠道拿到的文件名可以完全不同。一次问一批，不是一个文件一次。
-async fn versions_by_hash(
-    hashes: &[String],
-) -> Result<std::collections::HashMap<String, survey::KnownVersion>> {
-    #[derive(Serialize)]
-    struct Request<'a> {
-        hashes: &'a [String],
-        algorithm: &'a str,
-    }
-
-    let mut out = std::collections::HashMap::new();
-    // 一次问太多会被上游拒绝，也会把一次失败的代价放大到整批。
-    for chunk in hashes.chunks(100) {
-        let body = serde_json::to_vec(&Request {
-            hashes: chunk,
-            algorithm: "sha1",
-        })?;
-        let found: std::collections::HashMap<String, RawVersion> =
-            post(&format!("{API}/version_files"), body).await?;
-        for (hash, version) in found {
-            out.insert(
-                hash,
-                survey::KnownVersion {
-                    project_id: version.project_id,
-                    version_id: version.id,
-                    version_number: version.version_number,
-                    game_versions: version.game_versions,
-                    loaders: version.loaders,
-                },
-            );
-        }
-    }
-    Ok(out)
-}
-
-/// 一批 sha1 各自最新的**这个实例装得上的**版本。
-///
-/// 筛选交给上游做（`loaders` 和 `game_versions` 两个参数），而不是拉回整份版本
-/// 列表自己挑：一个实例三百个模组，那是三百次请求换一个上游一次就能答的问题。
-///
-/// 上游对每个 hash 回的可能就是手上这一份（已经是最新的了）。判断「算不算有
-/// 新版」在调用方，这里只负责把答案带回来。
-async fn latest_by_hash(
-    hashes: &[String],
-    game_version: &str,
-    loader: LoaderKind,
-) -> Result<std::collections::HashMap<String, survey::KnownVersion>> {
-    let tags = loader_tags(loader);
-    let mut out = std::collections::HashMap::new();
-    for chunk in hashes.chunks(100) {
-        let mut body = serde_json::json!({
-            "hashes": chunk,
-            "algorithm": "sha1",
-            "game_versions": [game_version],
-        });
-        // 原版实例没有加载器标签。传一个空数组等于要求「不属于任何加载器的
-        // 版本」，那会把所有东西筛光。
-        if !tags.is_empty() {
-            body["loaders"] = serde_json::json!(tags);
-        }
-        let found: std::collections::HashMap<String, RawVersion> = post(
-            &format!("{API}/version_files/update"),
-            serde_json::to_vec(&body)?,
-        )
-        .await?;
-        for (hash, version) in found {
-            out.insert(
-                hash.to_ascii_lowercase(),
-                survey::KnownVersion {
-                    project_id: version.project_id,
-                    version_id: version.id,
-                    version_number: version.version_number,
-                    game_versions: version.game_versions,
-                    loaders: version.loaders,
-                },
-            );
-        }
-    }
-    Ok(out)
-}
-
-/// 一批项目 id 分别叫什么。id 对用户没有任何意义。
-async fn project_names(ids: &[String]) -> Result<std::collections::HashMap<String, plan::Named>> {
-    let mut unique: Vec<&str> = ids.iter().map(String::as_str).collect();
-    unique.sort_unstable();
-    unique.dedup();
-    if unique.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let query = urlencoding(&json_array(&unique));
-    let projects: Vec<RawProject> = get(&format!("{API}/projects?ids={query}")).await?;
-    Ok(projects
-        .into_iter()
-        .map(|project| {
-            (
-                project.id,
-                plan::Named {
-                    slug: project.slug,
-                    title: project.title,
-                    icon_url: project.icon_url,
-                },
-            )
-        })
-        .collect())
-}
-
-fn describe(raw: RawVersion) -> ProjectVersion {
-    let file_name = raw.primary_file().map(|file| file.filename.clone());
-    ProjectVersion {
-        id: raw.id,
-        name: raw.name,
-        version_number: raw.version_number,
-        version_type: raw.version_type,
-        game_versions: raw.game_versions,
-        loaders: raw.loaders,
-        downloads: raw.downloads,
-        date_published: raw.date_published,
-        file_name,
-        dependencies: raw
-            .dependencies
-            .iter()
-            .map(|dependency| VersionDependency {
-                project_id: dependency.project_id.clone().filter(|id| !id.is_empty()),
-                kind: plan::DependencyKind::from_api(&dependency.dependency_type),
-            })
-            .collect(),
-    }
-}
-
-/// 把一个版本的主文件下到指定位置，返回落盘的路径。
-///
-/// 整合包要先把 `.mrpack` 拿到手才能读里面的 index，所以它走这一条而不是
-/// `install`——那一条的前提是「文件放进某个实例的某个目录」。
-pub async fn fetch_primary_file(
-    version_id: &str,
-    directory: &std::path::Path,
-    events: &UnboundedSender<DownloadEvent>,
-) -> Result<std::path::PathBuf> {
-    let version: RawVersion = get(&format!("{API}/version/{version_id}")).await?;
-    let file = version
-        .primary_file()
-        .ok_or_else(|| anyhow!("{} 这个版本没有可下载的文件", version.name))?;
-    tokio::fs::create_dir_all(directory).await?;
-    let destination = fern_download::safe_join(directory, std::path::Path::new(&file.filename))?;
-    let task = DownloadTask::new(destination.clone(), &file.url, &file.hashes.sha1, file.size)?;
-    crate::data::downloader::client(4)
-        .download_all(vec![task], events)
-        .await?;
-    Ok(destination)
-}
-
 /// 装一个版本，连同它缺的那些必需依赖。
 ///
 /// 「缺的」是这里的关键词：计划由 [`plan::resolve`] 算，它看得见实例里已经有
@@ -804,6 +413,7 @@ pub async fn fetch_primary_file(
 pub async fn install(
     paths: &DataPaths,
     instance_id: &str,
+    source: Source,
     version_id: &str,
     kind: ResourceKind,
     job: &crate::Job,
@@ -823,7 +433,7 @@ pub async fn install(
         .join(subdirectory);
     tokio::fs::create_dir_all(&directory).await?;
 
-    let plan = plan::resolve(paths, instance_id, version_id, kind).await?;
+    let plan = plan::resolve(paths, instance_id, source, version_id, kind).await?;
     if kind == ResourceKind::Mod {
         // 改模组之前先拍一张。用户以为自己只是装了个模组，而这一步可能让
         // 存档打不开（docs/fern-backup-design.md §1）。放在解析计划之后、
@@ -856,13 +466,14 @@ pub async fn install(
 
     let mut tasks = Vec::new();
     for file in &plan.files {
-        // Modrinth 每个文件都给 sha1，所以这里是有校验的下载。
-        tasks.push(DownloadTask::new(
-            fern_download::safe_join(&directory, std::path::Path::new(&file.file_name))?,
-            &file.url,
-            &file.sha1,
-            file.bytes,
-        )?);
+        let destination =
+            fern_download::safe_join(&directory, std::path::Path::new(&file.file_name))?;
+        // 上游给了 sha1 和大小就校验；CurseForge 的老文件偶尔两样都没有。
+        tasks.push(if file.sha1.is_empty() || file.bytes == 0 {
+            DownloadTask::unverified(destination, &file.url)?
+        } else {
+            DownloadTask::new(destination, &file.url, &file.sha1, file.bytes)?
+        });
     }
 
     job.step(if tasks.len() > 1 {
@@ -891,7 +502,7 @@ pub async fn install(
                     &directory.join(&file.file_name),
                 ),
                 origin: crate::instance::origin::Origin::Supply {
-                    source: Source::Modrinth,
+                    source,
                     project_id: file.project_id.clone(),
                     version_id: file.version_id.clone(),
                 },
@@ -926,18 +537,27 @@ pub async fn update_mod(
     paths: &DataPaths,
     instance_id: &str,
     file_name: &str,
+    source: Source,
     version_id: &str,
     job: &crate::Job,
 ) -> Result<InstallOutcome> {
     // 新版那份文件叫什么，装之前就要知道：和旧的同名时，那一份已经被覆盖了，
     // 再去删就是把刚下下来的东西删掉。
-    let incoming = raw_version(version_id)
+    let incoming = release(source, version_id)
         .await?
-        .primary_file()
-        .map(|file| file.filename.clone())
+        .file
+        .map(|file| file.name)
         .ok_or_else(|| anyhow!("这个版本没有可下载的文件"))?;
 
-    let outcome = install(paths, instance_id, version_id, ResourceKind::Mod, job).await?;
+    let outcome = install(
+        paths,
+        instance_id,
+        source,
+        version_id,
+        ResourceKind::Mod,
+        job,
+    )
+    .await?;
 
     if incoming != file_name {
         crate::instance::mods::remove(paths, instance_id, file_name)?;
@@ -966,71 +586,11 @@ pub struct InstallOutcome {
 /// 磁盘上一个 jar 在 Modrinth 上的身份。
 ///
 /// 按内容哈希反查，而不是靠安装时记下来的来源：后者对用户自己拖进来的 jar
-/// 无效，也会随时间和实际文件对不上，而哈希描述的永远是磁盘上真正的那一份。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KnownFile {
-    pub project_id: String,
-    pub version_id: String,
-    pub url: String,
-    pub file_name: String,
-    pub size: u64,
-    pub sha1: String,
-    /// mrpack 的 `hashes` 两个都要，而 sha512 只有上游算得出来。
-    pub sha512: String,
-}
-
-/// 一批 sha1 分别属于哪个版本。查不到的不在返回值里。
-///
-/// 一次请求问完全部：三百个模组发三百次请求会被速率限制挡下来，而这个端点
-/// 本来就是为批量查询设计的。
-pub(crate) async fn known_files(
-    hashes: &[String],
-) -> Result<std::collections::HashMap<String, KnownFile>> {
-    if hashes.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-
-    let response = client()
-        .post(format!("{API}/version_files"))
-        .json(&serde_json::json!({ "hashes": hashes, "algorithm": "sha1" }))
-        .send()
-        .await
-        .context("向 Modrinth 反查模组来源")?
-        .error_for_status()
-        .context("Modrinth 拒绝了这次反查")?;
-    let raw: std::collections::HashMap<String, RawVersion> =
-        response.json().await.context("解析 Modrinth 的响应")?;
-
-    Ok(raw
-        .into_iter()
-        .filter_map(|(hash, version)| {
-            // 一个版本可能挂好几个文件，要的是哈希对得上的那一个。
-            let file = version
-                .files
-                .iter()
-                .find(|file| file.hashes.sha1.eq_ignore_ascii_case(&hash))?;
-            Some((
-                hash.to_ascii_lowercase(),
-                KnownFile {
-                    project_id: version.project_id.clone(),
-                    version_id: version.id.clone(),
-                    url: file.url.clone(),
-                    file_name: file.filename.clone(),
-                    size: file.size,
-                    sha1: file.hashes.sha1.clone(),
-                    sha512: file.hashes.sha512.clone(),
-                },
-            ))
-        })
-        .collect())
-}
-
 /// 只转义查询串里真正会出事的那几个字符。
 ///
 /// 不引一个 URL 编码库：这里拼的都是我们自己构造的 facet 和用户输入的搜索词，
 /// 需要处理的字符是可枚举的。
-fn urlencoding(value: &str) -> String {
+pub(crate) fn urlencoding(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {
@@ -1068,54 +628,6 @@ mod tests {
     }
 
     #[test]
-    fn the_primary_file_wins_over_the_extras() {
-        // 一个版本可能挂源码包和附带资源包，装错了就是装了个源码。
-        let raw: RawVersion = serde_json::from_str(
-            r#"{"id":"v","project_id":"p","name":"n","version_number":"1",
-                "version_type":"release",
-                "files":[
-                  {"url":"https://x/sources.jar","filename":"sources.jar","primary":false,
-                   "size":1,"hashes":{"sha1":"aa"}},
-                  {"url":"https://x/mod.jar","filename":"mod.jar","primary":true,
-                   "size":2,"hashes":{"sha1":"bb"}}]}"#,
-        )
-        .expect("parse");
-        assert_eq!(raw.primary_file().unwrap().filename, "mod.jar");
-
-        // 上游偶尔一个都不标 primary，那就用第一个，不能什么都不装。
-        let unmarked: RawVersion = serde_json::from_str(
-            r#"{"id":"v","project_id":"p","name":"n","version_number":"1",
-                "version_type":"release",
-                "files":[{"url":"https://x/a.jar","filename":"a.jar","primary":false,
-                          "size":1,"hashes":{"sha1":"aa"}}]}"#,
-        )
-        .expect("parse");
-        assert_eq!(unmarked.primary_file().unwrap().filename, "a.jar");
-    }
-
-    #[test]
-    fn only_required_dependencies_are_installed() {
-        // optional 是作者的建议不是要求；incompatible 装了会坏事。
-        let raw: RawVersion = serde_json::from_str(
-            r#"{"id":"v","project_id":"p","name":"n","version_number":"1",
-                "version_type":"release","files":[],
-                "dependencies":[
-                  {"project_id":"a","dependency_type":"required"},
-                  {"project_id":"b","dependency_type":"optional"},
-                  {"project_id":"c","dependency_type":"incompatible"},
-                  {"project_id":"d","dependency_type":"embedded"}]}"#,
-        )
-        .expect("parse");
-        let required: Vec<_> = raw
-            .dependencies
-            .iter()
-            .filter(|dependency| dependency.dependency_type == "required")
-            .filter_map(|dependency| dependency.project_id.clone())
-            .collect();
-        assert_eq!(required, vec!["a"]);
-    }
-
-    #[test]
     fn only_https_links_are_handed_to_the_system_opener() {
         assert!(is_external_url("https://modrinth.com/mod/sodium"));
         assert!(is_external_url("https://github.com/some/repo"));
@@ -1147,9 +659,14 @@ mod tests {
     }
 
     #[test]
-    fn the_user_agent_identifies_this_launcher() {
-        // Modrinth 按 User-Agent 做速率限制，匿名调用会被降级甚至拒绝。
-        assert!(USER_AGENT.contains("fern"));
-        assert!(USER_AGENT.contains("github.com"));
+    fn the_log_and_the_wire_spell_each_source_the_same_way() {
+        // 来源日志里 serde 写的词和 `tag()` 必须一致：前者是 `Origin` 序列化
+        // 出来的，后者是日志链里拼进 payload 的。两边一旦不同，老日志就对不上了。
+        for source in [Source::Modrinth, Source::CurseForge] {
+            assert_eq!(
+                serde_json::to_value(source).expect("serialize"),
+                serde_json::Value::String(source.tag().to_owned())
+            );
+        }
     }
 }

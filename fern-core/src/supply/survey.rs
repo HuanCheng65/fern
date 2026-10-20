@@ -133,7 +133,7 @@ async fn identify(paths: &DataPaths, game_directory: &Path) -> Result<Vec<Recogn
         .filter(|hash| !cache.versions.contains_key(hash))
         .collect();
     if !unknown.is_empty() {
-        let found = super::versions_by_hash(&unknown).await?;
+        let found = super::modrinth::versions_by_hash(&unknown).await?;
         for hash in &unknown {
             // 查不到的也记下来（记成 None）：本地构建的模组每次都去问一遍，
             // 是在为一个永远不会变的答案反复付网络往返。
@@ -174,6 +174,8 @@ pub struct ModUpdate {
     pub version_id: String,
     /// 这份文件现在是不是启用的。
     pub enabled: bool,
+    /// 新版本是从哪一家查到的。装它要问同一家。
+    pub source: super::Source,
 }
 
 /// 查一遍哪些模组有新版。
@@ -192,7 +194,8 @@ pub async fn updates(paths: &DataPaths, instance_id: &str) -> Result<Vec<ModUpda
     }
 
     let hashes: Vec<String> = files.iter().map(|file| file.hash.clone()).collect();
-    let latest = super::latest_by_hash(&hashes, &profile.game_version, profile.loader).await?;
+    let latest =
+        super::modrinth::latest_by_hash(&hashes, &profile.game_version, profile.loader).await?;
 
     let mut updates = Vec::new();
     let mut projects = Vec::new();
@@ -213,13 +216,16 @@ pub async fn updates(paths: &DataPaths, instance_id: &str) -> Result<Vec<ModUpda
             latest: newer.version_number.clone(),
             version_id: newer.version_id.clone(),
             enabled: file.enabled,
+            source: super::Source::Modrinth,
         });
     }
     if updates.is_empty() {
         return Ok(Vec::new());
     }
 
-    let names = super::project_names(&projects).await.unwrap_or_default();
+    let names = super::project_names(super::Source::Modrinth, &projects)
+        .await
+        .unwrap_or_default();
     for (update, project) in updates.iter_mut().zip(projects) {
         if let Some(named) = names.get(&project) {
             update.title = named.title.clone();

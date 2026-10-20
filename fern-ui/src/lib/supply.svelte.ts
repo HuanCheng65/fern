@@ -18,8 +18,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { commands, palette, providesRemote, type Subject } from 'fern-kit/parts/palette'
 // 一条结果的形状和下载量的写法都在 kit 里，官网也用同一份。
-export { compactNumber, type Hit } from 'fern-kit/parts/supply'
-import type { Hit } from 'fern-kit/parts/supply'
+export { compactNumber, type Hit, type Source } from 'fern-kit/parts/supply'
+import type { Hit, Source } from 'fern-kit/parts/supply'
 import { nav } from './nav.svelte'
 import { inTauri, instances } from './instances.svelte'
 
@@ -32,6 +32,11 @@ export const KINDS: { id: ResourceKind; label: string }[] = [
   { id: 'resource_pack', label: '资源包' },
   { id: 'shader', label: '光影' },
 ]
+
+export const SOURCE_LABEL: Record<Source, string> = {
+  modrinth: 'Modrinth',
+  curseforge: 'CurseForge',
+}
 
 export const SORTS: { id: string; label: string }[] = [
   { id: 'relevance', label: '相关度' },
@@ -141,6 +146,24 @@ export interface InstallOutcome {
 
 const PAGE = 40
 
+/**
+ * 详情页地址里的那一段。
+ *
+ * Modrinth 用 slug（`fabric-api`），人看得懂，也是一直以来的写法；CurseForge
+ * 的 slug 不能直接取项目，用数字 id，前面加上来源。Modrinth 的 slug 里不会
+ * 出现冒号，两种写法不会撞。
+ */
+export function projectKey(hit: Pick<Hit, 'slug' | 'projectId' | 'source'>) {
+  return hit.source === 'curseforge' ? `curseforge:${hit.projectId}` : hit.slug
+}
+
+/** `projectKey` 的反面：这个地址指的是哪一家的哪个项目。 */
+export function parseProjectKey(key: string): { source: Source; id: string } {
+  return key.startsWith('curseforge:')
+    ? { source: 'curseforge', id: key.slice('curseforge:'.length) }
+    : { source: 'modrinth', id: key }
+}
+
 
 /**
  * 一个版本能不能装进这个实例。
@@ -173,6 +196,10 @@ export function compatibility(
 }
 
 class SupplyStore {
+  /** 在哪一家搜。只有一家可用时这个选择不会出现在界面上。 */
+  source = $state<Source>('modrinth')
+  /** 这一份构建能问哪几家。CurseForge 的密钥是构建时注入的，可能没有。 */
+  sources = $state<Source[]>(['modrinth'])
   kind = $state<ResourceKind>('mod')
   query = $state('')
   /** 空串表示不限。默认就是不限——补给站是在浏览整个 Modrinth。 */
@@ -236,6 +263,17 @@ class SupplyStore {
     this.refresh()
   }
 
+  /** 问一次后端：这一份构建能问哪几家。 */
+  async loadSources() {
+    if (!inTauri()) return
+    try {
+      this.sources = await invoke<Source[]>('supply_sources')
+    } catch {
+      // 问不到就当只有 Modrinth：它不需要密钥，总是在的。
+    }
+    if (!this.sources.includes(this.source)) this.source = 'modrinth'
+  }
+
   async search(append = false) {
     if (!inTauri()) {
       this.loaded = true
@@ -245,6 +283,7 @@ class SupplyStore {
     this.#offset = append ? this.#offset + PAGE : 0
     try {
       const result = await invoke<{ hits: Hit[]; total: number }>('search_resources', {
+        source: this.source,
         query: {
           query: this.query.trim(),
           kind: this.kind,
@@ -318,6 +357,7 @@ providesRemote(async (query, signal) => {
   if (!inTauri()) return []
   const target = supply.target
   const result = await invoke<{ hits: Hit[] }>('search_resources', {
+    source: supply.source,
     query: {
       query,
       kind: 'mod',
@@ -335,11 +375,11 @@ providesRemote(async (query, signal) => {
   return result.hits.map(
     (hit): Subject => ({
       type: 'project',
-      id: hit.slug,
+      id: projectKey(hit),
       title: hit.title,
       hint: hit.author,
       run: () => {
-        nav.enter('supply', hit.slug)
+        nav.enter('supply', projectKey(hit))
         nav.name(hit.title)
       },
     }),

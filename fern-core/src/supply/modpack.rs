@@ -281,12 +281,13 @@ async fn lay_out(game: &Path, archive_path: &Path, index: Index, job: &crate::Jo
     Ok(())
 }
 
-/// 从 Modrinth 装一个整合包。
+/// 从补给站装一个整合包。
 ///
-/// 先把 `.mrpack` 下到数据目录下的缓存里，再照本地文件那条路走——装到一半
-/// 失败时，那个文件还在，重来一次不用再下一遍。
-pub async fn install_from_modrinth(
+/// 先把包体下到数据目录下的缓存里，再照本地文件那条路走——装到一半失败时，
+/// 那个文件还在，重来一次不用再下一遍。
+pub async fn install_from_supply(
     paths: &DataPaths,
+    source: crate::supply::Source,
     version_id: &str,
     name: Option<&str>,
     job: &crate::Job,
@@ -295,7 +296,8 @@ pub async fn install_from_modrinth(
     job.expect(1);
     job.step("下载整合包");
     let cache = paths.root.join("cache/modpacks");
-    let archive = crate::supply::fetch_primary_file(version_id, &cache, &job.downloads()).await?;
+    let archive =
+        crate::supply::fetch_release_file(source, version_id, &cache, &job.downloads()).await?;
     install(paths, &archive, name, job).await
 }
 

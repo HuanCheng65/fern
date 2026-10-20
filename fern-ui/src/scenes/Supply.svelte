@@ -25,7 +25,15 @@
   import { instances } from '../lib/instances.svelte'
   import { depth, riseIn, appear, unfold } from '../lib/motion'
   import { nav } from '../lib/nav.svelte'
-  import { KINDS, LOADER_FILTERS, SORTS, supply } from '../lib/supply.svelte'
+  import {
+    KINDS,
+    LOADER_FILTERS,
+    SORTS,
+    SOURCE_LABEL,
+    projectKey,
+    supply,
+    type Hit,
+  } from '../lib/supply.svelte'
 
   let results = $state<HTMLElement>()
   let sentinel = $state<HTMLElement>()
@@ -103,21 +111,22 @@
     return () => observer.disconnect()
   })
 
-  function open(slug: string, title: string) {
+  function open(hit: Hit) {
     supply.scrollTop = results?.scrollTop ?? 0
-    nav.open(slug)
+    nav.open(projectKey(hit))
     // 点的那一刻就知道叫什么，面包屑不必等详情加载完——地址里是 slug
-    // （`fabric-api`），而人认的是标题（`Fabric API`）。
-    nav.name(title)
+    // （`fabric-api`）或 id，而人认的是标题（`Fabric API`）。
+    nav.name(hit.title)
   }
 
   void instances.loadVersions()
+  void supply.loadSources()
 </script>
 
 <div class="overlap layers">
 {#if nav.detail}
   <div class="depth" in:depth={{ inner: true, sink: nav.sink }} out:depth={{ inner: true, sink: nav.sink }}>
-    <ProjectDetailView slug={nav.detail} />
+    <ProjectDetailView project={nav.detail} />
   </div>
 {:else}
   <div class="depth" in:depth={{ sink: nav.sink }} out:depth={{ sink: nav.sink }}>
@@ -126,10 +135,10 @@
       <div class="field">
         <Search class="glass" size={16} strokeWidth={1.9} />
         <Input
-          aria-label="搜索 Modrinth"
+          aria-label="搜索 {SOURCE_LABEL[supply.source]}"
           bind:value={supply.query}
           spellcheck="false"
-          placeholder="搜索 Modrinth"
+          placeholder="搜索 {SOURCE_LABEL[supply.source]}"
           onkeydown={(event) => event.key === 'Enter' && supply.refresh()}
         />
       </div>
@@ -255,7 +264,7 @@
         <div class="grid">
           {#each supply.hits as hit, index (hit.projectId)}
             <div in:riseIn={{ index }}>
-              <SupplyCard {hit} onopen={() => open(hit.slug, hit.title)} />
+              <SupplyCard {hit} onopen={() => open(hit)} />
             </div>
           {/each}
         </div>

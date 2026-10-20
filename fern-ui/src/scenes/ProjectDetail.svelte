@@ -11,7 +11,7 @@
    *
    * **不渲染介绍正文。** Modrinth 的 body 是一整篇 markdown，渲染它要么引一个
    * 解析器加一层消毒，要么自己写一个——把网络来的字符串变成 DOM 是 XSS 面，
-   * 不值得为一段介绍开这个口。正文交给「在 Modrinth 打开」。
+   * 不值得为一段介绍开这个口。正文交给「在网站上打开」。
    */
   import { unfold } from '../lib/motion'
   import { invoke } from '@tauri-apps/api/core'
@@ -27,6 +27,7 @@
   import {
     compactNumber,
     compatibility,
+    parseProjectKey,
     supply,
     type InstallOutcome,
     type InstallPlan,
@@ -38,10 +39,13 @@
   import Select from 'fern-kit/ui/Select.svelte'
 
   interface Props {
-    slug: string
+    /** 地址里那一段，见 `projectKey`：Modrinth 是 slug，CurseForge 带前缀。 */
+    project: string
   }
 
-  let { slug }: Props = $props()
+  let { project }: Props = $props()
+  const source = $derived(parseProjectKey(project).source)
+  const id = $derived(parseProjectKey(project).id)
 
   let detail = $state<ProjectDetail | null>(null)
   let versions = $state<ProjectVersion[]>([])
@@ -66,7 +70,7 @@
   let planning = $state(false)
 
   /** 这个项目上现在有没有事情在跑。走开再回来它还在。 */
-  const job = $derived(jobs.forSubject(slug))
+  const job = $derived(jobs.forSubject(project))
 
   const TABS = [
     { id: 'versions', label: '版本' },
@@ -111,13 +115,13 @@
     loading = true
     try {
       // 两个请求各自独立，一起发。
-      const [project, list] = await Promise.all([
-        invoke<ProjectDetail>('project_detail', { project: slug }),
-        invoke<ProjectVersion[]>('project_versions', { project: slug }),
+      const [found, list] = await Promise.all([
+        invoke<ProjectDetail>('project_detail', { source, project: id }),
+        invoke<ProjectVersion[]>('project_versions', { source, project: id }),
       ])
-      detail = project
+      detail = found
       versions = list
-      nav.name(project.title)
+      nav.name(found.title)
       error = ''
     } catch (cause) {
       error = String(cause)
@@ -147,6 +151,7 @@
     try {
       const result = await invoke<InstallPlan>('install_plan', {
         instanceId: target.id,
+        source,
         versionId: version.id,
         kind,
       })
@@ -174,10 +179,11 @@
     try {
       if (isPack) {
         const created = await invoke<{ id: string; name: string }>('install_modpack', {
+          source,
           versionId: version.id,
           name: detail?.title ?? null,
           title: `安装 ${detail?.title ?? '整合包'}`,
-          subjects: [slug],
+          subjects: [project],
         })
         await instances.load()
         instances.select(created.id)
@@ -188,12 +194,13 @@
       if (!target) return
       const where = target
       // 这件事既属于这个项目，也属于那个实例——两边的页面都该看得见它。
-      const outcome = await invoke<InstallOutcome>('install_from_modrinth', {
+      const outcome = await invoke<InstallOutcome>('install_resource', {
         instanceId: where.id,
+        source,
         versionId: version.id,
         kind,
         title: `安装 ${detail?.title ?? '资源'}`,
-        subjects: [slug, where.id],
+        subjects: [project, where.id],
       })
       // 那个实例的 mods 目录变了，它那边两句结论就都不作数了——尤其是预检查：
       // 用户点进来装的往往正是它报缺的那个前置，回去还看见同一条红字，等于我
@@ -228,7 +235,7 @@
   }
 
   $effect(() => {
-    slug
+    project
     void load()
   })
 </script>

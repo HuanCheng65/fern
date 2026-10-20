@@ -11,7 +11,7 @@
 //! account/   名册、三种登录方式、令牌保管
 //! java/      声明什么、发现什么、缺了去下什么
 //! launch/    补全 → 版本合并 → 加载器 → 参数拼装 → 进程 → 日志与崩溃
-//! supply/    从站点获取：Modrinth 与整合包
+//! supply/    从站点获取：Modrinth、CurseForge 与整合包
 //! ```
 //!
 //! `event` 和 `job` 留在顶层：它们是各层向界面说话的共用词汇，属于任何一层
@@ -230,7 +230,7 @@ pub use launch::{
 };
 pub use supply::modpack::{
     PackSummary, inspect as inspect_modpack, install as install_modpack,
-    install_from_modrinth as install_modpack_from_modrinth,
+    install_from_supply as install_modpack_from_supply,
 };
 pub use supply::plan::{
     DependencyKind, InstallPlan, PlannedFile, Requirement, RequirementState,
@@ -240,8 +240,8 @@ pub use supply::survey::{ModUpdate, updates as mod_updates};
 pub use supply::{
     GalleryImage, InstallOutcome, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind,
     SearchHit, SearchQuery, SearchResult, Source, VersionDependency,
-    install as install_from_modrinth, is_external_url, project as modrinth_project,
-    search as search_modrinth, update_mod, versions as modrinth_versions,
+    install as install_from_supply, is_external_url, project as supply_project,
+    search as search_supply, update_mod, versions as supply_versions,
 };
 
 #[cfg(test)]

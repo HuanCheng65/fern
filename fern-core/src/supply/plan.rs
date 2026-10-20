@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use super::ResourceKind;
+use super::{ResourceKind, Source};
 use crate::DataPaths;
 
 /// 依赖的种类。原样来自 Modrinth。
@@ -124,6 +124,7 @@ impl InstallPlan {
 pub async fn resolve(
     paths: &DataPaths,
     instance_id: &str,
+    source: Source,
     version_id: &str,
     kind: ResourceKind,
 ) -> Result<InstallPlan> {
@@ -148,32 +149,37 @@ pub async fn resolve(
         if depth > super::MAX_DEPTH {
             continue;
         }
-        let version = super::raw_version(&id).await?;
+        let version = super::release(source, &id).await?;
         if !resolved_projects.insert(version.project_id.clone()) {
             continue;
         }
         let file = version
-            .primary_file()
+            .file
+            .as_ref()
             .ok_or_else(|| anyhow!("{} 这个版本没有可下载的文件", version.name))?;
+        let url = file
+            .url
+            .clone()
+            .ok_or_else(|| anyhow!("{} 的作者不允许第三方启动器下载这个文件", version.name))?;
         files.push(PlannedFile {
             project_id: version.project_id.clone(),
-            version_id: version.id.clone(),
+            version_id: version.version_id.clone(),
             // 项目标题稍后一次性补齐：这里只有 id，为每一个单独发一次请求，
             // 一个五层依赖链就是五次串行往返。
             title: String::new(),
             version_number: version.version_number.clone(),
-            file_name: file.filename.clone(),
+            file_name: file.name.clone(),
             bytes: file.size,
             primary,
-            url: file.url.clone(),
-            sha1: file.hashes.sha1.clone(),
+            url,
+            sha1: file.sha1.clone().unwrap_or_default(),
         });
 
         if !kind.has_dependencies() {
             continue;
         }
         for dependency in &version.dependencies {
-            let kind = DependencyKind::from_api(&dependency.dependency_type);
+            let kind = dependency.kind;
             let Some(project) = dependency.project_id.clone().filter(|id| !id.is_empty()) else {
                 // 只给了 version_id 的必需依赖仍然要装，只是它没有项目 id 可
                 // 供去重——那就照上游说的装。
@@ -219,11 +225,11 @@ pub async fn resolve(
                 None if resolved_projects.contains(&project) => (RequirementState::Planned, None),
                 None => {
                     // 没装。挑一个装得上的版本；只有必需的才真的排进下载。
-                    match pick_candidate(&project, game_version, loader).await? {
+                    match super::candidate(source, &project, game_version, loader).await? {
                         Some(chosen) => {
                             let number = chosen.version_number.clone();
                             if kind == DependencyKind::Required {
-                                queue.push((chosen.id, depth + 1, false));
+                                queue.push((chosen.version_id, depth + 1, false));
                             }
                             (RequirementState::Planned, Some(number))
                         }
@@ -255,7 +261,9 @@ pub async fn resolve(
         .map(|item| item.project_id.clone())
         .collect();
     wanted.extend(files.iter().map(|file| file.project_id.clone()));
-    let names = super::project_names(&wanted).await.unwrap_or_default();
+    let names = super::project_names(source, &wanted)
+        .await
+        .unwrap_or_default();
     for item in &mut requirements {
         if let Some(named) = names.get(&item.project_id) {
             item.slug = named.slug.clone();
@@ -277,20 +285,6 @@ pub async fn resolve(
         requirements,
         bytes,
     })
-}
-
-/// 依赖只给了项目时，挑一个装得上的版本：优先正式版，没有就用最新的。
-async fn pick_candidate(
-    project: &str,
-    game_version: &str,
-    loader: crate::LoaderKind,
-) -> Result<Option<super::RawVersion>> {
-    let mut candidates = super::raw_versions(project, game_version, loader).await?;
-    let chosen = candidates
-        .iter()
-        .position(|version| version.version_type == "release")
-        .or(if candidates.is_empty() { None } else { Some(0) });
-    Ok(chosen.map(|index| candidates.swap_remove(index)))
 }
 
 /// 一个项目在界面上叫什么。

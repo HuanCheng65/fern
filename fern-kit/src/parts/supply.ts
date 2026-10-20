@@ -6,7 +6,10 @@
  * 请求、分页和缓存；官网只要这个形状。
  */
 
-/** 一条补给搜索结果。字段对着 Modrinth 的搜索返回，只留界面用得上的。 */
+/** 补给的来源。和 Rust `supply::Source` 的 serde 名一致。 */
+export type Source = 'modrinth' | 'curseforge'
+
+/** 一条补给搜索结果。两家的搜索返回翻成同一个形状，只留界面用得上的。 */
 export interface Hit {
   projectId: string
   slug: string
@@ -16,6 +19,8 @@ export interface Hit {
   downloads: number
   iconUrl?: string
   categories: string[]
+  /** 官网的示例数据不带这个字段，当作 Modrinth。 */
+  source?: Source
 }
 
 /** 下载量写成人看的数字。列表里一行放不下九位数，也没人真的去数那几位。 */

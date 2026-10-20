@@ -23,6 +23,7 @@
   import { FolderOpen, Plus, RefreshCw, Trash2 } from 'lucide-svelte'
   import { onMount } from 'svelte'
   import { inTauri } from '../lib/instances.svelte'
+  import type { Source } from '../lib/supply.svelte'
   import { formatBytes } from '../lib/jobs.svelte'
   import Loading from './Loading.svelte'
   import { nav } from '../lib/nav.svelte'
@@ -44,6 +45,8 @@
     current: string
     latest: string
     versionId: string
+    /** 新版是从哪一家查到的，装它要问同一家。 */
+    source: Source
   }
 
   interface Props {
@@ -160,6 +163,7 @@
       await invoke('update_mod', {
         instanceId,
         fileName: item.fileName,
+        source: found.source,
         versionId: found.versionId,
         title: `更新 ${found.title}`,
         subjects: [instanceId],
