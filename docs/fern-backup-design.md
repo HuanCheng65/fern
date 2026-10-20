@@ -33,6 +33,7 @@
 | `saves/` | ✅ | 唯一真正不可再生的东西 |
 | `config/`、`options.txt`、`servers.dat`、`hotbar.nbt` | ✅ | 很小，但调回去很费劲 |
 | `screenshots/`、`schematics/` | ✅ | 用户自己的产物 |
+| `kubejs/`、`scripts/`、`defaultconfigs/` | ✅ | 整合包的魔改脚本与默认配置，和 `config/` 同理 |
 | `mods/*.jar` | ✅ | 见 §2.1 |
 | `resourcepacks/`、`shaderpacks/` | ✅ | 同上，逻辑一致 |
 | `logs/`、`crash-reports/` | ❌ | 一次性 |

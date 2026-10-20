@@ -26,6 +26,10 @@ use serde::{Deserialize, Serialize};
 pub const LARGEST_FILE: u64 = 512 * 1024 * 1024;
 
 /// 整个进快照的顶层目录。
+///
+/// 后三个是整合包的魔改：KubeJS 脚本、CraftTweaker 脚本、新世界的默认配置。
+/// 它们和 `config/` 一样是很小的文本、改坏了调回去很费劲，而且玩家自己也会改
+/// ——不收进来，改坏一个脚本就没有退路。
 const DIRECTORIES: &[&str] = &[
     "saves",
     "config",
@@ -34,6 +38,9 @@ const DIRECTORIES: &[&str] = &[
     "shaderpacks",
     "schematics",
     "screenshots",
+    "kubejs",
+    "scripts",
+    "defaultconfigs",
 ];
 
 /// 进快照的顶层文件。
@@ -309,6 +316,28 @@ mod tests {
         assert!(reasons.contains(&("journeymap/", SkipReason::NotSelected)));
         // 顶层的陌生文件不进快照，也不值得在界面上说——只有目录才记。
         assert!(!reasons.iter().any(|(path, _)| *path == "usercache.json"));
+
+        fs::remove_dir_all(root).expect("clean up");
+    }
+
+    #[test]
+    fn modpack_scripts_are_kept_like_config() {
+        let root = scratch("scripts");
+        write(root.join("kubejs/server_scripts/recipes.js"), b"//");
+        write(root.join("scripts/crafttweaker.zs"), b"//");
+        write(root.join("defaultconfigs/ftbchunks-world.snbt"), b"{}");
+
+        let (taken, skipped) = scan(&root);
+        let paths: Vec<_> = taken.iter().map(|it| it.relative.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "defaultconfigs/ftbchunks-world.snbt",
+                "kubejs/server_scripts/recipes.js",
+                "scripts/crafttweaker.zs",
+            ]
+        );
+        assert!(skipped.is_empty());
 
         fs::remove_dir_all(root).expect("clean up");
     }
