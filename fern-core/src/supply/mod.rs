@@ -14,10 +14,14 @@
 //! 整合包是这一层的另一条支线，在 `modpack.rs`：装它不是「装东西到某个实例」，
 //! 是**建一个实例**。
 
+pub(crate) mod cfpack;
+mod curseforge;
+mod fingerprint;
 mod http;
 pub(crate) mod modpack;
 mod modrinth;
 pub(crate) mod plan;
+pub(crate) mod sideload;
 pub mod survey;
 
 use anyhow::{Result, anyhow};
@@ -26,6 +30,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{DataPaths, LoaderKind};
+
+pub use sideload::Sideload;
 
 pub(crate) use modrinth::known_files;
 
@@ -65,15 +71,7 @@ impl Source {
     pub fn available(self) -> bool {
         match self {
             Self::Modrinth => true,
-            Self::CurseForge => false,
-        }
-    }
-
-    /// 网站上这个项目的页面。详情页给一个「在网站上打开」，正文交给浏览器。
-    fn label(self) -> &'static str {
-        match self {
-            Self::Modrinth => "Modrinth",
-            Self::CurseForge => "CurseForge",
+            Self::CurseForge => curseforge::available(),
         }
     }
 }
@@ -283,16 +281,11 @@ pub(crate) struct Dependency {
     pub kind: plan::DependencyKind,
 }
 
-/// 这一家在这份构建里问不了。
-fn unavailable(source: Source) -> anyhow::Error {
-    anyhow!("此版本未接入 {}", source.label())
-}
-
 /// 搜索。条件全部来自调用方，一个都不从「当前实例」推断。
 pub async fn search(source: Source, request: &SearchQuery) -> Result<SearchResult> {
     match source {
         Source::Modrinth => modrinth::search(request).await,
-        Source::CurseForge => Err(unavailable(source)),
+        Source::CurseForge => curseforge::search(request).await,
     }
 }
 
@@ -300,7 +293,7 @@ pub async fn search(source: Source, request: &SearchQuery) -> Result<SearchResul
 pub async fn project(source: Source, id: &str) -> Result<ProjectDetail> {
     match source {
         Source::Modrinth => modrinth::project(id).await,
-        Source::CurseForge => Err(unavailable(source)),
+        Source::CurseForge => curseforge::project(id).await,
     }
 }
 
@@ -312,14 +305,14 @@ pub async fn project(source: Source, id: &str) -> Result<ProjectDetail> {
 pub async fn versions(source: Source, project: &str) -> Result<Vec<ProjectVersion>> {
     match source {
         Source::Modrinth => modrinth::versions(project).await,
-        Source::CurseForge => Err(unavailable(source)),
+        Source::CurseForge => curseforge::versions(project).await,
     }
 }
 
 pub(crate) async fn release(source: Source, version_id: &str) -> Result<Release> {
     match source {
         Source::Modrinth => modrinth::release(version_id).await,
-        Source::CurseForge => Err(unavailable(source)),
+        Source::CurseForge => curseforge::release(version_id).await,
     }
 }
 
@@ -331,7 +324,7 @@ pub(crate) async fn candidate(
 ) -> Result<Option<Release>> {
     match source {
         Source::Modrinth => modrinth::candidate(project, game_version, loader).await,
-        Source::CurseForge => Err(unavailable(source)),
+        Source::CurseForge => curseforge::candidate(project, game_version, loader).await,
     }
 }
 
@@ -342,7 +335,7 @@ pub(crate) async fn project_names(
 ) -> Result<std::collections::HashMap<String, plan::Named>> {
     match source {
         Source::Modrinth => modrinth::project_names(ids).await,
-        Source::CurseForge => Err(unavailable(source)),
+        Source::CurseForge => curseforge::project_names(ids).await,
     }
 }
 
@@ -416,6 +409,7 @@ pub async fn install(
     source: Source,
     version_id: &str,
     kind: ResourceKind,
+    sideload: &Sideload,
     job: &crate::Job,
 ) -> Result<InstallOutcome> {
     // 两步：先把要装的东西问清楚（一个模组可能牵出好几个必需依赖），再一起下。
@@ -433,7 +427,14 @@ pub async fn install(
         .join(subdirectory);
     tokio::fs::create_dir_all(&directory).await?;
 
-    let plan = plan::resolve(paths, instance_id, source, version_id, kind).await?;
+    let plan = plan::resolve(paths, instance_id, source, version_id, kind, sideload).await?;
+    // 先于快照：缺文件的话这一次什么都不会写，拍一张就是白拍。
+    let missing = plan.missing();
+    if missing > 0 {
+        return Err(anyhow!(
+            "还有 {missing} 个文件需要从 CurseForge 网站手动下载"
+        ));
+    }
     if kind == ResourceKind::Mod {
         // 改模组之前先拍一张。用户以为自己只是装了个模组，而这一步可能让
         // 存档打不开（docs/fern-backup-design.md §1）。放在解析计划之后、
@@ -468,6 +469,13 @@ pub async fn install(
     for file in &plan.files {
         let destination =
             fern_download::safe_join(&directory, std::path::Path::new(&file.file_name))?;
+        // 手动下的那一份已经验过 sha1，复制进来就是了。
+        if let Some(local) = &file.local {
+            tokio::fs::copy(local, &destination)
+                .await
+                .map_err(|error| anyhow!("复制 {} 失败：{error}", local.display()))?;
+            continue;
+        }
         // 上游给了 sha1 和大小就校验；CurseForge 的老文件偶尔两样都没有。
         tasks.push(if file.sha1.is_empty() || file.bytes == 0 {
             DownloadTask::unverified(destination, &file.url)?
@@ -481,11 +489,13 @@ pub async fn install(
     } else {
         "下载文件".to_owned()
     });
-    let downloader = crate::data::downloader::client(8);
-    downloader.download_all(tasks, events).await?;
+    if !tasks.is_empty() {
+        let downloader = crate::data::downloader::client(8);
+        downloader.download_all(tasks, events).await?;
+    }
 
-    // 记一笔谁放进来的。sha1 用 Modrinth 给的那个——下载刚刚照着它校验过，
-    // 再读一遍磁盘算一次是在为同一个答案付两次钱。
+    // 记一笔谁放进来的。sha1 用上游给的那个——下载刚刚照着它校验过，再读一遍
+    // 磁盘算一次是在为同一个答案付两次钱。上游没给的那几个才去读。
     //
     // 版本号得从 jar 里读，不能用 Modrinth 的 `version_number`：对账时拿来比
     // 的是 jar 自己声明的那个，两次比较必须问同一个人，否则每一次更新都会被
@@ -497,7 +507,11 @@ pub async fn install(
             .iter()
             .map(|file| crate::instance::origin::Entry {
                 file: format!("{subdirectory}/{}", file.file_name),
-                sha1: file.sha1.clone(),
+                sha1: if file.sha1.is_empty() {
+                    crate::backup::sha1_of(&directory.join(&file.file_name)).unwrap_or_default()
+                } else {
+                    file.sha1.clone()
+                },
                 version: crate::instance::integrity::declared_version(
                     &directory.join(&file.file_name),
                 ),
@@ -555,6 +569,7 @@ pub async fn update_mod(
         source,
         version_id,
         ResourceKind::Mod,
+        &Sideload::default(),
         job,
     )
     .await?;

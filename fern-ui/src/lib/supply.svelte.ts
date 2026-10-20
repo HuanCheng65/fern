@@ -72,6 +72,7 @@ export interface ProjectDetail {
   gameVersions: string[]
   loaders: string[]
   links: ProjectLink[]
+  source: Source
 }
 
 export type DependencyKind = 'required' | 'optional' | 'incompatible' | 'embedded'
@@ -91,6 +92,7 @@ export interface ProjectVersion {
   downloads: number
   datePublished: string
   fileName?: string
+  source: Source
   /** 只有 id，没有名字。名字在安装计划里（`install_plan`）。 */
   dependencies: VersionDependency[]
 }
@@ -128,6 +130,10 @@ export interface PlannedFile {
   fileName: string
   bytes: number
   primary: boolean
+  /** 作者不允许第三方下载时，用户要去的网页。有它就是一个要手动下的文件。 */
+  page?: string
+  /** 手动下的那一份找到了没有。 */
+  found: boolean
 }
 
 /** 按下安装会发生什么。后端算的，装的时候用的是同一份。 */

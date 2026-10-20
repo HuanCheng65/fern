@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use super::{ResourceKind, Source};
+use super::{ResourceKind, Source, sideload::Sideload};
 use crate::DataPaths;
 
 /// 依赖的种类。原样来自 Modrinth。
@@ -90,10 +90,19 @@ pub struct PlannedFile {
     pub bytes: u64,
     /// 这是用户点的那一个，不是被牵出来的依赖。
     pub primary: bool,
+    /// 作者不允许第三方下载时，用户要去的那个网页。有它就是一个要手动下的文件。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+    /// 手动下的那一份找到了没有（下载目录里、或者用户指的文件里）。
+    pub found: bool,
+    /// 空串表示要手动下载。
     #[serde(skip)]
     pub url: String,
     #[serde(skip)]
     pub sha1: String,
+    /// 找到的那一份手动下载的文件。
+    #[serde(skip)]
+    pub local: Option<std::path::PathBuf>,
 }
 
 /// 按下安装会发生什么。
@@ -107,6 +116,16 @@ pub struct InstallPlan {
     pub requirements: Vec<Requirement>,
     /// 总字节数。为零表示上游没报大小，不是没东西可下。
     pub bytes: u64,
+}
+
+impl InstallPlan {
+    /// 还有几个要手动下、而且还没找到的文件。不为零就装不了。
+    pub fn missing(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|file| file.url.is_empty() && file.local.is_none())
+            .count()
+    }
 }
 
 impl InstallPlan {
@@ -127,6 +146,7 @@ pub async fn resolve(
     source: Source,
     version_id: &str,
     kind: ResourceKind,
+    sideload: &Sideload,
 ) -> Result<InstallPlan> {
     let profile = crate::read_instance(paths, instance_id)?;
     let game_version = profile.game_version.as_str();
@@ -135,7 +155,7 @@ pub async fn resolve(
 
     // 只有模组有依赖图，也只有模组需要知道实例里已经有什么。
     let installed = if kind.has_dependencies() {
-        super::survey::installed(paths, &game_directory).await?
+        super::survey::installed(paths, &game_directory, source).await?
     } else {
         HashMap::new()
     };
@@ -157,10 +177,12 @@ pub async fn resolve(
             .file
             .as_ref()
             .ok_or_else(|| anyhow!("{} 这个版本没有可下载的文件", version.name))?;
-        let url = file
-            .url
-            .clone()
-            .ok_or_else(|| anyhow!("{} 的作者不允许第三方启动器下载这个文件", version.name))?;
+        // 没有下载地址就去下载目录和用户指的文件里找。找不到也照样排进计划
+        // ——它要出现在界面上，告诉用户去哪下。
+        let local = match file.url {
+            Some(_) => None,
+            None => sideload.locate(&file.name, file.sha1.as_deref(), file.size),
+        };
         files.push(PlannedFile {
             project_id: version.project_id.clone(),
             version_id: version.version_id.clone(),
@@ -171,8 +193,11 @@ pub async fn resolve(
             file_name: file.name.clone(),
             bytes: file.size,
             primary,
-            url,
+            page: None,
+            found: local.is_some(),
+            url: file.url.clone().unwrap_or_default(),
             sha1: file.sha1.clone().unwrap_or_default(),
+            local,
         });
 
         if !kind.has_dependencies() {
@@ -274,10 +299,15 @@ pub async fn resolve(
         }
     }
     for file in &mut files {
-        file.title = names
-            .get(&file.project_id)
+        let named = names.get(&file.project_id);
+        file.title = named
             .map(|named| named.title.clone())
             .unwrap_or_else(|| file.file_name.clone());
+        if file.url.is_empty() {
+            file.page = named
+                .and_then(|named| named.page.as_ref())
+                .map(|page| format!("{page}/files/{}", file.version_id));
+        }
     }
 
     Ok(InstallPlan {
@@ -293,6 +323,8 @@ pub struct Named {
     pub slug: String,
     pub title: String,
     pub icon_url: Option<String>,
+    /// 项目在网站上的页面。手动下载时要把用户送到那里。
+    pub page: Option<String>,
 }
 
 #[cfg(test)]
@@ -324,8 +356,11 @@ mod tests {
                 file_name: "sodium.jar".to_owned(),
                 bytes: 1024,
                 primary: true,
+                page: None,
+                found: false,
                 url: "https://example.invalid/sodium.jar".to_owned(),
                 sha1: "deadbeef".to_owned(),
+                local: None,
             }],
             requirements: vec![requirement(
                 DependencyKind::Required,

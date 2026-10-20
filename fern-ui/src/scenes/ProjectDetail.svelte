@@ -17,6 +17,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { ArrowUpRight, Download, Plus } from 'lucide-svelte'
   import Loading from '../components/Loading.svelte'
+  import ManualDownloads, { type ManualFile } from '../components/ManualDownloads.svelte'
   import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
   import { integrity } from '../lib/integrity.svelte'
@@ -68,6 +69,21 @@
   let opened = $state('')
   let plan = $state<InstallPlan | null>(null)
   let planning = $state(false)
+  /**
+   * 用户在选择器里指的文件。手动下载的那几个，后端先在下载目录里按文件名找，
+   * 找不到再看这里——这里的只认内容，不认名字。
+   */
+  let picked = $state<string[]>([])
+  /** 计划里那几个要手动下载的文件。 */
+  const manual = $derived(plan?.files.filter((file) => file.page) ?? [])
+  /**
+   * CurseForge 整合包：包体已经下到缓存里了，还差几个手动下载的文件。
+   * 齐了才建实例——缺一个，建出来的就是一个起不来的实例。
+   */
+  let pending = $state<{ version: ProjectVersion; path: string; files: ManualFile[] } | null>(
+    null,
+  )
+  let checking = $state(false)
 
   /** 这个项目上现在有没有事情在跑。走开再回来它还在。 */
   const job = $derived(jobs.forSubject(project))
@@ -145,6 +161,11 @@
     await loadPlan(version)
   }
 
+  /** 用户在选择器里指了文件：记下来，再核对一遍。 */
+  function addPicked(paths: string[]) {
+    picked = [...new Set([...picked, ...paths])]
+  }
+
   async function loadPlan(version: ProjectVersion) {
     if (!target || !inTauri()) return
     planning = true
@@ -154,9 +175,11 @@
         source,
         versionId: version.id,
         kind,
+        picked,
       })
       // 等回来的时候用户可能已经点开了另一行。
       if (opened === version.id) plan = result
+      return result
     } catch (cause) {
       if (opened === version.id) error = String(cause)
     } finally {
@@ -177,6 +200,10 @@
     clicked = version.id
     error = ''
     try {
+      if (isPack && source === 'curseforge') {
+        await installCurseForgePack(version)
+        return
+      }
       if (isPack) {
         const created = await invoke<{ id: string; name: string }>('install_modpack', {
           source,
@@ -193,12 +220,20 @@
       }
       if (!target) return
       const where = target
+      // CurseForge 上有些文件只能去网站上下。装之前先把计划算出来：缺文件
+      // 就把那一行展开、说清去哪下，而不是开始一件注定失败的作业。
+      if (source === 'curseforge') {
+        opened = version.id
+        const checked = await loadPlan(version)
+        if (!checked || checked.files.some((file) => file.page && !file.found)) return
+      }
       // 这件事既属于这个项目，也属于那个实例——两边的页面都该看得见它。
       const outcome = await invoke<InstallOutcome>('install_resource', {
         instanceId: where.id,
         source,
         versionId: version.id,
         kind,
+        picked,
         title: `安装 ${detail?.title ?? '资源'}`,
         subjects: [project, where.id],
       })
@@ -234,8 +269,60 @@
     }
   }
 
+  /**
+   * CurseForge 整合包分三步：取包体、核对要手动下载的文件、建实例。中间那一步
+   * 缺东西就停下，把清单摆出来；用户补齐后再点一次「创建实例」从这里接着走，
+   * 包体不用再下一遍。
+   */
+  async function installCurseForgePack(version: ProjectVersion) {
+    const path =
+      pending?.version.id === version.id
+        ? pending.path
+        : await invoke<string>('fetch_modpack', {
+            source,
+            versionId: version.id,
+            title: `下载 ${detail?.title ?? '整合包'}`,
+            subjects: [project],
+          })
+    const files = await invoke<ManualFile[]>('modpack_manual_files', { path, picked })
+    if (files.some((file) => !file.found)) {
+      pending = { version, path, files }
+      return
+    }
+    pending = null
+    const created = await invoke<{ id: string; name: string }>('import_modpack', {
+      path,
+      name: detail?.title ?? null,
+      picked,
+      title: `安装 ${detail?.title ?? '整合包'}`,
+      subjects: [project],
+    })
+    await instances.load()
+    instances.select(created.id)
+    nav.enter('instances', created.id)
+  }
+
+  /** 补齐之后再查一遍。 */
+  async function recheckPending() {
+    if (!pending) return
+    checking = true
+    try {
+      const files = await invoke<ManualFile[]>('modpack_manual_files', {
+        path: pending.path,
+        picked,
+      })
+      pending = { ...pending, files }
+    } catch (cause) {
+      error = String(cause)
+    } finally {
+      checking = false
+    }
+  }
+
   $effect(() => {
     project
+    picked = []
+    pending = null
     void load()
   })
 </script>
@@ -362,6 +449,23 @@
                 </Button>
               </div>
 
+              {#if pending?.version.id === version.id}
+                <div class="plan" transition:unfold>
+                  <ManualDownloads
+                    files={pending.files}
+                    {checking}
+                    onrecheck={() => void recheckPending()}
+                    onpick={(paths) => {
+                      addPicked(paths)
+                      void recheckPending()
+                    }}
+                  />
+                  {#if pending.files.every((file) => file.found)}
+                    <p class="t-quiet tally">文件已齐，选择「创建实例」继续。</p>
+                  {/if}
+                </div>
+              {/if}
+
               {#if opened === version.id}
                 <div class="plan">
                   {#if planning && !plan}
@@ -369,6 +473,19 @@
                   {:else if !target}
                     <p class="t-quiet">先选一个安装目标，才能知道哪些前置已经有了。</p>
                   {:else if plan}
+                    {#if manual.length > 0}
+                      <div class="manual">
+                        <ManualDownloads
+                          files={manual}
+                          checking={planning}
+                          onrecheck={() => void loadPlan(version)}
+                          onpick={(paths) => {
+                            addPicked(paths)
+                            void loadPlan(version)
+                          }}
+                        />
+                      </div>
+                    {/if}
                     <ul class="reqs">
                       {#each plan.requirements as item (item.projectId)}
                         <li class="req {item.state}">
@@ -416,7 +533,7 @@
     {:else}
       <dl class="facts">
         <div><dt>下载</dt><dd class="t-mono">{compactNumber(detail?.downloads ?? 0)}</dd></div>
-        <div><dt>关注</dt><dd class="t-mono">{compactNumber(detail?.followers ?? 0)}</dd></div>
+        <div><dt>{detail?.source === 'curseforge' ? '点赞' : '关注'}</dt><dd class="t-mono">{compactNumber(detail?.followers ?? 0)}</dd></div>
         <div><dt>更新</dt><dd class="t-mono">{day(detail?.updated ?? '')}</dd></div>
         {#if detail?.license}
           <div><dt>许可证</dt><dd class="t-mono">{detail.license}</dd></div>
@@ -701,6 +818,9 @@
     color: var(--danger);
   }
 
+  .manual {
+    margin-bottom: var(--s3);
+  }
   .tally {
     margin: var(--s3) 0 0;
     font-size: var(--t-micro);

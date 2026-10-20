@@ -13,6 +13,7 @@
 #   secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD  上面那把钥匙的密码（没设密码就留空字符串）
 #   secrets.R2_ACCOUNT_ID                       Cloudflare 账号 id
 #   secrets.R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY   作用域限定在这一个 bucket 的 token
+#   secrets.CURSEFORGE_API_KEY                  CurseForge for Studios 的 API key，编进 fern-core
 #   vars.R2_BUCKET                              bucket 名
 #   vars.UPDATE_BASE_URL                        对外的自定义域名，例如 https://dl.fern.huanchengfly.top
 #                                               **必须和 fern-core 里的 DEFAULT_ENDPOINT 一致**，
@@ -89,6 +90,17 @@ jobs:
             "${BASE_URL%/}"/*) ;;
             *) echo "::error::tauri.conf.json 中的 $configured 不在 $BASE_URL 之下。"; exit 1 ;;
           esac
+
+      # 密钥是在编译时编进去的（`option_env!`），缺了照样编得过——发出去的版本
+      # 只是补给站里少了 CurseForge，没有任何报错。所以在这里挡。
+      - name: The CurseForge key must be configured
+        env:
+          CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+        run: |
+          if [ -z "${CURSEFORGE_API_KEY:-}" ]; then
+            echo "::error::未设置仓库密钥 CURSEFORGE_API_KEY，发出去的版本将没有 CurseForge。"
+            exit 1
+          fi
 
   build:
     name: Build ${{ matrix.name }}
@@ -178,6 +190,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          FERN_CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
 
       # 便携 exe 不经过 bundler，签名要自己来。签完在旁边留一个 .exe.sig。
       - name: Sign the portable executable

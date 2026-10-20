@@ -22,6 +22,7 @@
    * 常用路径都是零展开：最新正式版是打开就选中的那一个，最新快照是切过去的
    * 第一条。只有翻历史版本才展开一层。
    */
+  import ManualDownloads, { type ManualFile } from '../components/ManualDownloads.svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { open } from '@tauri-apps/plugin-dialog'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
@@ -77,8 +78,18 @@
     loader: string
     loaderVersion: string
     files: number
+    source: 'modrinth' | 'curseforge'
   }
   let pack = $state<{ path: string; summary: PackSummary } | null>(null)
+  /**
+   * CurseForge 整合包里要手动下载的文件。齐了才能导入——缺一个，建出来的
+   * 就是一个起不来的实例。
+   */
+  let manual = $state<ManualFile[]>([])
+  /** 用户在选择器里指的文件，只认内容不认名字。 */
+  let sideloaded = $state<string[]>([])
+  let checking = $state(false)
+  const missing = $derived(manual.some((file) => !file.found))
   let dropping = $state(false)
 
   const all = $derived(instances.versions)
@@ -214,16 +225,36 @@
    * 所以这一页上面那些选择在它面前全部作废——直接换成一张说明卡。
    */
   async function inspect(paths: string[]) {
-    const file = paths.find((path) => path.toLowerCase().endsWith('.mrpack'))
+    // 认格式靠包里的清单，不靠扩展名：CurseForge 的整合包就叫 .zip。
+    const file = paths.find((path) => /\.(mrpack|zip)$/i.test(path))
     if (!file) {
-      error = '只能导入 .mrpack 整合包'
+      error = '只能导入 .mrpack 或 CurseForge 的 .zip 整合包'
       return
     }
     try {
       pack = { path: file, summary: await invoke<PackSummary>('inspect_modpack', { path: file }) }
+      manual = []
+      sideloaded = []
       error = ''
+      if (pack.summary.source === 'curseforge') await checkManual()
     } catch (cause) {
       error = String(cause)
+    }
+  }
+
+  /** CurseForge 的清单里只有 id：问一遍上游，看哪些文件要手动下载、找到了没有。 */
+  async function checkManual() {
+    if (!pack) return
+    checking = true
+    try {
+      manual = await invoke<ManualFile[]>('modpack_manual_files', {
+        path: pack.path,
+        picked: sideloaded,
+      })
+    } catch (cause) {
+      error = String(cause)
+    } finally {
+      checking = false
     }
   }
 
@@ -233,7 +264,7 @@
     const chosen = await open({
       multiple: false,
       title: '选择整合包',
-      filters: [{ name: '整合包', extensions: ['mrpack'] }],
+      filters: [{ name: '整合包', extensions: ['mrpack', 'zip'] }],
     })
     if (typeof chosen === 'string') await inspect([chosen])
   }
@@ -246,6 +277,7 @@
       const created = await invoke<{ id: string }>('import_modpack', {
         path: pack.path,
         name: name.trim() || null,
+        picked: sideloaded,
         title: `导入 ${pack.summary.name}`,
         subjects: [],
       })
@@ -353,6 +385,17 @@
 
     <div class="fields scroll">
       <Input label="名称" bind:value={name} maxlength={64} oninput={() => (named = true)} />
+      {#if manual.length > 0}
+        <ManualDownloads
+          files={manual}
+          {checking}
+          onrecheck={() => void checkManual()}
+          onpick={(paths) => {
+            sideloaded = [...new Set([...sideloaded, ...paths])]
+            void checkManual()
+          }}
+        />
+      {/if}
     </div>
   {:else}
     <div class="fields scroll">
@@ -599,7 +642,11 @@
   <footer>
     <Button class="cancel" onclick={() => nav.up()}>取消</Button>
     {#if pack}
-      <Button variant="primary" loading={busy} onclick={() => void importPack()}>
+      <Button
+        variant="primary"
+        loading={busy || checking}
+        disabled={missing}
+        onclick={() => void importPack()}>
         {#snippet icon()}<Plus size={15} />{/snippet}
         导入整合包
       </Button>

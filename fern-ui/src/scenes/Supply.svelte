@@ -145,6 +145,20 @@
     {/snippet}
 
     {#snippet filters()}
+      <!-- 只有一家可用时（构建里没有 CurseForge 的密钥）不摆：一个选项的单选没有意义。 -->
+      {#if supply.sources.length > 1}
+        <FilterGroup
+          label="来源"
+          value={supply.source}
+          options={supply.sources.map((id) => ({ id, label: SOURCE_LABEL[id] }))}
+          onchange={(value) => {
+            supply.source = value as typeof supply.source
+            supply.scrollTop = 0
+            supply.refresh()
+          }}
+        />
+      {/if}
+
       <FilterGroup
         label="类型"
         value={supply.kind}

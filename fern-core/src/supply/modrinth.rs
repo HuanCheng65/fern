@@ -484,6 +484,7 @@ pub(super) async fn project_names(ids: &[String]) -> Result<HashMap<String, plan
                     slug: project.slug,
                     title: project.title,
                     icon_url: project.icon_url,
+                    page: None,
                 },
             )
         })

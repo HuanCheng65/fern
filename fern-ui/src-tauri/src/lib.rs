@@ -1134,18 +1134,35 @@ async fn project_versions(
 /// 永远是同一件事。
 #[tauri::command]
 async fn install_plan(
+    app: tauri::AppHandle,
     instance_id: String,
     source: fern_core::Source,
     version_id: String,
     kind: fern_core::ResourceKind,
+    picked: Option<Vec<String>>,
 ) -> Result<fern_core::InstallPlan, String> {
     let paths = paths()?;
-    fern_core::resolve_install_plan(&paths, &instance_id, source, &version_id, kind)
+    let sideload = sideload(&app, picked);
+    fern_core::resolve_install_plan(&paths, &instance_id, source, &version_id, kind, &sideload)
         .await
         .map_err(|error| format!("{error:#}"))
 }
 
+/// 手动下载的文件去哪找：系统的下载目录，加上用户在选择器里指的那些。
+fn sideload(app: &tauri::AppHandle, picked: Option<Vec<String>>) -> fern_core::Sideload {
+    fern_core::Sideload {
+        places: app.path().download_dir().into_iter().collect(),
+        picked: picked
+            .unwrap_or_default()
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect(),
+    }
+}
+
 /// 装一个版本。模组会连同**还缺的**必需依赖一起装。
+// 参数一个个对应界面传来的字段，Tauri 命令没有别的写法。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn install_resource(
     app: tauri::AppHandle,
@@ -1153,16 +1170,25 @@ async fn install_resource(
     source: fern_core::Source,
     version_id: String,
     kind: fern_core::ResourceKind,
+    picked: Option<Vec<String>>,
     title: String,
     subjects: Vec<String>,
 ) -> Result<fern_core::InstallOutcome, String> {
     let paths = paths()?;
+    let sideload = sideload(&app, picked);
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
-    let result =
-        fern_core::install_from_supply(&paths, &instance_id, source, &version_id, kind, &job)
-            .await
-            .map_err(|error| format!("{error:#}"));
+    let result = fern_core::install_from_supply(
+        &paths,
+        &instance_id,
+        source,
+        &version_id,
+        kind,
+        &sideload,
+        &job,
+    )
+    .await
+    .map_err(|error| format!("{error:#}"));
     job.finish(&result);
     result
 }
@@ -1300,6 +1326,7 @@ async fn install_modpack(
         source,
         &version_id,
         name.as_deref().filter(|value| !value.is_empty()),
+        &sideload(&app, None),
         &job,
     )
     .await
@@ -1321,22 +1348,62 @@ async fn inspect_modpack(path: String) -> Result<fern_core::PackSummary, String>
     .await?
 }
 
-/// 导入一个本地的 .mrpack。
+/// 把补给站上的一个整合包下到缓存里，返回路径。
+///
+/// CurseForge 的整合包可能有几个文件要手动下载，要在建实例之前停下来问，所以
+/// 这一步和建实例分开：取完包体，界面问一次 `modpack_manual_files`，齐了再
+/// 走 `import_modpack`。
+#[tauri::command]
+async fn fetch_modpack(
+    app: tauri::AppHandle,
+    source: fern_core::Source,
+    version_id: String,
+    title: String,
+    subjects: Vec<String>,
+) -> Result<String, String> {
+    let paths = paths()?;
+    let events = launcher_events(&app);
+    let job = fern_core::Job::begin(&events, title, subjects);
+    let result = fern_core::fetch_modpack(&paths, source, &version_id, &job)
+        .await
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| format!("{error:#}"));
+    job.finish(&result);
+    result
+}
+
+/// 一个整合包里哪些文件要手动下载、找到了没有。mrpack 永远是空的。
+#[tauri::command]
+async fn modpack_manual_files(
+    app: tauri::AppHandle,
+    path: String,
+    picked: Option<Vec<String>>,
+) -> Result<Vec<fern_core::ManualFile>, String> {
+    let sideload = sideload(&app, picked);
+    fern_core::modpack_manual_files(std::path::Path::new(&path), &sideload)
+        .await
+        .map_err(|error| format!("{error:#}"))
+}
+
+/// 导入一个本地的整合包：.mrpack，或者 CurseForge 的 zip。
 #[tauri::command]
 async fn import_modpack(
     app: tauri::AppHandle,
     path: String,
     name: Option<String>,
+    picked: Option<Vec<String>>,
     title: String,
     subjects: Vec<String>,
 ) -> Result<fern_core::InstanceProfile, String> {
     let paths = paths()?;
+    let sideload = sideload(&app, picked);
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
     let result = fern_core::install_modpack(
         &paths,
         std::path::Path::new(&path),
         name.as_deref().filter(|value| !value.is_empty()),
+        &sideload,
         &job,
     )
     .await
@@ -1816,6 +1883,8 @@ pub fn run() {
             import_prism_instance,
             install_modpack,
             inspect_modpack,
+            fetch_modpack,
+            modpack_manual_files,
             import_modpack,
             project_versions,
             install_plan,

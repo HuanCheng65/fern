@@ -228,9 +228,10 @@ pub use launch::version::{effective_id as effective_version_id, resolve as resol
 pub use launch::{
     Credentials, LaunchPlan, LaunchResult, LaunchVariables, offline_credentials, start_instance,
 };
+pub use supply::cfpack::ManualFile;
 pub use supply::modpack::{
-    PackSummary, inspect as inspect_modpack, install as install_modpack,
-    install_from_supply as install_modpack_from_supply,
+    PackSummary, fetch as fetch_modpack, inspect as inspect_modpack, install as install_modpack,
+    install_from_supply as install_modpack_from_supply, manual_files as modpack_manual_files,
 };
 pub use supply::plan::{
     DependencyKind, InstallPlan, PlannedFile, Requirement, RequirementState,
@@ -239,7 +240,7 @@ pub use supply::plan::{
 pub use supply::survey::{ModUpdate, updates as mod_updates};
 pub use supply::{
     GalleryImage, InstallOutcome, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind,
-    SearchHit, SearchQuery, SearchResult, Source, VersionDependency,
+    SearchHit, SearchQuery, SearchResult, Sideload, Source, VersionDependency,
     install as install_from_supply, is_external_url, project as supply_project,
     search as search_supply, update_mod, versions as supply_versions,
 };
