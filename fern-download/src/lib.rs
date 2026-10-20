@@ -197,14 +197,35 @@ impl DownloadSource for OfficialSource {
     }
 }
 
+/// 国内镜像。
+///
+/// Mojang、Fabric 那几条线走 BMCLAPI；Apple Silicon 上替换旧 LWJGL 的那几份构建
+/// 挂在 GitHub 的 MinecraftMachina 名下，BMCLAPI 没有，由 Fern 自己的 R2 同步
+/// 一份（`.github/workflows/mirror.yml`），路径保留原来的 `github.com/...`。
 #[derive(Debug, Default)]
 pub struct BmclapiSource;
+
+/// Fern 自己的镜像站。和更新源是同一个域名。
+const FERN_MIRROR: &str = "dl.fern.huanchengfly.top";
+
+/// 同步到 Fern 镜像的那几个 GitHub 仓库。只认前缀，别的 GitHub 地址原样放行。
+const FERN_MIRRORED_GITHUB: &[&str] = &["/MinecraftMachina/"];
 
 impl DownloadSource for BmclapiSource {
     fn rewrite(&self, official: &Url) -> Url {
         let Some(host) = official.host_str() else {
             return official.clone();
         };
+        if host == "github.com"
+            && FERN_MIRRORED_GITHUB
+                .iter()
+                .any(|prefix| official.path().starts_with(prefix))
+        {
+            let mut rewritten = official.clone();
+            let _ = rewritten.set_host(Some(FERN_MIRROR));
+            rewritten.set_path(&format!("/mirror/github.com{}", official.path()));
+            return rewritten;
+        }
         let replacement = match host {
             "libraries.minecraft.net" => "bmclapi2.bangbang93.com",
             "piston-meta.mojang.com" => "bmclapi2.bangbang93.com",
@@ -2822,5 +2843,21 @@ mod tests {
         let quilt = source.rewrite(&Url::parse("https://meta.quiltmc.org/v3/versions").unwrap());
         assert_eq!(quilt.host_str(), Some("meta.quiltmc.org"));
         assert_eq!(quilt.path(), "/v3/versions");
+
+        // Apple Silicon 的 LWJGL 替换件由 Fern 自己的 R2 镜像。
+        let lwjgl = source.rewrite(
+            &Url::parse(
+                "https://github.com/MinecraftMachina/lwjgl3/releases/download/3.3.1-mmachina.1/lwjgl.jar",
+            )
+            .unwrap(),
+        );
+        assert_eq!(lwjgl.host_str(), Some("dl.fern.huanchengfly.top"));
+        assert_eq!(
+            lwjgl.path(),
+            "/mirror/github.com/MinecraftMachina/lwjgl3/releases/download/3.3.1-mmachina.1/lwjgl.jar"
+        );
+        // 别的 GitHub 地址我们没同步，原样放行。
+        let other = source.rewrite(&Url::parse("https://github.com/someone/else.jar").unwrap());
+        assert_eq!(other.host_str(), Some("github.com"));
     }
 }

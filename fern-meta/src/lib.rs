@@ -4,6 +4,8 @@
 //! parses both generations of the launcher protocol and provides deterministic
 //! inheritance and rules evaluation for the download and launch crates.
 
+pub mod patches;
+
 use std::collections::{HashMap, HashSet};
 
 use regex::Regex;

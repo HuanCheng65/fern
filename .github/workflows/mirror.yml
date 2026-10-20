@@ -1,0 +1,61 @@
+# 把 Apple Silicon 库补丁表里的文件同步到 Fern 的 R2。
+#
+# 那几份 LWJGL 构建挂在 GitHub Releases 上，国内常常下不动；客户端的镜像源会把
+# 它们改写到 `<镜像站>/mirror/github.com/...`。补丁表一变，这里就把新出现的
+# 文件补上去。已在镜像上的跳过，所以重复跑是安全的。
+#
+# 用到的仓库配置和 release.yml 的 publish 那一步是同一套：
+#   secrets.R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+#   vars.R2_BUCKET、vars.UPDATE_BASE_URL
+
+name: Mirror libraries
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - fern-core/rules/library-patches-osx-arm64.json
+      - .github/mirror-libraries.py
+      - .github/workflows/mirror.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Sync to R2
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ vars.UPDATE_BASE_URL }}
+      BUCKET: ${{ vars.R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      # 见 release.yml：R2 不认 AWS CLI 默认附带的 CRC32 校验头。
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and verify what is missing
+        run: |
+          set -euo pipefail
+          python3 .github/mirror-libraries.py --base-url "$BASE_URL" --out staged
+
+      - name: Upload
+        run: |
+          set -euo pipefail
+          if [ -d staged ]; then
+            aws s3 cp staged "s3://${BUCKET}/" \
+              --endpoint-url "$AWS_ENDPOINT" \
+              --recursive \
+              --cache-control "public, max-age=31536000, immutable"
+          else
+            echo "没有要上传的文件。"
+          fi

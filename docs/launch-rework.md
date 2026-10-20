@@ -309,7 +309,7 @@ x64 Java 8 走 Rosetta，或者升级 Forge 构建。（第三方 ARM 版 Java 8
 | Log4Shell 分代处理 | 上游（Mojang 公告） | 配置文件 + `formatMsgNoLookups` | 已实现 |
 | 32 位 Java + 大 `-Xmx` | 上游 | `Block` / 降 `-Xmx` | 待实现，便宜 |
 | headless JRE 跑客户端 | 上游 | `Block` | 待实现，便宜 |
-| Apple Silicon + LWJGL 2（只有 x86_64 native） | 上游 | `ArtifactReplace` 或 x64 + Rosetta | 待实现 |
+| Apple Silicon + 1.18.2 及更早（LWJGL 2 / 3.1 / 3.2 只有 x86_64 native） | 上游（Prism 的库补丁表） | 按 Prism 的表换成带 arm64 native 的构建（`fern-meta/src/patches.rs`）；Java 8 由 Zulu 补（Mojang、Adoptium 都不发 ARM 版）。不走 Rosetta：macOS 27 之后不再完整提供 | 已实现，待真机验证 |
 | Linux `/tmp` 挂 noexec，LWJGL 解 native 失败 | 上游 | `JvmArgAdd`（`org.lwjgl.librarypath` 指到我们自己的目录） | 待实现 |
 | 老整合包带已被删除的 JVM 参数 | 上游 | `JvmArgRemove` + 诊断 | 待实现，见 §5 |
 | macOS 新系统 + LWJGL 2 改窗口大小 SIGSEGV | 未核实 | 待定 | 先验 |

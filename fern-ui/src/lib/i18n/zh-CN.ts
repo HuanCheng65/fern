@@ -338,6 +338,8 @@ const backend = {
   'job.note.java-download': { title: '下载 Java {version}', detail: '' },
   'job.note.java-adoptium-query': { title: '向 Adoptium 查询 Java {major}', detail: '' },
   'job.note.java-adoptium-download': { title: '下载 Temurin {name}（{size} MB）', detail: '' },
+  'job.note.java-zulu-query': { title: '向 Azul 查询 Java {major}', detail: '' },
+  'job.note.java-zulu-download': { title: '下载 Zulu {name}（{size} MB）', detail: '' },
   'job.note.java-extract': { title: '解压 Java 运行时', detail: '' },
   'job.note.authlib': { title: '下载 authlib-injector {version}', detail: '' },
 } satisfies Record<BackendMessage, Message>

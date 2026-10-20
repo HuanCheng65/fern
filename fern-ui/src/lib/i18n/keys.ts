@@ -44,6 +44,8 @@ export const BACKEND_MESSAGES = [
   'job.note.java-download',
   'job.note.java-extract',
   'job.note.java-prepare',
+  'job.note.java-zulu-download',
+  'job.note.java-zulu-query',
   'job.note.legacy-assets',
   'job.note.loader-inspect',
   'job.note.loader-profile',

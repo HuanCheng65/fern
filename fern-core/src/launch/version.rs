@@ -152,7 +152,37 @@ pub fn resolve_profile(paths: &DataPaths, profile: &InstanceProfile) -> Result<V
     if let Some(broken) = broken {
         return Err(broken);
     }
-    merged.ok_or_else(|| anyhow!("{} 没有任何版本描述可读", profile.game_version))
+    merged
+        .map(for_this_machine)
+        .ok_or_else(|| anyhow!("{} 没有任何版本描述可读", profile.game_version))
+}
+
+/// Apple Silicon 上旧版本要换的那些库，见 `fern_meta::patches`。
+static OSX_ARM64_PATCHES: std::sync::LazyLock<Vec<fern_meta::patches::LibraryPatch>> =
+    std::sync::LazyLock::new(|| {
+        serde_json::from_str::<fern_meta::patches::PatchTable>(include_str!(
+            "../../rules/library-patches-osx-arm64.json"
+        ))
+        .expect("库补丁表跟着二进制走，测试保证它能解析")
+        .patches
+    });
+
+/// 这台机器上真正能用的那一份。
+///
+/// 1.18.2 及更早的版本只带 x86_64 的原生库，Apple Silicon 上的原生 Java 加载
+/// 不了——不是缺文件，是缺架构。在这里把旧 LWJGL 换成带 arm64 原生库的构建，
+/// 而不是走 Rosetta：后者在 macOS 27 之后就不再完整提供了。
+///
+/// 放在合并的出口：补全下的和启动用的读的都是这一份，两边不会一边换了一边
+/// 没换（那会表现成「文件下了，游戏照样找不到原生库」）。
+fn for_this_machine(metadata: VersionMetadata) -> VersionMetadata {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        && let Some(patched) =
+            fern_meta::patches::apply(&metadata, &OSX_ARM64_PATCHES, "osx-arm64", "osx")
+    {
+        return patched;
+    }
+    metadata
 }
 
 /// 磁盘上这条继承链：`[自己, 父, …, 根]`。读不到的那一节及其之后不算。
@@ -257,6 +287,11 @@ fn resolve_at(paths: &DataPaths, version_id: &str, depth: usize) -> Result<Versi
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_apple_silicon_patch_table_ships_with_the_binary_and_parses() {
+        assert!(!super::OSX_ARM64_PATCHES.is_empty());
+    }
+
     use super::*;
     use crate::{CoverSeed, InstanceId, InstanceSettings, LoaderKind, LoaderProfile};
 

@@ -221,8 +221,20 @@ async fn download(
     {
         Some(entry) => entry,
         None => {
-            let install_root = adoptium::install(paths, target, events).await?;
-            return finish(&install_root, target, "Temurin");
+            // Adoptium 也不是什么都有：Apple Silicon 上的 Java 8 它就没发过。
+            // 那一格 Azul 的 Zulu 有，排在最后。
+            return match adoptium::install(paths, target, events).await {
+                Ok(install_root) => finish(&install_root, target, "Temurin"),
+                Err(adoptium_error) => match zulu::install(paths, target, events).await {
+                    Ok(install_root) => finish(&install_root, target, "Zulu"),
+                    Err(zulu_error) => {
+                        let _ = paths.append_log(&format!(
+                            "[java] Adoptium：{adoptium_error:#}；Zulu：{zulu_error:#}"
+                        ));
+                        Err(adoptium_error)
+                    }
+                },
+            };
         }
     };
 
@@ -655,6 +667,190 @@ mod tests {
     }
 }
 
+/// Azul Zulu，Adoptium 之后的最后一道兜底。
+///
+/// 只为一个真实的空缺存在：Apple Silicon 上的 Java 8。Mojang 不为 ARM 发
+/// `jre-legacy`，Adoptium 没有 macOS aarch64 的 Temurin 8，而 1.16.5 及更早的
+/// 版本要的正是 Java 8。Zulu 的社区版免费下载，元数据 API 公开，包上带 sha256。
+///
+/// 两步问：列表接口按平台挑出最新的那一份，详情接口给 sha256 和大小。
+mod zulu {
+    use std::path::PathBuf;
+
+    use anyhow::{Context, Result, anyhow};
+    use fern_download::DownloadEvent;
+    use serde::Deserialize;
+    use sha2::{Digest, Sha256};
+    use tokio::sync::mpsc::UnboundedSender;
+
+    use crate::DataPaths;
+
+    const API: &str = "https://api.azul.com/metadata/v1/zulu/packages";
+
+    #[derive(Debug, Deserialize)]
+    struct Listing {
+        package_uuid: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Package {
+        name: String,
+        download_url: String,
+        #[serde(default)]
+        sha256_hash: String,
+        #[serde(default)]
+        size: u64,
+        #[serde(default)]
+        java_version: Vec<u32>,
+    }
+
+    /// Azul 的平台写法：系统、架构、压缩包格式。
+    fn platform() -> Option<(&'static str, &'static str, &'static str)> {
+        let os = match std::env::consts::OS {
+            "macos" => "macos",
+            "linux" => "linux",
+            "windows" => "windows",
+            _ => return None,
+        };
+        let arch = match std::env::consts::ARCH {
+            "aarch64" => "aarch64",
+            "x86_64" => "x64",
+            _ => return None,
+        };
+        let archive = if os == "windows" { "zip" } else { "tar.gz" };
+        Some((os, arch, archive))
+    }
+
+    fn listing_url(major: u16, os: &str, arch: &str, archive: &str) -> String {
+        format!(
+            "{API}/?java_version={major}&os={os}&arch={arch}&archive_type={archive}\
+             &java_package_type=jre&javafx_bundled=false&release_status=ga\
+             &availability_types=CA&latest=true&page_size=1"
+        )
+    }
+
+    pub async fn install(
+        paths: &DataPaths,
+        major: u16,
+        events: &UnboundedSender<DownloadEvent>,
+    ) -> Result<PathBuf> {
+        let (os, arch, archive) =
+            platform().ok_or_else(|| anyhow!("Zulu 不提供这个平台的 Java {major}"))?;
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.java-zulu-query".to_owned(),
+            params: vec![("major".to_owned(), major.to_string())],
+        });
+        let downloader = crate::data::downloader::client(4);
+        let listing: Vec<Listing> = serde_json::from_slice(
+            &downloader
+                .fetch(&listing_url(major, os, arch, archive))
+                .await
+                .with_context(|| format!("查询 Zulu 的 Java {major}"))?,
+        )
+        .context("解析 Zulu 的列表")?;
+        let uuid = listing
+            .into_iter()
+            .next()
+            .map(|item| item.package_uuid)
+            .ok_or_else(|| anyhow!("Zulu 没有 {os}-{arch} 的 Java {major}"))?;
+        let package: Package = serde_json::from_slice(
+            &downloader
+                .fetch(&format!("{API}/{uuid}"))
+                .await
+                .context("查询 Zulu 的包信息")?,
+        )
+        .context("解析 Zulu 的包信息")?;
+        if !crate::is_external_url(&package.download_url) {
+            return Err(anyhow!("Zulu 给的下载地址不是 https"));
+        }
+
+        let version = package
+            .java_version
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(".");
+        let install_root = paths.runtimes.join(format!("zulu-{version}"));
+        if !version.is_empty() && crate::java::probe(&install_root).is_ok() {
+            return Ok(install_root);
+        }
+
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.java-zulu-download".to_owned(),
+            params: vec![
+                ("name".to_owned(), version.clone()),
+                (
+                    "size".to_owned(),
+                    (package.size / (1024 * 1024)).to_string(),
+                ),
+            ],
+        });
+        let bytes = downloader
+            .fetch(&package.download_url)
+            .await
+            .context("下载 Zulu")?;
+        // 详情接口总给 sha256；真没给就不装——这是一份要执行的二进制。
+        let actual = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        if package.sha256_hash.is_empty() || !actual.eq_ignore_ascii_case(&package.sha256_hash) {
+            return Err(anyhow!("Zulu 校验和不匹配"));
+        }
+
+        let _ = events.send(DownloadEvent::StatusId {
+            id: "job.note.java-extract".to_owned(),
+            params: Vec::new(),
+        });
+        let root = install_root.clone();
+        let name = package.name.clone();
+        // Zulu 的包和 Temurin 一样多一层顶层目录，macOS 上里面是
+        // `Contents/Home`——探测那边本来就认这个形状。
+        tokio::task::spawn_blocking(move || super::adoptium::unpack(&bytes, &name, &root))
+            .await??;
+        Ok(install_root)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_listing_asks_for_one_plain_jre_for_this_platform() {
+            let url = listing_url(8, "macos", "aarch64", "tar.gz");
+            assert!(url.starts_with("https://api.azul.com/metadata/v1/zulu/packages/?"));
+            for part in [
+                "java_version=8",
+                "os=macos",
+                "arch=aarch64",
+                "archive_type=tar.gz",
+                "java_package_type=jre",
+                "javafx_bundled=false",
+                "latest=true",
+            ] {
+                assert!(url.contains(part), "{part} missing from {url}");
+            }
+            assert!(!url.contains(' '));
+        }
+
+        /// 真装一份，要联网，默认不跑：
+        /// `cargo test -p fern-core --lib java::runtime::zulu -- --ignored`
+        #[tokio::test]
+        #[ignore]
+        async fn live_a_zulu_8_installs_and_is_recognised() {
+            let root = std::env::temp_dir().join(format!("fern-zulu-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let paths = DataPaths::new(root.clone());
+            let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let installed = install(&paths, 8, &events).await.expect("install");
+            let runtime = crate::java::probe(&installed).expect("probe");
+            println!("{} {} {}", runtime.version, runtime.arch, runtime.vendor);
+            assert_eq!(runtime.major, 8);
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+}
+
 /// Adoptium 兜底（文档 §4.3）。
 ///
 /// Mojang 只为它自己发行的平台组合提供运行时，linux-aarch64 就不在其中。
@@ -803,7 +999,7 @@ mod adoptium {
     ///
     /// Temurin 的包解出来是 `jdk-21.0.12+8-jre/bin/java`，多一层。剥掉之后
     /// 目录结构就和 Mojang 的运行时一致，`probe` 那边不必分两种情况。
-    fn unpack(archive: &[u8], name: &str, destination: &Path) -> Result<()> {
+    pub(super) fn unpack(archive: &[u8], name: &str, destination: &Path) -> Result<()> {
         if name.ends_with(".zip") {
             let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
                 .context("读取 Temurin 压缩包")?;
