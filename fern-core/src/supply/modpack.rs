@@ -28,7 +28,11 @@ use super::{
     cfpack::{ManualFile, PackFile},
     sideload::Sideload,
 };
-use crate::{DataPaths, InstanceProfile, LoaderKind};
+use crate::{
+    DataPaths, InstanceProfile, LoaderKind,
+    instance::pack::{PackRecord, PackRef},
+};
+use std::collections::BTreeMap;
 
 /// 这一版只认得 formatVersion 1。往后的格式没见过就直说，别猜着装。
 const SUPPORTED_FORMAT: u32 = 1;
@@ -292,10 +296,14 @@ pub async fn manual_files(archive_path: &Path, sideload: &Sideload) -> Result<Ve
 /// 建一个实例并把整合包铺进去。
 ///
 /// 名字可以由调用方给（用户在导入时改过），不给就用清单里的。
+///
+/// `upstream` 是补给站装的时候已经知道的上游身份；从本地文件导入时为空，那就拿
+/// 包体的哈希去上游反查一次（见 [`crate::supply::identify_archive`]）。
 pub async fn install(
     paths: &DataPaths,
     archive_path: &Path,
     name: Option<&str>,
+    upstream: Option<PackRef>,
     sideload: &Sideload,
     job: &crate::Job,
 ) -> Result<InstanceProfile> {
@@ -333,9 +341,10 @@ pub async fn install(
     // 出了岔子就把这个半成品实例删掉。留一个下了一半的实例在曲库里，比直接
     // 失败更糟——它看起来是好的，点启动才发现不是。
     match lay_out(&game, archive_path, &files, prefixes, job).await {
-        Ok(()) => {
-            // 记一笔谁放进来的。整合包自带的 overrides 不记：那里面绝大多数是
-            // 配置，本来就天天变，记下来只会让日志淹掉真正的信号。
+        Ok(overrides) => {
+            // 记一笔谁放进来的。整合包自带的 overrides 不进来源日志：那里面绝大
+            // 多数是配置，本来就天天变，记下来只会让日志淹掉真正的信号。它们的
+            // 哈希记在整合包的记录里（下面），那是另一个问题要用的。
             //
             // 铺完了才读得到版本号。三百个 jar 各开一次 zip 读一个小文件，
             // 比刚才那趟下载便宜得多。
@@ -358,7 +367,35 @@ pub async fn install(
                         },
                     })
                 })
-                .collect();
+                .collect::<Vec<_>>();
+
+            // 这个实例是哪个整合包的哪个版本、铺下来的是什么。以后判断有没有
+            // 新版、哪些文件是包带来的，都从这份记录出发（见 `instance::pack`）。
+            let upstream = match upstream {
+                Some(known) => Some(known),
+                None => crate::supply::identify_archive(pack.source(), archive_path).await,
+            };
+            let record = PackRecord {
+                source: pack.source(),
+                upstream,
+                name: summary.name.clone(),
+                version: summary.version.clone(),
+                installed_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_secs()),
+                files: arrivals
+                    .iter()
+                    .map(|entry| (entry.file.clone(), entry.sha1.clone()))
+                    .collect(),
+                overrides,
+            };
+            if let Err(error) = crate::instance::pack::write(paths, profile.id.as_str(), &record) {
+                let _ = paths.append_log(&format!(
+                    "[modpack] instance={} record={error:#}",
+                    profile.id.as_str()
+                ));
+            }
+
             crate::instance::origin::record(paths, profile.id.as_str(), arrivals);
             Ok(profile)
         }
@@ -375,7 +412,7 @@ async fn lay_out(
     files: &[PackFile],
     prefixes: Vec<String>,
     job: &crate::Job,
-) -> Result<()> {
+) -> Result<BTreeMap<String, String>> {
     let events = &job.downloads();
     tokio::fs::create_dir_all(game).await?;
 
@@ -415,8 +452,7 @@ async fn lay_out(
     let archive = archive_path.to_path_buf();
     let destination = game.to_path_buf();
     tokio::task::spawn_blocking(move || extract_overrides(&archive, &destination, &prefixes))
-        .await??;
-    Ok(())
+        .await?
 }
 
 /// 把整合包的包体取到手。
@@ -451,16 +487,24 @@ pub async fn install_from_supply(
     let archive = fetched
         .path
         .ok_or_else(|| anyhow!("这个整合包的作者仅允许从 CurseForge 网站下载"))?;
-    install(paths, &archive, name, sideload, job).await
+    install(paths, &archive, name, Some(fetched.upstream), sideload, job).await
 }
 
-/// 把 overrides 铺进游戏目录。
+/// 把 overrides 铺进游戏目录，返回铺下去的每个文件的 sha1。
 ///
 /// mrpack 有两层：`overrides/` 先铺，`client-overrides/` 后铺——后者按格式定义
-/// 就是用来盖前者的。CurseForge 只有一层，目录名写在清单里。
-fn extract_overrides(archive_path: &Path, game: &Path, prefixes: &[String]) -> Result<()> {
+/// 就是用来盖前者的，所以同一个路径记的是后铺的那一份。CurseForge 只有一层，
+/// 目录名写在清单里。
+///
+/// 哈希边写边算：这些文件刚从 zip 里流过一遍，再读一遍磁盘是白读。
+fn extract_overrides(
+    archive_path: &Path,
+    game: &Path,
+    prefixes: &[String],
+) -> Result<BTreeMap<String, String>> {
     let file = std::fs::File::open(archive_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
+    let mut written = BTreeMap::new();
 
     for prefix in prefixes {
         for index in 0..archive.len() {
@@ -484,12 +528,51 @@ fn extract_overrides(archive_path: &Path, game: &Path, prefixes: &[String]) -> R
             if let Some(parent) = destination.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let mut target = std::fs::File::create(&destination)
+            let target = std::fs::File::create(&destination)
                 .with_context(|| format!("写入 {}", destination.display()))?;
-            std::io::copy(&mut entry, &mut target)?;
+            let mut hashing = Hashing::new(target);
+            std::io::copy(&mut entry, &mut hashing)?;
+            written.insert(
+                relative.to_string_lossy().replace('\\', "/"),
+                hashing.finish(),
+            );
         }
     }
-    Ok(())
+    Ok(written)
+}
+
+/// 写的同时算 sha1。
+struct Hashing<W> {
+    inner: W,
+    hasher: sha1::Sha1,
+}
+
+impl<W: std::io::Write> Hashing<W> {
+    fn new(inner: W) -> Self {
+        use sha1::Digest;
+        Self {
+            inner,
+            hasher: sha1::Sha1::new(),
+        }
+    }
+
+    fn finish(self) -> String {
+        use sha1::Digest;
+        format!("{:x}", self.hasher.finalize())
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for Hashing<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        use sha1::Digest;
+        let written = self.inner.write(buf)?;
+        self.hasher.update(&buf[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 #[cfg(test)]
@@ -619,13 +702,22 @@ mod tests {
         let game = directory.join("game");
         std::fs::create_dir_all(&game).expect("create game");
 
-        extract_overrides(
+        let written = extract_overrides(
             &path,
             &game,
             &["overrides/".to_owned(), "client-overrides/".to_owned()],
         )
         .expect("extract");
         assert!(game.join("config/ok.toml").is_file());
+        // 铺下去的那一刻的 sha1，留给以后分辨「包里的配置」和「用户改过的配置」。
+        {
+            use sha1::Digest;
+            assert_eq!(
+                written.get("config/ok.toml"),
+                Some(&format!("{:x}", sha1::Sha1::digest(b"fine")))
+            );
+        }
+        assert_eq!(written.len(), 1);
         assert!(!directory.join("escaped.txt").exists());
 
         std::fs::remove_dir_all(directory).expect("clean");
@@ -648,5 +740,69 @@ mod tests {
         assert!(wanted(&entry(Some("optional"))));
         // 没写 env 就是两边都要。
         assert!(wanted(&entry(None)));
+    }
+
+    /// 对着真的 Modrinth 装一个整合包，看记录是不是写对了。要联网，默认不跑：
+    ///
+    /// ```text
+    /// cargo test -p fern-core --lib supply::modpack::tests::live -- --ignored --nocapture
+    /// ```
+    #[tokio::test]
+    #[ignore]
+    async fn live_a_local_mrpack_is_recorded_with_its_upstream() {
+        use crate::supply::{SearchQuery, Sideload};
+
+        let root = std::env::temp_dir().join(format!("fern-pack-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = DataPaths::new(root.clone());
+
+        let hits = crate::supply::search(
+            Source::Modrinth,
+            &SearchQuery {
+                query: "fabulously optimized".to_owned(),
+                kind: crate::supply::ResourceKind::Modpack,
+                ..SearchQuery::default()
+            },
+        )
+        .await
+        .expect("search");
+        let pack = &hits.hits[0];
+        let list = crate::supply::versions(Source::Modrinth, &pack.project_id, None)
+            .await
+            .expect("versions");
+        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let job = crate::Job::begin(&events, "live", Vec::new());
+        let fetched = fetch(
+            &paths,
+            Source::Modrinth,
+            &list[0].id,
+            &Sideload::default(),
+            &job,
+        )
+        .await
+        .expect("fetch");
+        let archive = fetched.path.clone().expect("archive");
+
+        // 当成本地文件导入：不给上游身份，要它自己按 sha1 认出来。
+        let profile = install(&paths, &archive, None, None, &Sideload::default(), &job)
+            .await
+            .expect("install");
+        job.done(None);
+
+        let record = crate::instance::pack::read(&paths, profile.id.as_str()).expect("record");
+        println!(
+            "{} {} upstream={:?} files={} overrides={}",
+            record.name,
+            record.version,
+            record.upstream,
+            record.files.len(),
+            record.overrides.len()
+        );
+        assert_eq!(record.upstream, Some(fetched.upstream));
+        assert!(!record.files.is_empty());
+        assert!(record.files.keys().all(|path| path.contains('/')));
+        assert!(!record.overrides.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

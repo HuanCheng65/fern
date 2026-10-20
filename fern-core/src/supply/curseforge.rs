@@ -1255,6 +1255,7 @@ mod live {
             println!("  manual: {} {} {}", item.title, item.file_name, item.page);
         }
         assert_eq!(files.len(), summary.files);
+
         let _ = std::fs::remove_dir_all(directory);
     }
 

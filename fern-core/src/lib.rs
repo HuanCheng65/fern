@@ -209,6 +209,7 @@ pub use storage::{
     slim::{SlimContents, SlimPlan, apply as slim_apply, preview as slim_preview},
 };
 
+pub use instance::pack::{PackRecord, PackRef, read as read_pack_record};
 pub use launch::activity::{Activity, Place as ActivityPlace};
 pub use launch::gamelog::{LogLine, LogParser};
 pub use launch::loader::{

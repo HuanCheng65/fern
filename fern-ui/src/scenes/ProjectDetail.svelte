@@ -18,6 +18,13 @@
   import { ArrowUpRight, Download, Plus } from 'lucide-svelte'
   import Loading from '../components/Loading.svelte'
   import ManualDownloads, { type ManualFile } from '../components/ManualDownloads.svelte'
+
+  /** 整合包在上游的身份。和 Rust `instance::pack::PackRef` 同形。 */
+  interface PackRef {
+    source: 'modrinth' | 'curseforge'
+    projectId: string
+    versionId: string
+  }
   import Detail from '../layouts/Detail.svelte'
   import { inTauri, instances } from '../lib/instances.svelte'
   import { integrity } from '../lib/integrity.svelte'
@@ -81,9 +88,13 @@
    * CurseForge 整合包：包体已经下到缓存里了，还差几个手动下载的文件。
    * 齐了才建实例——缺一个，建出来的就是一个起不来的实例。
    */
-  let pending = $state<{ version: ProjectVersion; path: string; files: ManualFile[] } | null>(
-    null,
-  )
+  let pending = $state<{
+    version: ProjectVersion
+    path: string
+    files: ManualFile[]
+    /** 上游身份，建实例时原样带回去，记进这个实例的整合包记录。 */
+    upstream?: PackRef
+  } | null>(null)
   let checking = $state(false)
 
   /** 这个项目上现在有没有事情在跑。走开再回来它还在。 */
@@ -295,24 +306,27 @@
    */
   async function installCurseForgePack(version: ProjectVersion) {
     let path = pending?.version.id === version.id ? pending.path : ''
+    let upstream = pending?.version.id === version.id ? pending.upstream : undefined
     if (!path) {
       const fetched = await fetchPack(version)
+      upstream = fetched.upstream
       if (!fetched.path) {
         // 包体本身就只能去网站上下。它和包里那些文件是同一件事，同一个面板。
-        pending = { version, path: '', files: fetched.manual ? [fetched.manual] : [] }
+        pending = { version, path: '', files: fetched.manual ? [fetched.manual] : [], upstream }
         return
       }
       path = fetched.path
     }
     const files = await invoke<ManualFile[]>('modpack_manual_files', { path, picked })
     if (files.some((file) => !file.found)) {
-      pending = { version, path, files }
+      pending = { version, path, files, upstream }
       return
     }
     pending = null
     const created = await invoke<{ id: string; name: string }>('import_modpack', {
       path,
       name: detail?.title ?? null,
+      upstream: upstream ?? null,
       picked,
       title: `安装 ${detail?.title ?? '整合包'}`,
       subjects: [project],
@@ -324,7 +338,7 @@
 
   /** 取包体：下到缓存里，或者在下载文件夹、用户指的文件里找到手动下的那一份。 */
   function fetchPack(version: ProjectVersion) {
-    return invoke<{ path?: string; manual?: ManualFile }>('fetch_modpack', {
+    return invoke<{ path?: string; manual?: ManualFile; upstream: PackRef }>('fetch_modpack', {
       source,
       versionId: version.id,
       picked,
@@ -347,7 +361,11 @@
       if (!path) {
         const fetched = await fetchPack(pending.version)
         if (!fetched.path) {
-          pending = { ...pending, files: fetched.manual ? [fetched.manual] : [] }
+          pending = {
+            ...pending,
+            files: fetched.manual ? [fetched.manual] : [],
+            upstream: fetched.upstream,
+          }
           return
         }
         path = fetched.path

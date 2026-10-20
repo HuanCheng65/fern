@@ -371,6 +371,8 @@ pub fn duplicate_instance(
     }
     // 模组是原样拷过去的，那份「谁放进来的」对副本一样成立。
     crate::instance::origin::inherit(paths, instance_id, copy.id.as_str());
+    // 副本也还是那个整合包：文件原样拷过去了，记录跟着走。
+    crate::instance::pack::inherit(paths, instance_id, copy.id.as_str());
     Ok(copy)
 }
 

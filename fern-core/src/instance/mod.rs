@@ -21,6 +21,7 @@ pub(crate) mod integrity;
 pub(crate) mod jar;
 pub(crate) mod mods;
 pub(crate) mod origin;
+pub(crate) mod pack;
 pub(crate) mod prism;
 pub(crate) mod saves;
 pub(crate) mod servers;

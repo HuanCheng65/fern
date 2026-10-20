@@ -1398,6 +1398,7 @@ async fn import_modpack(
     app: tauri::AppHandle,
     path: String,
     name: Option<String>,
+    upstream: Option<fern_core::PackRef>,
     picked: Option<Vec<String>>,
     title: String,
     subjects: Vec<String>,
@@ -1410,6 +1411,7 @@ async fn import_modpack(
         &paths,
         std::path::Path::new(&path),
         name.as_deref().filter(|value| !value.is_empty()),
+        upstream,
         &sideload,
         &job,
     )

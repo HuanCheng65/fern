@@ -382,6 +382,37 @@ pub struct Fetched {
     /// 拿不到：作者不允许第三方下载，也还没在下载文件夹里找到。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manual: Option<cfpack::ManualFile>,
+    /// 这是上游的哪个项目的哪个版本。整合包拿去建实例时一路带着，记进
+    /// `pack.json`——到了 `install` 那一步，手上只剩一个路径。
+    pub upstream: crate::instance::pack::PackRef,
+}
+
+/// 一个本地的整合包包体是上游的哪个项目的哪个版本。
+///
+/// 从本地文件导入时只有这一条路，而且只对 mrpack 走得通：Modrinth 的
+/// `version_files` 收录了整合包文件的 sha1。CurseForge 的指纹接口**不收录整合包**
+/// ——实测（2026-10）RLCraft 的 zip，我们算出的指纹和上游 `fileFingerprint`
+/// 一字不差，反查仍是空的——所以从本地导入的 CurseForge 整合包认不出上游，
+/// 记录里只有名字和版本号。从补给站装的不受影响，它一开始就知道自己是谁。
+pub(crate) async fn identify_archive(
+    source: Source,
+    archive: &std::path::Path,
+) -> Option<crate::instance::pack::PackRef> {
+    if source != Source::Modrinth {
+        return None;
+    }
+    let path = archive.to_path_buf();
+    let sha1 = tokio::task::spawn_blocking(move || crate::backup::sha1_of(&path))
+        .await
+        .ok()?
+        .ok()?;
+    let found = known_files(std::slice::from_ref(&sha1)).await.ok()?;
+    let file = found.get(&sha1)?;
+    Some(crate::instance::pack::PackRef {
+        source,
+        project_id: file.project_id.clone(),
+        version_id: file.version_id.clone(),
+    })
 }
 
 /// 把一个版本的主文件取到手。
@@ -400,6 +431,11 @@ pub async fn fetch_release_file(
     events: &UnboundedSender<DownloadEvent>,
 ) -> Result<Fetched> {
     let version = release(source, version_id).await?;
+    let upstream = crate::instance::pack::PackRef {
+        source,
+        project_id: version.project_id.clone(),
+        version_id: version.version_id.clone(),
+    };
     let file = version
         .file
         .ok_or_else(|| anyhow!("{} 这个版本没有可下载的文件", version.name))?;
@@ -417,6 +453,7 @@ pub async fn fetch_release_file(
             return Ok(Fetched {
                 path: Some(local),
                 manual: None,
+                upstream,
             });
         }
         let named = project_names(source, std::slice::from_ref(&version.project_id))
@@ -436,6 +473,7 @@ pub async fn fetch_release_file(
                 file_name: file.name,
                 found: false,
             }),
+            upstream,
         });
     };
     tokio::fs::create_dir_all(directory).await?;
@@ -452,6 +490,7 @@ pub async fn fetch_release_file(
     Ok(Fetched {
         path: Some(destination),
         manual: None,
+        upstream,
     })
 }
 
