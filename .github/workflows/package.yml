@@ -172,6 +172,10 @@ jobs:
       - name: Build desktop package
         run: pnpm tauri build ${{ matrix.build_args }}
         working-directory: fern-ui
+        # 编进 fern-core 的 CurseForge 密钥（`option_env!`）。没有它也编得过，只是
+        # 补给站里没有 CurseForge。外部仓库发来的 PR 拿不到 secret，那种包就是没有。
+        env:
+          FERN_CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
 
       - name: Upload package
         uses: actions/upload-artifact@v4
