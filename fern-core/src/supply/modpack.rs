@@ -419,20 +419,21 @@ async fn lay_out(
     Ok(())
 }
 
-/// 把整合包的包体下到缓存里，返回路径。
+/// 把整合包的包体取到手。
 ///
-/// 和建实例分开：CurseForge 的整合包可能要先手动下几个文件，那要在包体到手
-/// 之后、建实例之前停下来问用户。装到一半失败时这个文件也还在，重来一次不用
-/// 再下一遍。
+/// 和建实例分开：CurseForge 的整合包可能要先手动下几个文件——有时连包体本身
+/// 都要——那要在建实例之前停下来问用户。装到一半失败时这个文件也还在缓存里，
+/// 重来一次不用再下一遍。
 pub async fn fetch(
     paths: &DataPaths,
     source: Source,
     version_id: &str,
+    sideload: &Sideload,
     job: &crate::Job,
-) -> Result<std::path::PathBuf> {
+) -> Result<crate::supply::Fetched> {
     job.step("下载整合包");
     let cache = paths.root.join("cache/modpacks");
-    crate::supply::fetch_release_file(source, version_id, &cache, &job.downloads()).await
+    crate::supply::fetch_release_file(source, version_id, &cache, sideload, &job.downloads()).await
 }
 
 /// 从补给站装一个整合包：取包体，再照本地文件那条路走。
@@ -446,7 +447,10 @@ pub async fn install_from_supply(
 ) -> Result<InstanceProfile> {
     // 取包体是 install 那三步之前的一步。
     job.expect(1);
-    let archive = fetch(paths, source, version_id, job).await?;
+    let fetched = fetch(paths, source, version_id, sideload, job).await?;
+    let archive = fetched
+        .path
+        .ok_or_else(|| anyhow!("这个整合包的作者仅允许从 CurseForge 网站下载"))?;
     install(paths, &archive, name, sideload, job).await
 }
 

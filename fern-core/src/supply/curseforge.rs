@@ -437,7 +437,7 @@ pub(super) async fn search(request: &SearchQuery) -> Result<SearchResult> {
                 project_id: item.id.to_string(),
                 icon_url: item.icon(),
                 slug: item.slug,
-                title: item.name,
+                title: item.name.trim().to_owned(),
                 description: item.summary,
                 author: item
                     .authors
@@ -527,7 +527,7 @@ pub(super) async fn project(id: &str) -> Result<ProjectDetail> {
     Ok(ProjectDetail {
         id: raw.id.to_string(),
         slug: raw.slug,
-        title: raw.name,
+        title: raw.name.trim().to_owned(),
         description: raw.summary,
         project_type: project_type(raw.class_id).to_owned(),
         categories: raw
@@ -742,7 +742,7 @@ pub(super) async fn project_names(ids: &[String]) -> Result<HashMap<String, plan
                         .filter(|url| is_external_url(url))
                         .map(|url| url.trim_end_matches('/').to_owned()),
                     slug: item.slug,
-                    title: item.name,
+                    title: item.name.trim().to_owned(),
                     icon_url,
                 },
             )
@@ -908,7 +908,7 @@ pub(super) async fn pack_projects(ids: &[u64]) -> Result<HashMap<u64, PackProjec
             out.insert(
                 item.id,
                 PackProject {
-                    title: item.name,
+                    title: item.name.trim().to_owned(),
                     directory,
                     page,
                 },
@@ -1255,6 +1255,42 @@ mod live {
             println!("  manual: {} {} {}", item.title, item.file_name, item.page);
         }
         assert_eq!(files.len(), summary.files);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_pack_that_cannot_be_fetched_comes_back_as_a_manual_download() {
+        let hits = search(&SearchQuery {
+            query: "Cobblemon SMP".to_owned(),
+            kind: ResourceKind::Modpack,
+            ..SearchQuery::default()
+        })
+        .await
+        .expect("search");
+        let pack = hits
+            .hits
+            .iter()
+            .find(|hit| hit.title.starts_with("Cobblemon SMP"))
+            .expect("the pack");
+        let list = versions(&pack.project_id, None).await.expect("versions");
+        let version = list.first().expect("a version");
+
+        let directory = std::env::temp_dir().join(format!("fern-cf-manual-{}", std::process::id()));
+        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let fetched = crate::supply::fetch_release_file(
+            Source::CurseForge,
+            &version.id,
+            &directory,
+            &crate::supply::Sideload::default(),
+            &events,
+        )
+        .await
+        .expect("fetch");
+        println!("{fetched:?}");
+        assert!(fetched.path.is_none());
+        let manual = fetched.manual.expect("manual");
+        assert!(manual.page.starts_with("https://www.curseforge.com/"));
         let _ = std::fs::remove_dir_all(directory);
     }
 }

@@ -239,8 +239,8 @@ pub use supply::plan::{
 };
 pub use supply::survey::{ModUpdate, updates as mod_updates};
 pub use supply::{
-    GalleryImage, InstallOutcome, ProjectDetail, ProjectLink, ProjectVersion, ResourceKind,
-    SearchHit, SearchQuery, SearchResult, Sideload, Source, VersionDependency,
+    Fetched, GalleryImage, InstallOutcome, ProjectDetail, ProjectLink, ProjectVersion,
+    ResourceKind, SearchHit, SearchQuery, SearchResult, Sideload, Source, VersionDependency,
     install as install_from_supply, is_external_url, project as supply_project,
     search as search_supply, update_mod, versions as supply_versions,
 };

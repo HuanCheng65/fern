@@ -372,23 +372,72 @@ pub(crate) async fn mirrored_on_modrinth(
         .unwrap_or_default()
 }
 
-/// 把一个版本的主文件下到指定位置，返回落盘的路径。
+/// 取一个版本的主文件的结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fetched {
+    /// 拿到了：在缓存里，或者就是用户手动下的那一份。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<std::path::PathBuf>,
+    /// 拿不到：作者不允许第三方下载，也还没在下载文件夹里找到。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manual: Option<cfpack::ManualFile>,
+}
+
+/// 把一个版本的主文件取到手。
 ///
 /// 整合包要先把包体拿到手才能读里面的清单，所以它走这一条而不是 `install`
 /// ——那一条的前提是「文件放进某个实例的某个目录」。
+///
+/// CurseForge 上有的整合包本身就不允许第三方下载。那就和包里的文件一样：
+/// 先看 Modrinth 上有没有同一份字节，再去下载文件夹里找，都没有就把它作为
+/// 一个要手动下载的文件交回去，而不是报一句错就到头了。
 pub async fn fetch_release_file(
     source: Source,
     version_id: &str,
     directory: &std::path::Path,
+    sideload: &Sideload,
     events: &UnboundedSender<DownloadEvent>,
-) -> Result<std::path::PathBuf> {
+) -> Result<Fetched> {
     let version = release(source, version_id).await?;
     let file = version
         .file
         .ok_or_else(|| anyhow!("{} 这个版本没有可下载的文件", version.name))?;
-    let url = file
-        .url
-        .ok_or_else(|| anyhow!("{} 的作者不允许第三方启动器下载这个文件", version.name))?;
+    let url = match file.url.clone() {
+        Some(url) => Some(url),
+        None => match file.sha1.clone() {
+            Some(sha1) => mirrored_on_modrinth(std::slice::from_ref(&sha1))
+                .await
+                .remove(&sha1),
+            None => None,
+        },
+    };
+    let Some(url) = url else {
+        if let Some(local) = sideload.locate(&file.name, file.sha1.as_deref(), file.size) {
+            return Ok(Fetched {
+                path: Some(local),
+                manual: None,
+            });
+        }
+        let named = project_names(source, std::slice::from_ref(&version.project_id))
+            .await
+            .unwrap_or_default()
+            .remove(&version.project_id);
+        return Ok(Fetched {
+            path: None,
+            manual: Some(cfpack::ManualFile {
+                title: named
+                    .as_ref()
+                    .map_or_else(|| version.name.clone(), |named| named.title.clone()),
+                page: named
+                    .and_then(|named| named.page)
+                    .map(|page| format!("{page}/files/{}", version.version_id))
+                    .unwrap_or_default(),
+                file_name: file.name,
+                found: false,
+            }),
+        });
+    };
     tokio::fs::create_dir_all(directory).await?;
     let destination = fern_download::safe_join(directory, std::path::Path::new(&file.name))?;
     let task = match file.sha1.as_deref() {
@@ -400,7 +449,10 @@ pub async fn fetch_release_file(
     crate::data::downloader::client(4)
         .download_all(vec![task], events)
         .await?;
-    Ok(destination)
+    Ok(Fetched {
+        path: Some(destination),
+        manual: None,
+    })
 }
 
 /// 这个加载器在补给站上对应哪些标签。两家都翻成这同一套小写名字。

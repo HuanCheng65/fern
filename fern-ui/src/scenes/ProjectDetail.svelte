@@ -294,15 +294,16 @@
    * 包体不用再下一遍。
    */
   async function installCurseForgePack(version: ProjectVersion) {
-    const path =
-      pending?.version.id === version.id
-        ? pending.path
-        : await invoke<string>('fetch_modpack', {
-            source,
-            versionId: version.id,
-            title: `下载 ${detail?.title ?? '整合包'}`,
-            subjects: [project],
-          })
+    let path = pending?.version.id === version.id ? pending.path : ''
+    if (!path) {
+      const fetched = await fetchPack(version)
+      if (!fetched.path) {
+        // 包体本身就只能去网站上下。它和包里那些文件是同一件事，同一个面板。
+        pending = { version, path: '', files: fetched.manual ? [fetched.manual] : [] }
+        return
+      }
+      path = fetched.path
+    }
     const files = await invoke<ManualFile[]>('modpack_manual_files', { path, picked })
     if (files.some((file) => !file.found)) {
       pending = { version, path, files }
@@ -321,16 +322,38 @@
     nav.enter('instances', created.id)
   }
 
-  /** 补齐之后再查一遍。 */
+  /** 取包体：下到缓存里，或者在下载文件夹、用户指的文件里找到手动下的那一份。 */
+  function fetchPack(version: ProjectVersion) {
+    return invoke<{ path?: string; manual?: ManualFile }>('fetch_modpack', {
+      source,
+      versionId: version.id,
+      picked,
+      title: `下载 ${detail?.title ?? '整合包'}`,
+      subjects: [project],
+    })
+  }
+
+  /**
+   * 补齐之后再查一遍。
+   *
+   * 还没拿到包体时查的是包体；拿到了，就接着查包里那些要手动下载的文件——
+   * 面板里的清单随之换成下一批，用户一直在同一个地方往下走。
+   */
   async function recheckPending() {
     if (!pending) return
     checking = true
     try {
-      const files = await invoke<ManualFile[]>('modpack_manual_files', {
-        path: pending.path,
-        picked,
-      })
-      pending = { ...pending, files }
+      let path = pending.path
+      if (!path) {
+        const fetched = await fetchPack(pending.version)
+        if (!fetched.path) {
+          pending = { ...pending, files: fetched.manual ? [fetched.manual] : [] }
+          return
+        }
+        path = fetched.path
+      }
+      const files = await invoke<ManualFile[]>('modpack_manual_files', { path, picked })
+      pending = { ...pending, path, files }
     } catch (cause) {
       error = String(cause)
     } finally {
@@ -489,15 +512,17 @@
 
               {#if pending?.version.id === version.id}
                 <div class="plan" transition:unfold>
-                  <ManualDownloads
-                    files={pending.files}
-                    {checking}
-                    onrecheck={() => void recheckPending()}
-                    onpick={(paths) => {
-                      addPicked(paths)
-                      void recheckPending()
-                    }}
-                  />
+                  {#if pending.files.length > 0}
+                    <ManualDownloads
+                      files={pending.files}
+                      {checking}
+                      onrecheck={() => void recheckPending()}
+                      onpick={(paths) => {
+                        addPicked(paths)
+                        void recheckPending()
+                      }}
+                    />
+                  {/if}
                   {#if pending.files.every((file) => file.found)}
                     <p class="t-quiet tally">文件已齐，选择「创建实例」继续。</p>
                   {/if}

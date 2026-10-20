@@ -1353,7 +1353,8 @@ async fn inspect_modpack(path: String) -> Result<fern_core::PackSummary, String>
     .await?
 }
 
-/// 把补给站上的一个整合包下到缓存里，返回路径。
+/// 把补给站上的一个整合包取到手：下到缓存里，或者在下载文件夹里找到用户
+/// 手动下的那一份。都不行时交回一个要手动下载的文件。
 ///
 /// CurseForge 的整合包可能有几个文件要手动下载，要在建实例之前停下来问，所以
 /// 这一步和建实例分开：取完包体，界面问一次 `modpack_manual_files`，齐了再
@@ -1363,15 +1364,16 @@ async fn fetch_modpack(
     app: tauri::AppHandle,
     source: fern_core::Source,
     version_id: String,
+    picked: Option<Vec<String>>,
     title: String,
     subjects: Vec<String>,
-) -> Result<String, String> {
+) -> Result<fern_core::Fetched, String> {
     let paths = paths()?;
+    let sideload = sideload(&app, picked);
     let events = launcher_events(&app);
     let job = fern_core::Job::begin(&events, title, subjects);
-    let result = fern_core::fetch_modpack(&paths, source, &version_id, &job)
+    let result = fern_core::fetch_modpack(&paths, source, &version_id, &sideload, &job)
         .await
-        .map(|path| path.to_string_lossy().into_owned())
         .map_err(|error| format!("{error:#}"));
     job.finish(&result);
     result
